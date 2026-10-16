@@ -1,0 +1,6 @@
+# Ruff's defaults, with one floor. Python in this repository loads into every
+# interpreter either product's presets name (3.11 to 3.14 today), so nothing
+# newer than 3.11 may be used: no PEP 695 syntax, itertools.batched or
+# typing.override. Raise this in the pull request that retires the oldest
+# preset (PLAN.md, Python versions).
+target-version = "py311"
