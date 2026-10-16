@@ -1,16 +1,55 @@
 name: Dependabot auto-merge
 
-# Enables auto-merge on every Dependabot PR. GitHub then merges it once the branch is
-# mergeable and all *required* status checks pass — so protect `main` and mark the
-# checks you trust as required, otherwise this merges on nothing.
+# Reusable: enables auto-merge on a Dependabot pull request that the caller's policy
+# allows. GitHub then merges it once the branch is mergeable and every *required* status
+# check passes, so the required checks are what this merges on; without them it merges
+# on nothing.
 #
-# Requires (one-time, in repo settings):
+# A repository calls it from its own workflow, pinned to a commit with the version in a
+# comment, so Dependabot's github-actions entry moves the pin:
+#
+#   on: pull_request
+#   permissions:
+#     contents: write
+#     pull-requests: write
+#   jobs:
+#     auto-merge:
+#       uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # v0.x.y
+#       # with:
+#       #   update-types: major minor patch other
+#       #   exclude-ecosystems: github_actions
+#       #   merge-method: squash
+#
+# This repository calls it the same way, from auto-merge.yml.
+#
+# Requires (one-time, in the caller's settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
-#   • Settings → Branches → protect `main`, require the "lint", "checks" and
-#     "downstream" status checks
-#
-# Copied from frappe-nix; PLAN.md's Phase 7 turns it into a reusable workflow here.
-on: pull_request
+#   • Settings → Branches (or Rules) → protect the default branch and require the checks
+#     a merge must wait for
+
+on:
+  workflow_call:
+    inputs:
+      update-types:
+        description: >-
+          Space-separated update types to auto-merge: major, minor and patch (semver), and
+          other, an update with no semver type, such as a flake input or a git revision.
+          Every one by default, which frappe-nix, odoo-nix and wordpress-nix all use: the
+          required checks are the gate, not the update type.
+        type: string
+        default: major minor patch other
+      exclude-ecosystems:
+        description: >-
+          Space-separated package ecosystems whose pull requests a person reviews instead,
+          as dependabot/fetch-metadata names them: the segment after dependabot/ in the
+          pull request's branch, such as github_actions or npm_and_yarn. By default, action bumps: they change what CI runs,
+          this workflow included.
+        type: string
+        default: github_actions
+      merge-method:
+        description: How GitHub merges once the checks pass, as `gh pr merge` takes it.
+        type: string
+        default: squash
 
 permissions:
   contents: write
@@ -19,9 +58,7 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    # Updates of the actions pinned in the workflows (github-actions pull requests) are
-    # reviewed by a person.
-    if: ${{ github.actor == 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/github_actions/') }}
+    if: ${{ github.actor == 'dependabot[bot]' }}
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -29,8 +66,36 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Apply the policy
+        id: policy
+        env:
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          UPDATE_TYPES: ${{ inputs.update-types }}
+          EXCLUDE_ECOSYSTEMS: ${{ inputs.exclude-ecosystems }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
+        run: |
+          case "$MERGE_METHOD" in
+            squash | merge | rebase) ;;
+            *) echo "::error::merge-method must be squash, merge or rebase, not '$MERGE_METHOD'"; exit 1 ;;
+          esac
+          type=${UPDATE_TYPE#version-update:semver-}
+          type=${type:-other}
+          merge=true
+          if [[ " $EXCLUDE_ECOSYSTEMS " == *" $ECOSYSTEM "* ]]; then
+            echo "::notice::$ECOSYSTEM updates are reviewed by a person (exclude-ecosystems)"
+            merge=false
+          elif [[ " $UPDATE_TYPES " != *" $type "* ]]; then
+            echo "::notice::$type updates are reviewed by a person (update-types: $UPDATE_TYPES)"
+            merge=false
+          fi
+          echo "$ECOSYSTEM, $type update: auto-merge $merge"
+          echo "merge=$merge" >> "$GITHUB_OUTPUT"
+
       - name: Enable auto-merge
-        run: gh pr merge --auto --squash "$PR_URL"
+        if: steps.policy.outputs.merge == 'true'
+        run: gh pr merge --auto "--$MERGE_METHOD" "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,15 @@
+name: auto-merge
+
+# This repository's Dependabot pull requests, through the reusable workflow the products
+# call (dependabot-auto-merge.yml), with its default policy: everything but action bumps
+# auto-merges once the required checks ("lint", "checks", "downstream") pass. The products
+# call it pinned to a commit; this repository calls its own copy at the same revision.
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  dependabot:
+    uses: ./.github/workflows/dependabot-auto-merge.yml

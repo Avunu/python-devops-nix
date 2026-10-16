@@ -2,7 +2,7 @@ version: 2
 
 # Keeps this repository's dependencies up to date. Pull requests auto-merge once the
 # required checks go green, except action bumps, which a person reviews (see
-# .github/workflows/dependabot-auto-merge.yml).
+# .github/workflows/auto-merge.yml, which calls the reusable dependabot-auto-merge.yml).
 #
 # The shape both products follow (CONVENTIONS.md, Dependabot): the `chore` prefix, a
 # seven-day cooldown, and one group per ecosystem, so each ecosystem is one pull request.
