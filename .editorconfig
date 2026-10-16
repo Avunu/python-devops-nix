@@ -1,0 +1,21 @@
+# Python follows Ruff's defaults (four spaces), not Frappe's tabs: the shared
+# Python here is vendored into both products, and neither lints it. Nix, shell,
+# YAML and the rest keep the two-space style nixfmt and the products use.
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.{nix,sh,yml,yaml,toml,json,md}]
+indent_style = space
+indent_size = 2
+
+[*.patch]
+trim_trailing_whitespace = false

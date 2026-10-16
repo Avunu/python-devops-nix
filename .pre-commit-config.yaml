@@ -1,0 +1,38 @@
+# Git hooks, run by prek (https://prek.j178.dev, pre-commit's format in Rust) and
+# by CI (`prek run --all-files`, the `lint` job). Every hook is a pinned upstream
+# repository, so nothing here needs nix or the dev shell, and dependabot's
+# `pre-commit` ecosystem moves the revs (see .github/dependabot.yml).
+#
+#   prek install              # once per clone
+#   prek run --all-files      # what CI runs
+#
+# Not here, because no upstream hook runs them without nix or a Rust build:
+#   nixfmt, statix, deadnix   the `nix-lint` flake check
+#
+# Patches carry trailing whitespace that is part of the hunk; locks are generated.
+exclude: (\.(patch|diff)$|(^|/)(uv|flake)\.lock$)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-ast
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+
+  # ruff fixes the imports, then lints, then formats the result, with ruff.toml.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        name: ruff import sorter
+        args: [--select=I, --fix]
+      - id: ruff-check
+        name: ruff linter
+        args: [--fix]
+      - id: ruff-format
+        name: ruff formatter

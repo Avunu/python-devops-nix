@@ -208,21 +208,21 @@ The guards that patch application APIs stay in the products, but their settings 
 Both products build their environment the same way: pyproject-nix, uv2nix and pyproject-build-systems, `sourcePreference = "wheel"`, `mkEditablePyprojectOverlay`, and a `.pth` graft. What has drifted is the package fixes.
 
 -   **`lib.python.overrides`**: one override set for the packages both stacks build. The base takes the better fix of each:
-    
+
     -   `python-ldap` with odoo-nix's `ldap_r` fix;
     -   lxml, psycopg2, pycups, pyvips and cairocffi;
     -   odoo-nix's python-magic `dlopen` patch.
-    
+
     Each product layers its own overrides on top.
-    
+
 -   **`lib.python.rich`**: one `rich-python.nix`, taking odoo-nix's, which is the superset (the markdown-it-py fix).
-    
+
 -   **`lib.python.lockAudit`**: frappe-nix's `lib/lock-audit.nix`, which turns uv2nix's "attribute missing" into a sentence naming the stale lock. odoo-nix adopts it, since an OCA submodule bump hits the same failure.
-    
+
 -   **`lib.python.buildDeps`**: odoo-nix's `uv_build_deps.py`, which derives `extra-build-dependencies` from `uv.lock`. frappe-nix adopts it in place of the fixed list its template copies.
-    
+
 -   **Thread caps.** odoo-nix's BLAS thread caps (`lib/env.nix`) move into the base and frappe-nix sets them too.
-    
+
 
 Done when both products build their development and production environments from these, the derivation hashes of the production environments are unchanged except where a fix is new to that product, and each product's VM tests pass.
 
