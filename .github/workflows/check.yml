@@ -1,0 +1,116 @@
+name: check
+
+# CI gate for this repository. Auto-merge (Dependabot pull requests) is only as safe as
+# what runs here, so these jobs are what you mark required on `main`.
+#
+#   lint         every hook in .pre-commit-config.yaml over the whole tree, run by prek
+#   checks       `nix flake check`: evaluates every output and builds every
+#                checks.x86_64-linux attribute
+#   downstream   frappe-nix's and odoo-nix's checks.x86_64-linux, built against this
+#                pull request's head, for each product that takes this flake as an input
+#
+# The downstream job is the main defence against one bad change breaking both products at
+# once (PLAN.md, Phase 1), and it has to pass before a release.
+#
+# VM tests are built with everything else, as odoo-nix does: nix-installer-action's `kvm`
+# default makes the daemon advertise the `kvm` system feature on the hosted runner.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # `prek run --all-files --show-diff-on-failure`: a hook that rewrites a file fails the
+      # job, so what merges is what the hooks would have left.
+      - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: nix flake check
+        run: nix flake check -L --show-trace
+
+      # `nix fmt` must leave the tree as committed.
+      - name: nix fmt
+        run: |
+          nix fmt
+          git diff --exit-code
+
+  downstream:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        product: [frappe-nix, odoo-nix]
+    env:
+      PRODUCT: ${{ matrix.product }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      # The product's default branch, locked to one revision so evaluation and build see the
+      # same tree. It has adopted this flake once its root takes a `python-devops-nix` input.
+      - name: Resolve ${{ matrix.product }}
+        id: product
+        run: |
+          meta=$(nix flake metadata "github:Avunu/$PRODUCT" --refresh --json)
+          rev=$(jq -r '.locked.rev' <<<"$meta")
+          adopted=$(jq '.locks.nodes[.locks.root].inputs // {} | has("python-devops-nix")' <<<"$meta")
+          echo "ref=github:Avunu/$PRODUCT/$rev" >> "$GITHUB_OUTPUT"
+          echo "adopted=$adopted" >> "$GITHUB_OUTPUT"
+          echo "$PRODUCT at $rev; takes python-devops-nix as an input: $adopted"
+
+      # Before adoption there is nothing of this pull request in the product to test, and
+      # its own CI already builds its checks unmodified.
+      - name: Skip (not adopted yet)
+        if: steps.product.outputs.adopted != 'true'
+        run: >-
+          echo "::notice title=downstream ${PRODUCT} skipped::${PRODUCT} does not take
+          python-devops-nix as a flake input yet, so its checks cannot exercise this pull
+          request. This job builds them, with the input overridden to this head, once it does."
+
+      - name: Build ${{ matrix.product }}'s checks against this head
+        if: steps.product.outputs.adopted == 'true'
+        env:
+          REF: ${{ steps.product.outputs.ref }}
+        run: |
+          override=(--override-input python-devops-nix "$GITHUB_WORKSPACE")
+          names_json=$(nix eval --json "$REF#checks.x86_64-linux" \
+            --apply builtins.attrNames "${override[@]}")
+          mapfile -t names < <(jq -r '.[]' <<<"$names_json")
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "::error::$PRODUCT has no checks.x86_64-linux"
+            exit 1
+          fi
+          echo "Building ${#names[@]} checks: ${names[*]}"
+          nix build -L --keep-going --no-link --show-trace "${override[@]}" \
+            "${names[@]/#/$REF#checks.x86_64-linux.}"
