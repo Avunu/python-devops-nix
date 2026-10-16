@@ -297,7 +297,7 @@ The last column is the decision. Rows marked _decided_ were settled on 2026-10-1
 | Command layout | bench umbrella, but provision-site is standalone | odoo umbrella | Everything under the umbrella: bench provision (keep provision-site as an alias). |
 | Source management | bench get-app, bench remove-app | odoo module add, no remove | Add and remove in both; odoo-nix gains odoo module remove. |
 | Relock | update-deps and nix run .#relock for consumers | inside project update; relock covers fixtures only | One consumer-facing relock in both. |
-| Migrate on deploy | RemainAfterExit plus a marker file; services require init only, so a failed migrate leaves the site serving in maintenance mode | runs on every start with --if-needed, marker in the database, odoo.service requires it, so a failed migrate stops serving | Decided: serve in maintenance mode. Odoo has no maintenance mode of its own, and serving it against a half-migrated schema is not safe, so odoo-nix's version is nginx answering 503 with a maintenance page while odoo.service stays stopped; see Track C. Both verify the snapshot before migrating (odoo-nix's pg_restore --list, a MariaDB equivalent for frappe-nix). |
+| Migrate on deploy | RemainAfterExit plus a marker file; services require init only, so a failed migrate leaves the site serving in maintenance mode | runs on every start with --if-needed, marker in the database, odoo.service requires it, so a failed migrate stops serving | Decided: what happens after a failed migrate is product-specific. frappe-nix keeps serving in Frappe's native maintenance mode. Odoo has no maintenance mode, and serving it against a half-migrated schema is not safe, so odoo-nix keeps stopping the service. The rest is shared: the migrate.* options, the snapshot flow, and verifying the snapshot before migrating (odoo-nix's pg_restore --list, a MariaDB equivalent for frappe-nix). |
 | Production secrets | LoadCredential, init as the service user | init runs as root and reads the files | LoadCredential in both, and environmentFiles (odoo-nix's) in both. |
 | Database logging | none | slowQueryMs, log_line_prefix | Both: database.slowQueryMs. |
 | Journald enablement | always on when stderr is the journal, via a .pth graft | needs ODOO_NIX_JOURNALD=1 and an option, via a sitecustomize shim | Always on when stderr is the journal, via a .pth graft. |
@@ -379,7 +379,6 @@ Features one product has and the other lacks. Each is a pull request to the prod
 | Docs: troubleshooting, upgrading, memory and disk, options reference, scaffolder reference, secrets page, layout reference | frappe-nix | odoo-nix |
 | Prek lint job and repository config files | frappe-nix | odoo-nix |
 | Build every check in CI | odoo-nix | frappe-nix (Phase 0) |
-| Maintenance mode while a migrate on deploy has failed (nginx 503 and a maintenance page, the service stopped) | frappe-nix | odoo-nix |
 | Mailpit runs whether or not the mail guard is on | odoo-nix | frappe-nix (with the mailpit tree) |
 
 ## Track D: frappe-nix's command line in Python
@@ -473,6 +472,7 @@ odoo-nix's scaffolder (`lib/odoo-init.sh`, 240 lines, and `lib/oca-lib.sh`, 217)
 | The Python workspace shapes | frappe-nix's bench workspace against odoo-nix's OCB plus OCA submodules. Only the pieces in Phase 4 move. |
 | Application guards (mail, backups, objectstore, webhooks, scheduler and crons, integrations, google, plaid, iap) | They patch Frappe or Odoo APIs. Their settings follow Track B. |
 | Restore internals | frappe-nix's offline migrate (pt-osc) and odoo-nix's migrate plan (checksums) do different jobs. |
+| What a failed migrate on deploy leaves running | frappe-nix serves in Frappe's native maintenance mode. Odoo has none, so odoo-nix stops the service. Phase 6's `lib.nixos.migrate` takes the product's failure behaviour as an argument. |
 | frappe-nix's app standards and app mode; odoo-nix's OCA catalog and bundles | Product features with no counterpart. |
 | The command-line tools themselves | frappe-nix's bench commands and odoo-nix's odoo, both click after Track D. Their commands and flags follow Track B. Each CLI calls the base's tools, but the CLIs themselves stay in the products. |
 
@@ -511,7 +511,7 @@ Products depend on the base. Their consumers (benches, Odoo projects) do not: th
 
 None. The following were settled on 2026-10-16 and are recorded in Track B:
 
--   Migrate on deploy serves in maintenance mode when the migrate fails.
+-   After a failed migrate on deploy, frappe-nix serves in Frappe's maintenance mode and odoo-nix stops the service. Odoo has no maintenance mode, so this stays product-specific.
 -   The docs pipeline is `Avunu/site-docs`.
 -   The formatter is `nixfmt-rs`.
 -   Restore overwrites an existing database by default (`--no-force` refuses).
