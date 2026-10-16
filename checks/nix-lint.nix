@@ -3,4 +3,5 @@
 self.lib.checks.nixLint {
   inherit pkgs;
   src = self;
+  product = "python-devops-nix";
 }

@@ -17,7 +17,15 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 | `modules/<name>.nix` | `flakeModules.<name>`: flake-parts modules a product imports |
 | `checks/<name>.nix` | `checks.<system>.<name>`, built in CI |
 
-Only `lib.checks.nixLint` exists so far; nothing has been extracted from the products yet.
+What it provides so far, all repository hygiene (PLAN.md, Phase 7); nothing has been extracted from the products' code yet:
+
+| Piece | What it does |
+| --- | --- |
+| `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval` and `nixosTest`, each named `<product>-<x>-check` (CONVENTIONS.md, Tests) |
+| `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy |
+| `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | The product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings (CONVENTIONS.md, Repository files) |
+| `.github/workflows/dependabot-auto-merge.yml` | A reusable workflow that auto-merges Dependabot pull requests by a policy the caller passes (CONVENTIONS.md, CI) |
+| `.editorconfig`, `.pre-commit-config.yaml`, `ruff.toml`, `statix.toml` | The shared copies those checks compare with |
 
 ## Development
 

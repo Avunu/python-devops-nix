@@ -263,28 +263,73 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`.
 
 ### Formatter
 
--   **Convention:** nixfmt-rs, through `nix fmt` and the nix-lint check (nixfmt, statix, deadnix), pinned by this repository's `lib.checks.nixLint`.
+-   **Convention:** nixfmt-rs, through `nix fmt` and the nix-lint check (nixfmt, statix, deadnix), pinned by this repository's `lib.checks.nixLint`. The check also compares `statix.toml` with this repository's copy ([Repository files](#repository-files)). Each product registers it over its whole tree, leaving out what is not its own Nix:
+
+    ```nix
+    nix-lint = python-devops-nix.lib.checks.nixLint {
+      inherit pkgs;
+      src = ./.;
+      product = "odoo-nix";
+      ignore = [ "tests/fixtures" "templates" ];
+    };
+    ```
 -   **Today:** frappe-nix uses nixfmt-rs. odoo-nix uses nixfmt. odoo-nix's switch is one formatting commit, listed in `.git-blame-ignore-revs`.
 -   **Status:** decided.
 -   **Check:** yes, the nix-lint check.
 
 ### CI
 
--   **Convention:** every action is pinned by full commit SHA, with the version in a trailing comment. A `lint` job runs prek over the whole tree.
--   **Today:** frappe-nix pins most actions by SHA and has the lint job. odoo-nix pins by tag and has no lint job.
+-   **Convention:** every action is pinned by full commit SHA, with the version in a trailing comment. A `lint` job runs prek over the whole tree. A `checks` job builds every flake check (`nix flake check`). Dependabot pull requests auto-merge through this repository's reusable workflow, called pinned the same way:
+
+    ```yaml
+    on: pull_request
+    permissions:
+      contents: write
+      pull-requests: write
+    jobs:
+      auto-merge:
+        uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # v0.x.y
+    ```
+
+    Its inputs carry the policy. `update-types` (default `major minor patch other`, where `other` is an update with no semver type, such as a flake input) lists what auto-merges; `exclude-ecosystems` (default `github_actions`) lists ecosystems a person reviews; `merge-method` (default `squash`) is passed to `gh pr merge`. frappe-nix and odoo-nix take the defaults, which are what both do today. wordpress-nix does too: it merges major bumps, and its gate is its required OCI build, not an input. A repository that wants majors reviewed passes `update-types: minor patch other`. Auto-merge is only as safe as the checks marked required on the default branch.
+-   **Today:** frappe-nix pins most actions by SHA and has the lint job. odoo-nix pins by tag and has no lint job. Each has its own copy of the auto-merge workflow, which differ only in a comment.
 -   **Status:** proposed.
 -   **Check:** yes, a pattern over `uses:` lines.
 
 ### Repository files
 
--   **Convention:** the same set in both: `.editorconfig`, `.envrc`, `.pre-commit-config.yaml`, `ruff.toml`, `ty.toml` and `statix.toml`. `version.txt` only once releases are wired up. The shared parts match this repository's copies.
--   **Today:** frappe-nix has all of them. odoo-nix has `statix.toml` only.
+-   **Convention:** the same set in both: `.editorconfig`, `.envrc`, `.pre-commit-config.yaml`, `ruff.toml`, `ty.toml` and `statix.toml`. `version.txt` only once releases are wired up. Each product keeps its own copy at its root, because the tools read them from there, and the shared settings in each match this repository's copy.
+
+    The rule is the same for every shared file: **the product's copy makes every setting this repository's copy makes, with the same value, and may add its own.** Not byte-identical copies, because the products legitimately add to them: frappe-nix's `ruff.toml` extends Frappe's own ruff config, and both products' prek configurations add hooks and exclude their own paths. A list is one value and is compared whole. Per file, a setting is:
+
+    | File | A setting is | Not compared |
+    | --- | --- | --- |
+    | `statix.toml`, `ruff.toml` | each key, by its path through the TOML tables | — |
+    | `.editorconfig` | each key under a section (`[*.py] indent_style`), and the preamble's `root` | — |
+    | `.pre-commit-config.yaml` | each hook, by repository URL and hook `id` (with its `name` where the base gives one), and each key the base sets on it (`args`) | `rev`, which each repository's Dependabot moves on its own schedule; the top-level `exclude` and other keys, which name the repository's own paths |
+
+    Where a product has to set a shared setting differently, it lists the setting as an exception in its check and says why in a comment next to it: frappe-nix's Python is written in Frappe's style, so its `[*.py] indent_style` is `tab`. An exception for a setting this repository no longer makes fails the check, so exceptions do not outlive their reason.
+
+    ruff's `extend` was the obvious alternative for `ruff.toml`, and it was rejected: it takes a path, and this repository's copy is in the Nix store, which an editor or a prek run outside the development shell does not have. The base's ruff settings are few (the `target-version` floor), so copying them in is cheaper than any mechanism that resolves a store path.
+-   **Today:** frappe-nix has all of them; its `.editorconfig` uses tabs for Python. odoo-nix has `statix.toml` only.
 -   **Status:** proposed.
--   **Check:** yes, the files exist, and the lint job compares them with this repository's copies.
+-   **Check:** yes. `lib.checks.nixLint` compares `statix.toml`, and `lib.checks.sharedConfig` the rest:
+
+    ```nix
+    shared-config = python-devops-nix.lib.checks.sharedConfig {
+      inherit pkgs;
+      src = ./.;
+      product = "frappe-nix";
+      # Python here is Frappe's style: tabs, as Frappe's own .editorconfig.
+      exceptions.".editorconfig" = [ [ "*.py" "indent_style" ] ];
+    };
+    ```
+
+    `files` defaults to `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml`; a product that has no Python yet can drop `ruff.toml` from it until it does.
 
 ### Dependabot
 
--   **Convention:** one shape: commit prefix `chore`, a seven-day cooldown, and one group per ecosystem (`patterns: ["*"]`), plus named groups only where inputs must move apart (odoo-nix's `ocb` and `odoo-ls`). Each product lists its own ecosystems. Pull requests auto-merge, except github-actions bumps, which a person reviews.
+-   **Convention:** one shape: commit prefix `chore`, a seven-day cooldown, and one group per ecosystem (`patterns: ["*"]`), plus named groups only where inputs must move apart (odoo-nix's `ocb` and `odoo-ls`). Each product lists its own ecosystems. Pull requests auto-merge, except github-actions bumps, which a person reviews, through the reusable workflow in [CI](#ci).
 -   **Today:** frappe-nix covers nix, uv, pre-commit and github-actions, with the `chore` prefix and no cooldown. odoo-nix covers nix and github-actions, with the `chore` prefix, the `ocb` and `odoo-ls` groups, and no cooldown since it dropped docs-site.
 -   **Status:** proposed.
 -   **Check:** partly, a check over `.github/dependabot.yml` for prefix and cooldown.
@@ -298,9 +343,25 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`.
 
 ### Tests
 
--   **Convention:** one naming scheme for checks and VM tests, and one helper, `lib.checks.mk`, for registering them.
--   **Today:** frappe-nix drives `tests/<x>.sh` from `lib/<x>.nix`, with derivations named `frappe-nix-<x>-check`. odoo-nix has `test_*.py`, `module-*.nix` VM tests and `-<major>` suffixes.
--   **Status:** proposed. The naming scheme is written down with `lib.checks.mk` (PLAN.md, Phase 7).
+-   **Convention:** every check and VM test a product defines is a `checks.<system>.<x>` attribute, registered through one helper, `lib.checks.mk`. The naming scheme:
+
+    -   `<x>` is kebab-case and names what is checked (`agecheck`, `db-nocow`, `migrate-rollback`), never the kind of check: no `eval-`, `module-` or `vm-` prefix, because the helper already records the kind. odoo-nix's `module-nginx` becomes `nginx`.
+    -   A check that runs once per framework series takes the series' major version as a suffix: `<x>-<major>` (`devguard-18`, `devguard-19`).
+    -   The derivation is named `<product>-<x>-check` (`frappe-nix-agecheck-check`), so a build log names the product and the check. VM tests keep nixpkgs' prefix: `vm-test-run-<product>-<x>`.
+    -   The test's own files sit beside the code (`tests/<x>.sh`, `tests/<x>.nix`, `tests/test_<x>.py`), named by the same `<x>`.
+
+    `lib.checks.mk { pkgs, product }` returns:
+
+    | Function | Use | Replaces |
+    | --- | --- | --- |
+    | `script <x> { src ? null, tools ? [ ], env ? { }, drvArgs ? { } } <text>` | A shell script, run with `tools` on PATH, in a writable copy of `src` if given, with a writable `HOME` and pipefail on. It passes when it exits 0. It may write a report to `$out`, a file or a directory. | frappe-nix's `runCommand` wrappers, odoo-nix's `mkCheck` |
+    | `eval <x> { assertion, message }` or `eval <x> { expected, actual, message ? "" }` | A Nix expression, judged at evaluation and reported at build, so a failure fails one named check, not the whole evaluation. The failure prints the message and, for `expected`/`actual`, a diff of their JSON. | odoo-nix's `mkEvalCheck` |
+    | `nixosTest <x> <module>` | A NixOS VM test (`pkgs.testers.runNixOSTest`), named by the helper; the module sets no `name`. | both products' `runNixOSTest` calls |
+    | `checkName <x>` | The derivation name, `<product>-<x>-check`, for a check built some other way. | |
+
+    `lib.checks.nixLint` and `lib.checks.sharedConfig` are built with it and take the same `product`.
+-   **Today:** frappe-nix drives `tests/<x>.sh` from `lib/<x>.nix`, with derivations named `frappe-nix-<x>-check` (and a few `frappe-<x>-check`). odoo-nix has `test_*.py`, `module-*.nix` VM tests, `eval-*` checks, derivations named `odoo-nix-check-<x>`, and `-<major>` suffixes.
+-   **Status:** proposed.
 -   **Check:** yes, a pattern over check attribute names.
 
 ### Commits
