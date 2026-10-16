@@ -1,4 +1,4 @@
-# python-dev-nix
+# python-devops-nix
 
 Shared building blocks and conventions for Avunu's Nix packaging of Python application frameworks: [frappe-nix](https://github.com/Avunu/frappe-nix) and [odoo-nix](https://github.com/Avunu/odoo-nix).
 

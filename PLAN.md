@@ -1,6 +1,6 @@
-# python-dev-nix: plan
+# python-devops-nix: plan
 
-Status: proposed, 2026-10-16. Nothing is extracted yet. This repository was planned as nix-dev-base; it is renamed python-dev-nix because its scope is now Python application products only.
+Status: proposed, 2026-10-16. Nothing is extracted yet. This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
 
 ## Why this repository exists
 
@@ -72,10 +72,10 @@ These came out of the comparison. None depends on the base, and each is a pull r
 
 ## Phase 1: the repository
 
--   Rename the GitHub repository from Avunu/nix-dev-base to Avunu/python-dev-nix before anything consumes it.
+-   Rename the GitHub repository from Avunu/nix-dev-base to Avunu/python-devops-nix before anything consumes it.
 -   `flake.nix` on flake-parts, exposing `flakeModules.*`, `lib.*` and `checks.*`.
 -   `nix fmt` and the nix-lint check from Phase 7, run on this repository itself.
--   CI: a `check` workflow, plus a **downstream** job that builds all of frappe-nix's and odoo-nix's checks against the pull request's head with `--override-input python-dev-nix`. This is the main defence against one bad release breaking both products at once.
+-   CI: a `check` workflow, plus a **downstream** job that builds all of frappe-nix's and odoo-nix's checks against the pull request's head with `--override-input python-devops-nix`. This is the main defence against one bad release breaking both products at once.
 -   Dependabot for the nix and github-actions ecosystems, and the auto-merge workflow from Phase 7.
 -   The MIT license, as in both products.
 -   `CONVENTIONS.md`, started with the decisions in [Track B](#track-b-conventions).
@@ -347,8 +347,8 @@ Features one product has and the other lacks. Each is a pull request to the prod
 ## How products consume it
 
 ```nix
-inputs.python-dev-nix = {
-  url = "github:Avunu/python-dev-nix";
+inputs.python-devops-nix = {
+  url = "github:Avunu/python-devops-nix";
   inputs.nixpkgs.follows = "nixpkgs";
   inputs.flake-parts.follows = "flake-parts";
 };
