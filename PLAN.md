@@ -18,11 +18,12 @@ Status: proposed, 2026-10-16. Nothing is extracted yet. This repository was plan
 
 frappe-nix and odoo-nix should behave as one product family. Wherever the two do the same job, they do it the same way, under the same names, and from one tested copy of the code when the code is product-independent.
 
-That is three kinds of work, run as tracks:
+That is four kinds of work, run as tracks:
 
 -   **Track A, shared code.** One copy of each product-independent piece, in this repository.
 -   **Track B, shared conventions.** One name, flag, default and layout for each job both products do, written down in this repository's `CONVENTIONS.md` and checked where a check is cheap. This needs no shared code.
 -   **Track C, parity.** A feature one product has and the other lacks is ported, unless it is genuinely product-specific.
+-   **Track D, frappe-nix's command line in Python.** Every command with real logic in frappe-nix moves from bash to Python, under the language rule in [Design rules](#design-rules). odoo-nix's command line is already Python.
 
 Before any of them, [Phase 0](#phase-0-fix-now) fixes problems the comparison found that should not wait for the base.
 
@@ -51,10 +52,44 @@ These hold for everything in this repository.
 1.  **No product names in code.** The base never says Frappe or Odoo. Each product passes in its option paths, environment prefix, package names, log prefixes and command names.
 2.  **Uniform names over unchanged names.** Where the products name the same thing differently, both move to the name in `CONVENTIONS.md`, even when that is a breaking change. Only a handful of deployments exist today, so renames are cheap now and expensive later. Every rename ships with a migration note in the product's changelog. An alias (`mkRenamedOptionModule`, or reading the old environment variable with a warning) is added when it costs a few lines, and removed at the product's next minor release.
 3.  **A small lock.** The base's own inputs are nixpkgs and flake-parts, and consumers `follows` both, so adopting it adds one node to a product's lock and none to a second nixpkgs. Heavier dependencies are taken as arguments from the product rather than as inputs. For example, the secrets module takes the product's `agenix-shell` input, and ragenix comes from nixpkgs. The uv2nix inputs (pyproject-nix, uv2nix, pyproject-build-systems) are the exception if Track A's Python helpers need them; they follow the product's.
-4.  **Runtime Python runs on 3.11, and is stdlib-only unless the product's environment already carries the dependency.** The oldest interpreter either product supports is 3.11 (Odoo 18). Code that loads inside the application (devguard, journald) is stdlib-only. Development-shell tools may use rich, which both products already ship in their tool environment.
-5.  **Python is vendored at build time, not installed as a dependency.** Shared Python is copied into the product's package by Nix (for example, the devguard core into `frappe_devguard/`). Each virtualenv still contains exactly one guard package, under the product's name, with no new distribution to resolve and no version skew inside a process.
-6.  **No new reach into production.** Nothing here may reach a production virtualenv, NixOS service or container that does not already reach it today, except where a phase says so explicitly (the journald core, the overrides, the hardening baseline). devguard stays development-only by construction: frappe-nix grafts it into the development environment only, and odoo-nix's `odoo-init-*` checks assert that it is absent from the production one. frappe-nix gains an equivalent check in Phase 3.
-7.  **Tests live with the code, and CI runs all of them.** The base tests what it ships, against a stub product. Product suites keep their product-specific tests and drop the duplicated ones. Every check a product defines is built in CI on every pull request; a check that is not built does not count as coverage.
+4.  **Python versions follow from where the code runs.** See [Python versions](#python-versions). In short:
+    -   code that loads inside the application runs on every interpreter the products' presets name (3.11 to 3.14 today), is stdlib-only, and is tested on each;
+    -   tools that run as their own process run on one interpreter that the product picks;
+    -   all Python here is written to 3.11 syntax.
+5.  **Logic is Python, glue is bash.** Anything that parses data, handles dates, JSON or more than a few flags, keeps an exit-code table or prompts is written in Python. Bash is kept for thin glue that runs a few commands with no decisions in between: `ExecStart` wrappers, container entrypoints, `systemd-run` and `exec` shims, and the `bench` dispatcher. Glue is built with `writeShellApplication` so shellcheck runs on it. Shell-driven tests that exercise a command from outside (`tests/*.sh`) stay in shell. They define the command's behaviour, and they are what checks a port. Nothing moves from Python to bash.
+6.  **Python is vendored at build time, not installed as a dependency.** Shared Python is copied into the product's package by Nix (for example, the devguard core into `frappe_devguard/`). Each virtualenv still contains exactly one guard package, under the product's name, with no new distribution to resolve and no version skew inside a process.
+7.  **No new reach into production.** Nothing here may reach a production virtualenv, NixOS service or container that does not already reach it today, except where a phase says so explicitly (the journald core, the overrides, the hardening baseline). devguard stays development-only by construction: frappe-nix grafts it into the development environment only, and odoo-nix's `odoo-init-*` checks assert that it is absent from the production one. frappe-nix gains an equivalent check in Phase 3.
+8.  **Tests live with the code, and CI runs all of them.** The base tests what it ships, against a stub product. Product suites keep their product-specific tests and drop the duplicated ones. Every check a product defines is built in CI on every pull request; a check that is not built does not count as coverage.
+
+### Python versions
+
+The presets name three interpreters today:
+
+| Product | Series | Interpreter |
+| --- | --- | --- |
+| frappe-nix | develop, version-16 | python314 |
+| frappe-nix | version-15 | python312 |
+| odoo-nix | 18.0 | python311 |
+| odoo-nix | 19.0 | python312 |
+
+Shared Python falls into two classes, and the risk differs between them.
+
+**In-process code** loads into the application's own interpreter: the devguard core, the journald core and `_hook.py`. It cannot pick a version, so it has to run on every interpreter above at once. That gives it two limits:
+
+-   **The floor.** Nothing newer than 3.11 may be used, for example PEP 695 type syntax, `itertools.batched` or `typing.override`. Ruff's `target-version = "py311"` in the base's `ruff.toml` enforces this.
+-   **The ceiling.** This is the larger risk. devguard patches stdlib internals (`socket`, `smtplib`, `imaplib`, `poplib`), which change between releases. The stdlib also drops modules: `smtpd` and `asyncore` are gone from 3.12, so test stubs must not use them. The `.pth` import line that every graft depends on has been discussed upstream for replacement by a structured startup configuration. Each new CPython release is checked for that before a preset adopts it.
+
+The base's checks for in-process code run as a matrix over every interpreter in either product's presets. The matrix is read from `frappe-presets.json` and `odoo-presets.json`, which the products pass in, so a preset that adds an interpreter adds it to the matrix. Each product also builds its grafted environment for every preset's interpreter, not only the default one. Bytecode compilation checks only the interpreter that actually builds.
+
+The floor is the oldest interpreter of any preset still shipped. When a preset is retired, the floor rises in the same pull request.
+
+**Out-of-process tools** run as their own process: agecheck, the secret scripts, the backup fetch layer, the banner and the products' command lines. Each product packages them with one interpreter it picks. That is a real pin, but a cheap one, because Nix gives the tool its own interpreter and consumers never see it. Three costs come with it:
+
+-   **Closure size.** A tool interpreter that differs from the application's puts a second Python of about 100 MB into the closure. In development shells this is accepted. In production closures, tools run on the application's interpreter unless there is a reason not to.
+-   **The pin moves with nixpkgs.** The interpreter is the product's nixpkgs' (`pkgs.python3` or a named `python3xx`), so it changes when that nixpkgs does. Tools are written to 3.11 like everything else, so the move is a no-op.
+-   **Importing the framework ties a tool to the application's interpreter.** odoo-nix's CLI imports Odoo in-process (`odooenv.py`) and runs on the application's interpreter, with click and rich from nixpkgs for that interpreter (`lib/cli.nix`). Any base module it imports, such as the backup fetch layer, therefore also runs on 3.11 to 3.12 and is tested there. frappe-nix's CLI imports no Frappe code and calls into the bench by subprocess (see [Track D](#track-d-frappe-nixs-command-line-in-python)), so it runs on the tool interpreter.
+
+Development-shell tools may use rich and click, taken from nixpkgs for the interpreter they run on, not from the application's environment.
 
 ## Phase 0: fix now
 
@@ -115,6 +150,8 @@ It goes first because it is nearly identical in both products, so the extraction
 -   `lib.secrets.mkModule { optionPath, label, varPrefix, groups, agenix-shell }` returns the flake-parts module that declares the options at the product's path and wires agenix-shell. The product's own `modules/secrets.nix` shrinks to this call plus frappe-nix's `sites` option feeding `groups`.
 -   `lib.secrets.tools { pkgs, label, restoreCommand, bucketExample, verifyListing }` provides agecheck, the rules file, the scripts and `setup-backup-access`. `verifyListing` is the product's snippet for confirming the credentials reach its backups.
 -   `lib.backups.fetch { pkgs, label, envPrefix, layout }` provides fetch, list and cache. `layout` is the product's parser from an object listing to backup sets. The source overrides are `<P>_NIX_BACKUP_SOURCE` and `<P>_NIX_MC` (see [Track B](#track-b-conventions)).
+-   The fetch layer is Python. It starts from odoo-nix's `remote.py`, not frappe-nix's `backup-fetch.sh`: the two are in different languages, so this is a rewrite of frappe-nix's side, not an extraction. frappe-nix's bash copy is deleted, not shared. The layer is a module that odoo-nix's CLI imports in-process and a command that frappe-nix's CLI calls. Because of that import, it is tested on odoo-nix's interpreters as well (see [Python versions](#python-versions)). The `layout` parsers are Python functions. frappe-nix's parser is its first piece of [Track D](#track-d-frappe-nixs-command-line-in-python).
+-   `backup-access.sh` stays bash. It is already a byte-identical copy in both products, and it is a prompt plus three commands.
 -   One output name in both products: `flake.lib.secrets`. The old `frappeSecrets` and `odooSecrets` names stay as aliases for one release.
 
 #### Done when
@@ -195,7 +232,7 @@ These are leaf functions inside the devenv modules. The modules themselves stay 
 
 -   **`lib.ports`**: frappe-nix's `lib/ports.nix`, which gives each project its own block of ports from a hash of its name. It is product-neutral except for the variable name and the base ports. odoo-nix adopts it, which ends its fixed 8069, 8072, 5432, 1025 and 8025, so two projects on one machine no longer collide.
 -   **`lib.ciMode`**: frappe-nix's `lib/ci-mode.nix` (the `<P>_NIX_CI` flag, `PC_TUI_ENABLED=0`, a one-line banner). odoo-nix gains a CI mode.
--   **`lib.sources`**: submodule clone and update: paired branch, partial clone, no pack pile-up. It has been ported in both directions twice, and the messages are already near-verbatim (frappe-nix `lib/apps-report.nix`, odoo-nix `lib/submodules-init.nix`). It covers both the scaffolder's first clone and shell entry.
+-   **`lib.sources`**: submodule clone and update: paired branch, partial clone, no pack pile-up. It has been ported in both directions twice, and the messages are already near-verbatim (frappe-nix `lib/apps-report.nix`, odoo-nix `lib/submodules-init.nix`). It covers both the scaffolder's first clone and shell entry. Both copies are bash today (frappe-nix 385 lines, odoo-nix 353). Branch pairing, retry and reporting are logic, so the shared copy is Python. Shell entry calls it as a command.
 -   **`lib.dbNocow`**: the btrfs NOCOW marking (`lib/db-nocow.nix`, 0.66). The product says which directories to mark.
 -   **`lib.banner`**: one rich renderer taking JSON (title, commands, URLs, guard state) from Nix. It replaces odoo-nix's nine positional arguments and frappe-nix's flags.
 
@@ -223,6 +260,18 @@ Done when both modules use these, each product's VM tests pass, and frappe-nix's
 ## Track B: conventions
 
 `CONVENTIONS.md` in this repository records one decision for each item below. Each product then has a pull request that adopts it, under the renaming rule in [Design rules](#design-rules). Where a decision can be checked mechanically (option paths exist, environment variables are read, a CLI accepts a flag), the base ships a check that each product runs.
+
+### Naming rule
+
+Option names follow one rule, recorded at the top of `CONVENTIONS.md`:
+
+1.  **Structure follows nixpkgs.** That means `enable`, `package`, `user` and `group`, `dataDir` or `stateDir`, `environmentFiles` and `openFirewall`. It also means `settings` as a freeform attribute set rendered into the framework's config file (RFC 42), and multi-tenant modules keyed by hostname as in `services.wordpress.sites.<host>` and `services.nginx.virtualHosts.<host>`.
+2.  **Names for something frappe-nix or odoo-nix invented are shared.** That covers the project identity, ports, guards, the mail catcher and the restore flags. Both products use the same word.
+3.  **Names that mirror a framework config key use that framework's word**, in camelCase: Frappe's `default_site` is `defaultSite`, Odoo's `db_name` is `dbName`. Two frameworks with different concepts keep different names. Matching the framework is what its users will guess.
+
+nixpkgs itself is not consistent about the name for an app's public hostname. nextcloud uses `hostName`, discourse `hostname`, odoo `domain`, mastodon `localDomain` and mediawiki `url`. Part 3 settles that case: each product keeps the shape its upstream nixpkgs neighbour uses, if there is one.
+
+### Decisions
 
 The last column is the decision. Rows marked _decided_ were settled on 2026-10-16; the rest are proposals that stand unless someone objects in review. The development shell's option tree has its own section, [below the table](#the-development-shell-option-tree).
 
@@ -254,8 +303,10 @@ The last column is the decision. Rows marked _decided_ were settled on 2026-10-1
 | Journald enablement | always on when stderr is the journal, via a .pth graft | needs ODOO_NIX_JOURNALD=1 and an option, via a sitecustomize shim | Always on when stderr is the journal, via a .pth graft. |
 | Journald vocabulary | SyslogIdentifier=frappe-<role>; APP_SERVICE in runtime, web, worker, scheduler, socketio, init, migrate, db, redis, nginx | odoo, odoo-init, odoo-migrate; main unit web | <p>-<role> and one written list of roles. |
 | Journald line format | <N>{module} [{site}] msg | <N>{dbname} {logger}: msg | <N>{logger} [{site or db}] msg. |
-| Container images | ${benchName}/<role>, outputs named by role | ${projectName}-odoo, output container-odoo | <registry>/<siteName>/<role>, outputs container-<role>, with OCI labels, a non-root User and a healthcheck. |
-| Identity options | benchName (project identity), siteName (default FRAPPE_SITE) | projectName, odooConf.dbName | Decided: siteName is the project identity in both: frappe-nix's benchName and odoo-nix's projectName become siteName. frappe-nix's current siteName is renamed defaultSite, and the scaffolder's --site flag becomes --default-site. benchName and projectName ship with aliases. The old siteName cannot, because the name is reused, so a frappe-nix consumer whose siteName holds a hostname fails evaluation with a message naming defaultSite. Frappe's own vocabulary still says site for a tenant of the bench (sites/, --site, the NixOS sites option), and defaultSite keeps that meaning intact. |
+| Container images | ${benchName}/<role>, outputs named by role | ${projectName}-odoo, output container-odoo | <registry>/<name>/<role>, outputs container-<role>, with OCI labels, a non-root User and a healthcheck. |
+| Identity options | benchName (project identity), siteName (default FRAPPE_SITE) | projectName (project identity), odooConf.dbName (default database) | Decided: the project identity is `name` in both (`frappe-nix.name`, `odoo-nix.name`). It is a slug: it seeds the port hash and names container images, systemd scopes and log messages. Each module sets devenv's own top-level `name` ("Name of the project") with `mkDefault cfg.name`, so the shell and the product agree. The default tenant keeps the framework's word under part 3 of the naming rule: frappe-nix's siteName becomes `defaultSite` (Frappe's `default_site`), and odoo-nix keeps `dbName` (Odoo's `db_name`). The scaffolder's `--site` becomes `--default-site`, and `--name` sets the identity in both. Production keeps nixpkgs' shapes: frappe-nix's `sites.<fqdn>` (as `services.wordpress.sites`), odoo-nix's `domain` (as upstream `services.odoo.domain`). No name is reused, so benchName, projectName and siteName all ship as `mkRenamedOptionModule` aliases. The word site keeps exactly Frappe's meaning, a tenant of the bench, everywhere in frappe-nix. |
+| NixOS module path | services.frappe | services.odoo-nix (nixpkgs already has services.odoo) | `services.frappe-nix` and `services.odoo-nix`. These match the devenv and flake-parts roots (`frappe-nix.*`, `odoo-nix.*`) and cannot collide with a future nixpkgs module. `services.frappe` ships as an alias. |
+| Framework config blocks | per-site extraConfig and extraConfigFiles (site_config.json) in NixOS; none in devenv | settings (odoo.conf) in NixOS; odooConf in devenv | `settings` everywhere a block becomes the framework's config file, as in nixpkgs. frappe-nix: `sites.<fqdn>.settings` and `settingsFiles` (site_config.json, the files for secrets). odoo-nix: devenv's odooConf becomes `settings`, matching its NixOS module. Once the ports leave it (see the option tree), it holds only odoo.conf keys. Declared keys inside a freeform `settings` use camelCase (`settings.dbName`), and undeclared keys pass through under the framework's own spelling. |
 | Formatter | nixfmt-rs | nixfmt | Decided: nixfmt-rs in both, pinned in the base's lint check. odoo-nix's switch is one formatting commit, added to .git-blame-ignore-revs. |
 | CI | actions pinned by SHA; a prek lint job | actions pinned by tag; no lint job | SHA pins with the version in a comment, and the lint job, in both. |
 | Repository files | .editorconfig, .envrc, .pre-commit-config.yaml, ruff.toml, ty.toml | none of these | The same set in both. version.txt only once releases are wired up. |
@@ -291,7 +342,7 @@ The proposal for both products:
 | watch | What the shell does when a file changes. watch.python (bool, default true): restart the server on a Python change. frappe-nix keeps watch.{apps,excludePublishers,rtl,nativeSass} and gains watch.reassert (from assets.reassert). | odoo-nix dev.autoReload → watch.python; frappe-nix runtime.dev → watch.python. odoo-nix's assertions that watch.python needs workers = 0 and a devMode with reload stay. The dev tree is removed. |
 | devguard | Guard policy only: what is refused or redirected. Shared guards egress, mail, jobs, backups, objectstore, webhooks, each with enable and the same shape. Product guards beside them (integrations, google, plaid; iap). | scheduler and crons → jobs. devguard.mail keeps enable, sender and unmute (frappe-nix). |
 | mailpit | The catcher as a service: mailpit.{enable,host,port,httpPort}, mailpit.pop3.{enable,port,user,password}. The ports default from ports. Default: on whenever devguard.mail.enable is, and on in both products otherwise too, since a catcher that is up costs nothing and a developer testing mail with the guard off still wants one. | frappe-nix and odoo-nix devguard.mail.{host,smtpPort/port,httpPort}, frappe-nix devguard.mail.pop3.*. |
-| ports | ports.{base,offset,worktreeSalt} as frappe-nix has them, from lib.ports, and one read-only attribute per service port (ports.http, ports.smtp, ports.mailUi, ports.db, …) that the rest of the module reads. Each stays overridable with lib.mkForce for the rare fixed-port case. | odoo-nix odooConf.httpPort, odooConf.geventPort, odooConf.dbPort, and the Mailpit ports. odooConf keeps only options that end up in odoo.conf. |
+| ports | ports.{base,offset,worktreeSalt} as frappe-nix has them, from lib.ports, and one read-only attribute per service port (ports.http, ports.smtp, ports.mailUi, ports.db, …) that the rest of the module reads. Each stays overridable with lib.mkForce for the rare fixed-port case. | odoo-nix odooConf.httpPort, odooConf.geventPort, odooConf.dbPort, and the Mailpit ports. odooConf, renamed `settings` (see the framework config row), keeps only options that end up in odoo.conf. |
 
 This keeps the decided name `port`. The SMTP port is `mailpit.port`, which defaults to `ports.smtp`, and the mail guard redirects to it.
 
@@ -331,6 +382,87 @@ Features one product has and the other lacks. Each is a pull request to the prod
 | Maintenance mode while a migrate on deploy has failed (nginx 503 and a maintenance page, the service stopped) | frappe-nix | odoo-nix |
 | Mailpit runs whether or not the mail guard is on | odoo-nix | frappe-nix (with the mailpit tree) |
 
+## Track D: frappe-nix's command line in Python
+
+frappe-nix's command line is bash, about 6,000 lines of it:
+
+-   the scaffolder and the app-standards tools in `lib/sh/` (3,451 lines);
+-   the `bench` subcommands written inline in `lib/scripts.nix` (about 1,400 of its 1,795 lines);
+-   the tools in `lib/apps-report.nix`, `lib/node-locks.nix`, `lib/node-modules.nix`, `lib/root-sync.nix`, `lib/bench-patches.nix` and `lib/rename/`.
+
+Most of it is logic by [rule 5](#design-rules): flag parsing, mode detection, backup naming, JSON, exit-code tables and prompts. odoo-nix's equivalent is a click package (`lib/odoo_nix_cli/`). Track D moves all of frappe-nix's logic to Python and leaves bash only where rule 5 keeps it.
+
+This is a product track, not shared code. The CLI stays in frappe-nix. It calls the base's tools (backup fetch, sources, banner) as Track A ships them.
+
+### Shape
+
+-   **One package.** The commands become click subcommands in `py/`, in the same distribution as `frappe_nix_tools` and built the same way, so frappe-nix ships one Python tool package.
+-   **The tool interpreter.** The CLI imports no Frappe code. Anything that needs Frappe runs `bench …` or the bench's own interpreter as a subprocess. That puts the CLI on frappe-nix's tool interpreter (`python314`, which `frappe-nix-tools` already uses), not the bench's. version-16 and develop benches gain no second interpreter. version-15 benches gain one, in development shells only. The code is written to 3.11 like everything else (see [Python versions](#python-versions)).
+-   **Configuration as JSON, not interpolation.** Today Nix interpolates store paths and options straight into the bash: `benchBin`, `nodeLocksBin`, `restore.*`, `offlineMigrate.*` and the secret names. The port writes them to one generated JSON file, which the wrapper points the CLI at with `FRAPPE_NIX_CLI_CONFIG`. The CLI reads it into a typed dataclass and fails on an unknown or missing key. This is the same pattern as devguard's `_baked.json` and the banner's JSON input.
+-   **The dispatcher stays bash.** `bench` is a `case` that hands frappe-nix's commands over and `exec`s upstream bench for everything else. Moving it to Python would add an interpreter start to every passthrough command. The `bench-update`, `bench-restore` and other `bench-*` names stay as two-line shims that `exec` the CLI, because `frappe_benchcli` and the docs name them.
+-   **Drop-in scripts keep working.** `lib/scripts.d/` and its argument contract (app standards spec §1.2, §5) hand bash snippets to drop-ins: `atBench`, `regenNodeLocks`, `refreshNodeModules`, `syncRegistry` and others. Snippets that wrap logic become one-line calls to CLI subcommands, so a bash drop-in and the CLI share one implementation. The spec is updated in the same pull request. A drop-in may itself be Python once the CLI exposes a registration point. Until then it stays bash.
+-   **Prompts.** gum (33 call sites in `lib/sh/`) is replaced by rich's `Prompt` and `Confirm`, and the gum dependency goes. Non-TTY behaviour does not change: migrating still needs `-y`.
+-   **Process semantics are spelled out.**
+    -   `exec` becomes `os.execvp`.
+    -   `set -euo pipefail` becomes `check=True` on each subprocess.
+    -   Long-running steps forward Ctrl-C to their child and exit 130.
+    -   Output from `git`, `uv`, `yarn` and `mc` streams through unchanged.
+-   **Lint and types.** Ruff and ty, with the repository's `ruff.toml` and `ty.toml`, replace shellcheck for the ported code.
+
+### What stays bash
+
+These are glue under rule 5:
+
+-   the `bench` dispatcher and the `bench-*` shims;
+-   `lib/mariadbd-wrapper.nix`;
+-   `lib/db-nocow.nix` (shared in Phase 5);
+-   the container entrypoints;
+-   `frappe-upstream`;
+-   the `nixfmt` shim;
+-   `backup-access.sh` (shared in Phase 2);
+-   the secret wrappers that only decrypt and `exec`;
+-   the NixOS unit scripts in `modules/nixos.nix`.
+
+The migrate unit's snapshot flow is logic, but it is production code. It is handled when Phase 6 extracts `lib.nixos.migrate`, not here.
+
+`bench-console`, `bench-clear-cache`, `bench-build`, `bench-migrate` and `bench-offline-migrate` are each under 15 lines that set up the environment and `exec`. They stay bash unless a later change adds a decision to them.
+
+### Order
+
+Each step is one pull request, or a few, and leaves frappe-nix working. A command is ported once, together with any Track A or B change to the same surface.
+
+| Step | Ported | Bash replaced | Lands with |
+| --- | --- | --- | --- |
+| D1 | `bench restore` and the backup layout parser | `bench-restore` in `lib/scripts.nix` (about 275 lines), `lib/sh/backup-fetch.sh` (357) | Phase 2, and the restore rows of Track B |
+| D2 | The scaffolder, `frappe-init` | `lib/sh/` main, detect, init, migrate, template, apps, app-init, app-sync, pipeline, common, secrets (about 1,900 lines) | Track B's scaffolder rows: version flag, exit codes, presets schema, seeds |
+| D3 | Sources and apps | `lib/apps-report.nix` (385), `bench-get-app`, `bench-remove-app`, `bench-new-app`, `reconcile-apps`, `lib/rename/`, `lib/root-sync.nix` (about 700 together) | Phase 5's `lib.sources` |
+| D4 | Update and dependencies | `bench-update` (about 400), `update-deps`, the relock tool in `modules/devenv.nix`, `lib/node-locks.nix`, `lib/node-modules.nix`, `lib/bench-patches.nix`, `bench-setup-requirements` (about 1,100 together) | Track B's relock row |
+| D5 | Remaining commands with logic | `provision-site` and the secret scripts in `lib/scripts.nix` | Track B's command layout (`bench provision`) |
+| D6 | App-standards tools | `lib/sh/frappe-test.sh` (579), `frappe-demo.sh` (217), `frappe-shots.sh` (188) | Nothing; any time after D2 |
+
+odoo-nix's scaffolder (`lib/odoo-init.sh`, 240 lines, and `lib/oca-lib.sh`, 217) is bash too. It falls under the same rule and moves into `odoo_nix_cli` when odoo-nix adopts Track B's scaffolder flags, so those flags are written once, in Python. That pull request belongs to odoo-nix, not to Track D.
+
+### Behaviour contract
+
+-   **The shell tests are the acceptance suite.** `tests/*.sh` (about 6,200 lines) and the standards self-tests run unchanged against each ported command. A pull request that changes a message or an exit code changes the test in the same pull request and lists the change in its description. Accidents of bash (word splitting, an exit status lost in a pipeline) are not reproduced. Where a test depended on one, the description says so.
+-   **New Python unit tests** cover the pieces the shell tests reach only indirectly: argument parsing, mode detection (`detect.sh`), backup naming and `--at`, preset resolution, and the configuration schema.
+-   **Shell entry time** is measured before and after D3, because sources run on every direnv reload. A regression is fixed before merge. Imports of rich and click are deferred to the commands that use them.
+
+### Risks
+
+-   **Size.** This is the largest change frappe-nix has had. 21 of the last month's commits touched `lib/scripts.nix` or `lib/sh/`, so branches in flight will conflict. Keep each step short-lived, and say in the tracking issue which commands are mid-port, so nobody fixes a bug in bash that is about to be deleted.
+-   **Coverage gaps.** A path the shell tests never take can change behaviour silently. Before each step, list the command's flags and branches against the tests that reach them, and add the missing tests to the bash suite first, while the bash version is still the reference.
+-   **Two languages during the port.** Until D5, a fix may land in a bash command that is next in line. Ports start from the current head, not from a snapshot taken when the track began.
+-   **No production effect.** Track D changes the development shell and the scaffolder only. The production `bench` wrapper and the NixOS units are untouched, so [rule 7](#design-rules) holds.
+
+### Done when
+
+-   `lib/sh/` holds only `backup-access.sh`, or nothing once Phase 2 ships it from the base.
+-   `lib/scripts.nix` holds the dispatcher, the shims, the glue listed above and the drop-in machinery.
+-   Every shell test passes against the Python commands.
+-   The CLI's unit tests pass.
+-   gum is gone from the development shell.
+
 ## What stays in the products
 
 | Piece | Why it stays |
@@ -342,7 +474,7 @@ Features one product has and the other lacks. Each is a pull request to the prod
 | Application guards (mail, backups, objectstore, webhooks, scheduler and crons, integrations, google, plaid, iap) | They patch Frappe or Odoo APIs. Their settings follow Track B. |
 | Restore internals | frappe-nix's offline migrate (pt-osc) and odoo-nix's migrate plan (checksums) do different jobs. |
 | frappe-nix's app standards and app mode; odoo-nix's OCA catalog and bundles | Product features with no counterpart. |
-| The command-line tools themselves | bench (bash) and odoo (click). Their commands and flags follow Track B. |
+| The command-line tools themselves | frappe-nix's bench commands and odoo-nix's odoo, both click after Track D. Their commands and flags follow Track B. Each CLI calls the base's tools, but the CLIs themselves stay in the products. |
 
 ## How products consume it
 
@@ -373,6 +505,7 @@ Products depend on the base. Their consumers (benches, Odoo projects) do not: th
 5.  Phases 4 to 6, in any order, each when the next change to that piece comes due.
 6.  Track B renames ride along with the Track A phase that touches the same surface (restore flags with Phase 2, devguard options with Phase 3, ports with Phase 5). The rest go in one rename pull request per product.
 7.  Track C ports at any point, each owned by the product that lacks the feature.
+8.  Track D in the order its own section gives. Its first step lands with Phase 2. Where a later step touches a surface that Track A or B also changes (sources with Phase 5, the scaffolder's flags with Track B), the two land in one pull request, so a command is rewritten once.
 
 ## Open decisions
 
@@ -382,7 +515,9 @@ None. The following were settled on 2026-10-16 and are recorded in Track B:
 -   The docs pipeline is `Avunu/site-docs`.
 -   The formatter is `nixfmt-rs`.
 -   Restore overwrites an existing database by default (`--no-force` refuses).
--   `siteName` is the project identity in both products.
+-   The project identity is `name` in both products. frappe-nix's `siteName` becomes `defaultSite`, odoo-nix keeps `dbName`, and option names follow the [naming rule](#naming-rule).
+-   The NixOS modules live at `services.frappe-nix` and `services.odoo-nix`.
+-   A block rendered into the framework's config file is called `settings`.
 -   The scaffolder's version flag is `--version`.
 -   odoo-nix moves to per-project ports.
 -   The devguard option names are `mail.port` and `jobs.extraBlocked`.
@@ -405,6 +540,8 @@ Its own binary cache (`cache.yml`) and OCI publishing (`oci.yml`) are worth copy
 -   A fix to egress, agecheck, backups, overrides or the hardening baseline lands once and reaches both products through a Dependabot bump.
 -   Someone who knows one product can use the other without relearning restore, secrets, devguard settings, the scaffolder or the logs.
 -   `CONVENTIONS.md` has an answer for every row in Track B, and the base's checks confirm both products follow it.
+-   Both products' command lines are Python, and the bash left in either is glue under rule 5.
+-   Every in-process piece is tested on every interpreter a preset names, and adding a preset adds its interpreter to the matrix.
 
 ## Appendix: how the overlap was measured
 
