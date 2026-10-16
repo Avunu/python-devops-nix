@@ -36,6 +36,15 @@ nixpkgs is not consistent about the option for an app's public hostname (nextclo
 -   **Status:** proposed.
 -   **Check:** yes. A check can list the variables each product's tools read and fail on one outside `<P>_NIX_*` that is not a framework's own or a listed alias.
 
+The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_MC` and `<P>_NIX_BACKUP_CACHE`, where frappe-nix had `FRAPPE_BACKUP_SOURCE`, `FRAPPE_BACKUP_MC` and `FRAPPE_BACKUP_CACHE`. Its `legacyEnv` argument reads an old name, with a warning, for the deprecation window. The connection itself keeps the names the `backup-access` secret already uses in both products, which belong to the secret's format rather than to a product: `BACKUPS_URL`, `BACKUPS_ACCESS_KEY`, `BACKUPS_SECRET_KEY`, `BACKUPS_BUCKET` and `BACKUPS_PREFIX`.
+
+## Secrets
+
+-   **Convention:** both products declare their secrets with `lib.secrets.mkModule` at `<p>-nix.secrets`, with one option tree: `enable`, `dir`, `relDir`, `recipients`, `hostRecipients`, `identityPaths`, `backupAccess.{enable,hosts}`, `extra.<name>.{format,var,hosts}`, plus frappe-nix's `sites` as a group. Shell variables are `<p>_<role>` (`odoo_backup_access`), and `<p>_<role>_<unit>` for a group's units (`frappe_db_password_erp_example_com`). The flake output is `flake.lib.secrets` in both. The dev-shell commands are `edit-secret`, `rekey-secrets`, `check-secrets` and `setup-backup-access`.
+-   **Today:** the option trees already match, except for frappe-nix's `sites`. The outputs are `flake.lib.frappeSecrets` and `flake.lib.odooSecrets`; they stay as aliases (`libAliases`) for one release. `backupAccess.hosts` defaults to false in frappe-nix and true in odoo-nix, whose server reads the same secret; that stays a product's choice of its role's default.
+-   **Status:** proposed (PLAN.md, Phase 2).
+-   **Check:** yes, the base's `lib-secrets-module` and `lib-secrets-schema` checks evaluate both shapes; a product's adoption shows its rules file and agenix-shell secret set unchanged, compared as JSON.
+
 ## Restore
 
 `bench restore` (frappe-nix) and `odoo db restore` (odoo-nix) take the same flags and options.
@@ -77,10 +86,10 @@ nixpkgs is not consistent about the option for an app's public hostname (nextclo
 
 ### Point in time (`--at`)
 
--   **Convention:** `--at` accepts ISO 8601 in both, and each product's own backup naming as well.
--   **Today:** frappe-nix takes `YYYYMMDD_HHMMSS`. odoo-nix takes a `YYYY_MM_DD_HH_MM_SS` prefix.
+-   **Convention:** `--at` accepts ISO 8601 in both, and each product's own backup naming as well. A backup's exact name wins; otherwise the value's digits are matched as a prefix of the backup's `YYYYMMDDHHMMSS`, so any leading part of a date or time picks the newest backup within it (`2026-10` is the newest of October 2026). A trailing `Z` is accepted; other offsets, fractions and words are refused. Times are the backup's own clock. Implemented once, in `lib.backups` (`parse_at`, `pick`).
+-   **Today:** frappe-nix takes `YYYYMMDD_HHMMSS`, exactly. odoo-nix takes a `YYYY_MM_DD_HH_MM_SS` prefix, with `-`, `:`, `T` and space as separators.
 -   **Status:** proposed.
--   **Check:** yes, a unit test of the parser.
+-   **Check:** yes, the base's `lib-backups` check tests the parser on every preset interpreter, and drives the command with each form.
 
 ## devguard
 
