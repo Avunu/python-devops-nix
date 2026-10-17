@@ -15,7 +15,7 @@ Each section gives:
 
 `<P>` stands for the product's environment prefix (`FRAPPE`, `ODOO`), and `<p>` for its lower-case name (`frappe`, `odoo`).
 
-Adopting a convention follows the renaming rule in [PLAN.md, Design rules](PLAN.md#design-rules): both products move to the name here, even when that is a breaking change. Every rename ships with a migration note in the product's changelog. Where an alias costs a few lines (`mkRenamedOptionModule`, or reading the old environment variable with a warning), the product keeps it until its next minor release.
+Adopting a convention follows the renaming rule in [PLAN.md, Design rules](PLAN.md#design-rules): both products move to the name here, even when that is a breaking change. Every rename ships with a migration note in the product's changelog. Where an alias costs a few lines (`mkRenamedOptionModule`, or reading the old environment variable with a warning), the product keeps it until its next major release, a deliberate `Release-As: N.0.0`, so a consumer that follows a `release-N` branch never loses a name it set. In flake-parts `perSystem` the alias goes on the product's internal `deprecations` list, folded into `lib.warn`, because `mkRenamedOptionModule` cannot warn there.
 
 ## Naming rule
 
@@ -170,7 +170,7 @@ Both products build their environment the same way: pyproject-nix, uv2nix and py
 ### Stale lock
 
 -   **Convention:** every virtualenv is wrapped in `(lib.python.lockAudit { workspaceRoot, hasPackage = name: pythonSet ? ${name}; label = "<p>-nix"; lock ? "uv.lock"; relock ? …; }).assertCurrent`, so a declared dependency missing from the lock fails evaluation with `<p>-nix: uv.lock does not cover every declared dependency`, a line per gap naming the member and the requirement, and how to re-lock, instead of uv2nix's `attribute '<name>' missing`.
--   **Today:** frappe-nix has `lib/lock-audit.nix`; odoo-nix has nothing, and an OCA submodule bump hits the raw uv2nix error.
+-   **Today:** frappe-nix has `lib/lock-audit.nix`; odoo-nix had nothing. In odoo-nix the audit catches a root dependency missing from `uv.lock`, which otherwise builds silently without it; an OCA addon's own `dynamic` requirements are out of its reach.
 -   **Status:** proposed.
 -   **Check:** yes, `lib-python-lock-audit` (an eval check).
 
