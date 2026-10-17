@@ -110,6 +110,12 @@ rec {
   #
   # Not writers.writePython3Bin: that runs flake8 with its own opinions at
   # build time. A shebang'd text file is dependency-free.
+  #
+  # `modules` is byte-compiled at build time with the interpreter the command
+  # runs on. A store path is read-only, so Python cannot cache bytecode there
+  # and would otherwise compile every module on every run. The hash-based
+  # `unchecked-hash` mode is used because every store file has the same mtime,
+  # which a timestamp check cannot tell apart.
   command =
     {
       pkgs,
@@ -120,6 +126,13 @@ rec {
       python ? pkgs.python3,
       passthru ? { },
     }:
+    let
+      compiled = pkgs.runCommandLocal "${name}-modules" { } ''
+        cp -r ${modules} $out
+        chmod -R u+w $out
+        ${python.interpreter} -m compileall -q --invalidation-mode unchecked-hash $out
+      '';
+    in
     pkgs.writeTextFile {
       inherit name passthru;
       destination = "/bin/${name}";
@@ -128,7 +141,7 @@ rec {
         #!${python.interpreter} -I
         import sys
 
-        sys.path.insert(0, ${builtins.toJSON "${modules}"})
+        sys.path.insert(0, ${builtins.toJSON "${compiled}"})
         ${imports}
 
         sys.exit(${main})
