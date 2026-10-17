@@ -149,6 +149,45 @@ The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_M
 -   **Status:** proposed (PLAN.md, Phase 3).
 -   **Check:** yes, the base's `lib-devguard` check grafts two packages into one virtualenv and asserts the `.pth` names and that both hooks fire.
 
+## Python environment
+
+Both products build their environment the same way: pyproject-nix, uv2nix and pyproject-build-systems (the product's inputs, not the base's), `sourcePreference = "wheel"`, `mkEditablePyprojectOverlay` for development, and `.pth` grafts. These sections fix the pieces around that (PLAN.md, Phase 4).
+
+### Package fixes
+
+-   **Convention:** a fix for a package that needs a system library lives in `lib.python.overrides { pkgs }`, one pyproject-nix overlay. The product composes it right after uv2nix's overlay and layers its own on top (`composeManyExtensions [ pyproject-build-systems.overlays.default workspaceOverlay (lib.python.overrides { inherit pkgs; }) productOverrides ]`). It covers psycopg2, python-ldap (with the `ldap_r` link fix), lxml, pycups, python-magic, pyvips and cairocffi, and touches only a package the set has. A build fix (headers, pkg-config, setuptools) applies only to a source build, so a wheel's derivation is left as uv2nix made it. A runtime fix (a library's store path where the package dlopens it) patches the installed files, so it reaches a wheel too. The product keeps the fixes only it needs (frappe-nix's mysqlclient, odoo-nix's OCB build and `lxml_html_clean`). `lib.python.packageOverrides { pkgs }` has the same fixes one by one, for a product that exports them to its consumers.
+-   **Today:** frappe-nix's `lib/overrides.nix` has mysqlclient, pycups, python-ldap (without the `ldap_r` fix), pyvips and cairocffi, applies only mysqlclient itself, and patches pyvips and cairocffi in `postPatch`, which fails on a wheel (a wheel build does not unpack). odoo-nix's has psycopg2, python-ldap, lxml and libsass, applies psycopg2 and python-ldap, gets pycups from its `pythonLibraries` option, and patches python-magic in `lib/python.nix`.
+-   **Status:** proposed (PLAN.md, Phase 4).
+-   **Check:** yes. The base's `lib-python-overrides` check applies the set to a stub package set. A product checks that its production environment's derivation is unchanged by adoption, except for the fixes new to it.
+
+### Tool interpreter with rich
+
+-   **Convention:** a product's own tooling (a banner, a command line) runs on `lib.python.rich { python, extraPackages ? ps: [ ] }`: nixpkgs' rich, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped. It is never added to the application's environment.
+-   **Today:** each product has `lib/rich-python.nix`. odoo-nix's has both fixes (odoo-nix#55); frappe-nix's has neither.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-python-rich` builds it on every preset interpreter, with rich's suite.
+
+### Stale lock
+
+-   **Convention:** every virtualenv is wrapped in `(lib.python.lockAudit { workspaceRoot, hasPackage = name: pythonSet ? ${name}; label = "<p>-nix"; lock ? "uv.lock"; relock ? …; }).assertCurrent`, so a declared dependency missing from the lock fails evaluation with `<p>-nix: uv.lock does not cover every declared dependency`, a line per gap naming the member and the requirement, and how to re-lock, instead of uv2nix's `attribute '<name>' missing`.
+-   **Today:** frappe-nix has `lib/lock-audit.nix`; odoo-nix has nothing, and an OCA submodule bump hits the raw uv2nix error.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-python-lock-audit` (an eval check).
+
+### Build dependencies
+
+-   **Convention:** `[tool.uv.extra-build-dependencies]` is derived from `uv.lock`, not kept by hand. Every package the lock has no wheel for gets `setuptools`; the product's `always` adds entries the lock cannot show (a package that is sdist-only elsewhere, a backend other than setuptools). The entries sit between `# >>> <p>-nix: sdist build deps (managed) >>>` and `# <<< <p>-nix: sdist build deps (managed) <<<`, and the relock command runs `lib.python.buildDeps { pkgs, label = "<p>-nix", always }` (`<p>-nix-build-deps update`) after `uv lock`, then locks again. `<p>-nix-build-deps check` fails when the block is out of date.
+-   **Today:** odoo-nix derives it with `lib/uv_build_deps.py`. frappe-nix's template carries a fixed list of about 100 entries.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-python-build-deps` runs the tests against both products' lock shapes on every preset interpreter.
+
+### Thread caps
+
+-   **Convention:** the application's environment sets `lib.python.threadCaps` (`OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `NUMEXPR_NUM_THREADS`, each `1`) everywhere it runs: the development shell, the NixOS services and the containers.
+-   **Today:** odoo-nix sets them from `lib/env.nix` in all three. frappe-nix sets none.
+-   **Status:** proposed.
+-   **Check:** no.
+
 ## Scaffolder
 
 frappe-nix's `frappe-init` and odoo-nix's `odoo-init`.

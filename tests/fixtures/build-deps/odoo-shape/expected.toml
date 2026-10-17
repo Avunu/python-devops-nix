@@ -1,0 +1,29 @@
+# odoo-nix's shape: a virtual root over OCB as a path source, with the managed
+# block at the top level of [tool.uv.extra-build-dependencies]. The block is
+# stale: it lacks the lock's sdist-only packages and lists one the lock no
+# longer has. expected.toml is this file after `update`.
+[project]
+name = "odoo-nix-fixture-18"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["odoo", "python-magic"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+odoo = { path = "odoo" }
+
+[tool.uv.extra-build-dependencies]
+# >>> odoo-nix: sdist build deps (managed) >>>
+"docopt" = ["setuptools"]
+"odoo" = ["setuptools"]
+"ofxparse" = ["setuptools"]
+"python-ldap" = ["setuptools"]
+"rjsmin" = ["setuptools"]
+"vobject" = ["setuptools"]
+# <<< odoo-nix: sdist build deps (managed) <<<
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

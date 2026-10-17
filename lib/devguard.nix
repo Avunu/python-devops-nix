@@ -6,7 +6,7 @@
 { lib }:
 
 let
-  pythonLib = import ./python.nix { inherit lib; };
+  pythonLib = import ./python { inherit lib; };
 in
 rec {
   # The core's tree, package-relative: __init__.py, _hook.py, _settings.py,

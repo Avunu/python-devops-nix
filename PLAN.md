@@ -223,6 +223,12 @@ Both products build their environment the same way: pyproject-nix, uv2nix and py
 
 -   **Thread caps.** odoo-nix's BLAS thread caps (`lib/env.nix`) move into the base and frappe-nix sets them too.
 
+#### Shape in the base
+
+-   No new inputs. The overrides are plain `final: prev:` overlays that need nothing from pyproject-nix's library, so the product's pyproject-nix, uv2nix and pyproject-build-systems stay the product's, and the base's lock stays two nodes.
+-   `lib.python.overrides { pkgs }` applies a build fix (headers, setuptools, the `ldap_r` link) to a source build only, and leaves a wheel's derivation as uv2nix made it. A runtime fix (a dlopen path) patches the installed files, so it reaches a wheel too. frappe-nix's pyvips and cairocffi fixes patched the source in `postPatch`, which fails on a wheel (pyproject-nix does not unpack one); the base patches the installed file instead. mysqlclient stays in frappe-nix, and libsass in odoo-nix: only one product builds each.
+-   `lib.python.buildDeps` takes the product's `always` as `{ <package> = [ <build dependency> ]; }`, which replaces the derived entry, so frappe-nix's non-setuptools entries (`frappe-runtime = ["hatchling"]`, cairocffi's cffi and pycparser) have a place. frappe-nix's derived list is far shorter than its template's: most of the template's entries have wheels in current locks.
+
 
 Done when both products build their development and production environments from these, the derivation hashes of the production environments are unchanged except where a fix is new to that product, and each product's VM tests pass.
 

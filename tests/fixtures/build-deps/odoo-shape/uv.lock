@@ -1,0 +1,181 @@
+# Trimmed from odoo-nix's tests/fixtures/18.0/uv.lock: the virtual root, OCB as
+# a path source, two sdist-only packages and wheel-built ones (one wheel each).
+version = 1
+revision = 5
+requires-python = ">=3.11"
+
+[[package]]
+name = "babel"
+version = "2.18.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/b2/51899539b6ceeeb420d40ed3cd4b7a40519404f9baf3d4ac99dc413a834b/babel-2.18.0.tar.gz", hash = "sha256:b80b99a14bd085fcacfa15c9165f651fbb3406e66cc603abf11c5750937c992d", size = 9959554, upload-time = "2026-02-01T12:30:56.078Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/f5/21d2de20e8b8b0408f0681956ca2c69f1320a3848ac50e6e7f39c6159675/babel-2.18.0-py3-none-any.whl", hash = "sha256:e2b422b277c2b9a9630c1d7903c2a00d0830c409c59ac8cae9081c92f1aeba35", size = 10196845, upload-time = "2026-02-01T12:30:53.445Z" },
+]
+
+[[package]]
+name = "docopt"
+version = "0.6.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
+
+[[package]]
+name = "lxml"
+version = "6.1.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz", hash = "sha256:45222d94ddd511536f3b2f7d9deae3b2339b4ce0f075f1ca25703b07cad9dd21", size = 4211198, upload-time = "2026-09-02T14:48:02.287Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/f1/95133bde7af7afb1f5ba6090b674d826b7a518318bba54bbbb633b27865a/lxml-6.1.3-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:c66f858b82497173f73366795fc6ee8171620e75a338506d6b2e7bc16f5fca11", size = 8563141, upload-time = "2026-09-02T14:46:42.334Z" },
+]
+
+[[package]]
+name = "odoo"
+version = "18.0"
+source = { directory = "odoo" }
+dependencies = [
+    { name = "asn1crypto" },
+    { name = "babel" },
+    { name = "cbor2" },
+    { name = "chardet" },
+    { name = "cryptography" },
+    { name = "decorator" },
+    { name = "docutils" },
+    { name = "geoip2" },
+    { name = "gevent" },
+    { name = "greenlet" },
+    { name = "idna" },
+    { name = "jinja2" },
+    { name = "libsass" },
+    { name = "lxml" },
+    { name = "markupsafe" },
+    { name = "num2words" },
+    { name = "ofxparse" },
+    { name = "openpyxl" },
+    { name = "passlib" },
+    { name = "pillow" },
+    { name = "polib" },
+    { name = "psutil" },
+    { name = "psycopg2" },
+    { name = "pyopenssl" },
+    { name = "pypdf2" },
+    { name = "pyserial" },
+    { name = "python-dateutil" },
+    { name = "python-stdnum" },
+    { name = "pytz" },
+    { name = "pyusb" },
+    { name = "qrcode" },
+    { name = "reportlab" },
+    { name = "requests" },
+    { name = "rjsmin" },
+    { name = "urllib3" },
+    { name = "vobject" },
+    { name = "werkzeug" },
+    { name = "xlrd" },
+    { name = "xlsxwriter" },
+    { name = "xlwt" },
+    { name = "zeep" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asn1crypto" },
+    { name = "babel", specifier = ">=1.0" },
+    { name = "cbor2" },
+    { name = "chardet" },
+    { name = "cryptography" },
+    { name = "decorator" },
+    { name = "docutils" },
+    { name = "geoip2" },
+    { name = "gevent" },
+    { name = "greenlet" },
+    { name = "idna" },
+    { name = "jinja2" },
+    { name = "libsass" },
+    { name = "lxml" },
+    { name = "markupsafe" },
+    { name = "num2words" },
+    { name = "ofxparse" },
+    { name = "openpyxl" },
+    { name = "passlib" },
+    { name = "pillow" },
+    { name = "polib" },
+    { name = "psutil" },
+    { name = "psycopg2", specifier = ">=2.2" },
+    { name = "pyopenssl" },
+    { name = "pypdf2" },
+    { name = "pyserial" },
+    { name = "python-dateutil" },
+    { name = "python-ldap", marker = "extra == 'ldap'" },
+    { name = "python-stdnum" },
+    { name = "pytz" },
+    { name = "pyusb", specifier = ">=1.0.0b1" },
+    { name = "qrcode" },
+    { name = "reportlab" },
+    { name = "requests" },
+    { name = "rjsmin" },
+    { name = "urllib3" },
+    { name = "vobject" },
+    { name = "werkzeug" },
+    { name = "xlrd" },
+    { name = "xlsxwriter" },
+    { name = "xlwt" },
+    { name = "zeep" },
+]
+provides-extras = ["ldap"]
+
+[[package]]
+name = "odoo-nix-fixture-18"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "odoo" },
+    { name = "python-magic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "freezegun" },
+    { name = "websocket-client" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "odoo", directory = "odoo" },
+    { name = "python-magic" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "freezegun" },
+    { name = "websocket-client" },
+]
+
+[[package]]
+name = "ofxparse"
+version = "0.21"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "lxml" },
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/45/ae/98a2acfd06d15869c4b1be7fb74849c8a67cf15b65181f1fe879547e7494/ofxparse-0.21.tar.gz", hash = "sha256:057ab68d31270dece4d1a47662096aa76341968aaee145ffc711cb44cbd5c4a7", size = 53837, upload-time = "2021-05-31T03:38:59.526Z" }
+
+[[package]]
+name = "psycopg2"
+version = "2.9.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/81/6ea19b8b28feb9405c8c87a307776614d6e404bdb98467d1ce10a39d2c1d/psycopg2-2.9.13.tar.gz", hash = "sha256:d36784fc2dae69523ba4b79c7d1d1b4d6e83e87836874f111262f4db940b16a6", size = 378068, upload-time = "2026-09-09T23:56:21.749Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/51/31d303c9aec410b853861077acc7a9b1f0a5b43f003061f748ab486735f5/psycopg2-2.9.13-cp311-cp311-win_amd64.whl", hash = "sha256:d16e7a5f5e400ac51ca953d42255804eff6c8a9650b1a2074f6ca6261d740382", size = 2767445, upload-time = "2026-09-09T23:53:52.844Z" },
+]
+
+[[package]]
+name = "python-magic"
+version = "0.4.27"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/db/0b3e28ac047452d079d375ec6798bf76a036a08182dbb39ed38116a49130/python-magic-0.4.27.tar.gz", hash = "sha256:c1ba14b08e4a5f5c31a302b7721239695b2f0f058d125bd5ce1ee36b9d9d3c3b", size = 14677, upload-time = "2022-06-07T20:16:59.508Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6c/73/9f872cb81fc5c3bb48f7227872c28975f998f3e7c2b1c16e95e6432bbb90/python_magic-0.4.27-py2.py3-none-any.whl", hash = "sha256:c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3", size = 13840, upload-time = "2022-06-07T20:16:57.763Z" },
+]
+
