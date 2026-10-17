@@ -243,6 +243,45 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`.
 -   **Status:** proposed.
 -   **Check:** yes, the systems the flake's outputs are defined for.
 
+## Development shell
+
+The leaf pieces inside both devenv modules (PLAN.md, Phase 5). The modules themselves stay in the products.
+
+### Ports
+
+-   **Convention:** every TCP port the shell binds is a base the product picks plus one offset, 0 to 899, a hash of the project's `name` (`sha256(name)[0:4] mod 900`), taken from `lib.ports`. A linked worktree (`.git` a file) salts the hash with its path when `ports.worktreeSalt` is on. `<P>_NIX_PORT_OFFSET` picks another offset for one shell and wins over `ports.offset`; a value outside 0 to 899 is ignored with a warning. The devenv module declares its `ports` tree with `lib.ports.options` (see [The development shell option tree](#the-development-shell-option-tree)); the bases stay the product's (frappe-nix: web 8000, MariaDB 3306, socket.io 9000, Mailpit 19000 to 21000; odoo-nix: HTTP 10000, gevent 11000, PostgreSQL 12000, Mailpit 13000 and 14000), clear of each other so a bench and a project never meet.
+-   **Today:** frappe-nix has `lib/ports.nix`; odoo-nix ported it in odoo-nix#58. The base's functions give both products' current ports for any name unchanged (`lib-ports` holds their values as golden ones), so adoption moves no port.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-ports`.
+
+### CI mode
+
+-   **Convention:** `<P>_NIX_CI` set to anything but empty, `0` or `false` puts the shell in CI mode, read when enterShell runs: `PC_TUI_ENABLED=0` and `DEVENV_IN_DIRENV_SHELL=true` are exported first, the interactive steps (node installs, the sources report) are skipped, and the banner is one line, `<p>-nix: CI mode (<name>[, <details>])`. Snippets from `lib.ciMode { label, envPrefix }`.
+-   **Today:** frappe-nix has `FRAPPE_NIX_CI` (`lib/ci-mode.nix`). odoo-nix has no CI mode.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-ci-mode` runs the snippets; a product's own check asserts its enterShell uses them.
+
+### Sources
+
+-   **Convention:** source repositories are git submodules, and one command handles them, `lib.sources.command` (`<p>-nix-sources`). Shell entry runs `enter`: a submodule this clone has never set up is checked out once, as a partial clone (`--filter=blob:none`, or `tree:0` for a path the product names treeless) of the branch `.gitmodules` pairs it with and no other (`--single-branch`), falling back to the remote's default branch; one set up before and now missing is reported, never brought back. Every entry also fetches a pin a partial clone lacks before git asks for it lazily, merges a partial clone's packs geometrically, sets `fetch.recurseSubmodules=false`, and gives a shallow clone its paired branch's history in place. The scaffolder's first clone is `clone` (or `clone()`, imported). Messages are `<p>-nix: …` on stderr, and entry always exits 0. The product passes its scope (frappe-nix `[ "apps" ]`, odoo-nix every submodule), whether checkouts recurse (odoo-nix), its treeless paths (odoo-nix's core), and the update and remove commands its hints name.
+-   **Today:** frappe-nix's `lib/apps-report.nix` (385 lines of bash) and odoo-nix's `lib/submodules-init.nix` (353), ported into each other twice; the scaffolders clone with their own `git clone --filter=blob:none --single-branch`.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-sources` runs one suite in both products' shapes on every preset interpreter.
+
+### Database copy-on-write
+
+-   **Convention:** on btrfs, the development database's datadir has copy-on-write off (`chattr +C`), from `lib.dbNocow { pkgs, label, strategy, server }` (`<p>-nix-db-nocow`). `prepare` runs on shell entry before the server starts: with `strategy = "datadir"` (MariaDB) it creates and marks the directory; with `"parent"` (PostgreSQL, whose initdb runs only when the datadir is missing) it marks the parent until initdb has made the datadir, then clears it. A datadir already holding data is reported with the command that fixes it, `migrate`, which refuses while the server runs (`server = "cmdline"`, a process with `--datadir=<dir>`; `"pidfile"`, a live `postmaster.pid`). Off btrfs both are silent no-ops, and `migrate` says so before looking for a server. Linux only.
+-   **Today:** frappe-nix's and odoo-nix's `lib/db-nocow.nix`, one per database.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-db-nocow` in both strategies; on whatever filesystem the builder has, and by hand on the other (`TMPDIR=<dir> bash tests/db-nocow.sh …`).
+
+### Banner
+
+-   **Convention:** the shell's banner is `lib.banner.command`, rendered with rich (on `lib.python.rich`, never the application's environment) from one JSON spec the product writes at evaluation: `title`, `commands`, `urls`, `facts`, `guard` (`enable`, `egress.{enable,allow}`, `mail.{enable,url,incoming}`) and `notes`. A fact known only when the shell starts is an `@name@` placeholder filled by `--var name=value` (`lib.banner.script`'s `vars`). Nothing in the spec is rich markup. The devguard lines read the same in both: `devguard OFF — nothing stops a restored database from reaching production`, `Egress: outbound connections blocked (allowed: …)`, `Mail: ALL outgoing email → Mailpit (…)`.
+-   **Today:** frappe-nix's `lib/banner.py` takes 17 flags; odoo-nix's takes nine positional arguments.
+-   **Status:** proposed.
+-   **Check:** yes, `lib-banner`.
+
 ## Command line
 
 ### Command layout
@@ -467,7 +506,7 @@ For both products:
 | `watch` | What the shell does when a file changes. `watch.python` (bool, default true): restart the server on a Python change. frappe-nix keeps `watch.{apps,excludePublishers,rtl,nativeSass}` and gains `watch.reassert`. | odoo-nix `dev.autoReload` and frappe-nix `runtime.dev` become `watch.python`; frappe-nix `assets.reassert` becomes `watch.reassert`. odoo-nix keeps its assertions that `watch.python` needs `workers = 0` and a reloading `devMode`. The `dev` tree is removed. |
 | `devguard` | Guard policy only: what is refused or redirected. Shared guards `egress`, `mail`, `jobs`, `backups`, `objectstore` and `webhooks`, each with `enable` and the same shape. Product guards beside them (frappe-nix `integrations`, `google`, `plaid`; odoo-nix `iap`). | `scheduler` and `crons` become `jobs`. `devguard.mail` keeps `enable`, `sender` and `unmute`. |
 | `mailpit` | The catcher as a service: `mailpit.{enable,host,port,httpPort}` and `mailpit.pop3.{enable,port,user,password}`, with ports defaulting from `ports`. On by default in both products, whether or not the mail guard is on. | `devguard.mail.{host,smtpPort/port,httpPort}` from both, and frappe-nix's `devguard.mail.pop3.*`. |
-| `ports` | `ports.{base,offset,worktreeSalt}` as frappe-nix has them (from `lib.ports`), and one read-only attribute per service port (`ports.http`, `ports.smtp`, `ports.mailUi`, `ports.db`, …) that the rest of the module reads. Each can still be forced with `lib.mkForce`. | odoo-nix `odooConf.httpPort`, `odooConf.geventPort` and `odooConf.dbPort`, and the Mailpit ports. |
+| `ports` | `ports.{base,offset,worktreeSalt}` as frappe-nix has them, and one derived attribute per service port (`ports.http`, `ports.smtp`, `ports.mailUi`, `ports.db`, …) that the rest of the module reads, all from `lib.ports.options`. Each can still be forced with `lib.mkForce`, which is why they are not `readOnly`: a read-only option refuses that override too. | odoo-nix `odooConf.httpPort`, `odooConf.geventPort` and `odooConf.dbPort`, and the Mailpit ports. |
 
 This keeps the decided name `port`: the SMTP port is `mailpit.port`, which defaults to `ports.smtp`, and the mail guard redirects to it.
 

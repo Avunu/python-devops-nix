@@ -33,6 +33,14 @@
             ) (builtins.readDir dir)
           )
         );
+
+      # db-nocow -> dbNocow.
+      camel =
+        name:
+        let
+          words = lib.splitString "-" name;
+        in
+        lib.concatStrings ([ (lib.head words) ] ++ map lib.toSentenceCase (lib.tail words));
     in
     flake-parts.lib.mkFlake { inherit inputs; } (
       { self, ... }:
@@ -48,7 +56,11 @@
         flake = {
           # lib/<name>.nix is `{ lib }: { … }` and becomes lib.<name>: pure
           # functions that take `pkgs` and the product's names as arguments.
-          lib = lib.mapAttrs (_: path: import path { inherit lib; }) (entries ./lib);
+          # A kebab-case file name is a camelCase attribute: lib/ci-mode.nix
+          # is lib.ciMode.
+          lib = lib.mapAttrs' (name: path: lib.nameValuePair (camel name) (import path { inherit lib; })) (
+            entries ./lib
+          );
 
           # modules/<name>.nix becomes flakeModules.<name>, a flake-parts module
           # a product imports. None ships yet.
