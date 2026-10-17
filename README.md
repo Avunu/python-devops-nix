@@ -19,7 +19,7 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 
 Code that is not Nix sits beside it: `python/` (standard library only, written to 3.11), `sh/` (bash glue), and `tests/`, with the stub products and fixtures the checks run against.
 
-What it provides so far, the secrets toolkit (PLAN.md, Phase 2) and repository hygiene (Phase 7):
+What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3) and repository hygiene (Phase 7):
 
 | Piece | What it does |
 | --- | --- |
@@ -30,6 +30,10 @@ What it provides so far, the secrets toolkit (PLAN.md, Phase 2) and repository h
 | `lib.backups.module` | python/backups.py, for a product that imports the fetch layer in-process |
 | `lib.backups.check { pkgs, product ? …, interpreters ? … }` | The fetch layer's tests, on every interpreter a preset names |
 | `lib.python.interpreters { presets ? [ ] }` | The interpreters the products' presets files name, for a test matrix |
+| `lib.devguard.mkPackage { pkgs, name, src, settings ? { } }` | The product's devguard package (`<p>_devguard`): the core in python/devguard (the post-import hook, settings, the patch helpers, the egress and mail_stdlib guards) merged with the product's tree (`_product.py` and its own guards), failing on a file both have, with `settings` baked in as `_baked.json` (CONVENTIONS.md, devguard) |
+| `lib.devguard.check { pkgs, product ? …, name ? …, interpreters ? … }` | The core's tests against a stub product, and the stub grafted beside a second graft, on every interpreter a preset names |
+| `lib.python.withGrafts { python, env, grafts }` | Grafts packages into a virtualenv's site-packages, each loaded at start-up by `zzz-<module>.pth` |
+| `lib.python.mkGraft { pkgs, name, src }`, `lib.python.hook` | A graft's package with the shared post-import hook (`_hook.py`) beside it |
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval` and `nixosTest`, each named `<product>-<x>-check` (CONVENTIONS.md, Tests) |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy |
 | `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | The product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings (CONVENTIONS.md, Repository files) |
