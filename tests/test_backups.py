@@ -190,6 +190,23 @@ class DirectoryStore(Case):
             self.b.fetch(store, "prod", dest=self.cache, use_cache=False)
             self.assertEqual(path.read_text(), NAMES[-1])
 
+    def test_the_cache_is_private(self):
+        # A cached backup is a copy of production's data. DEST is the
+        # caller's; what fetch creates under it, and every file, is not.
+        self.cache.mkdir(mode=0o755, exist_ok=True)
+        with self.b.store() as store:
+            path = self.b.fetch(store, "prod", dest=self.cache).paths["dump"]
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(path.parent.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(self.cache.stat().st_mode & 0o777, 0o755)
+            # A copy cached before this was private is tightened on reuse.
+            path.chmod(0o644)
+            path.parent.chmod(0o755)
+            self.b.fetch(store, "prod", dest=self.cache)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+
     def test_unknown_database_has_no_backups(self):
         with self.b.store() as store:
             with self.assertRaises(backups.BackupError) as ctx:
