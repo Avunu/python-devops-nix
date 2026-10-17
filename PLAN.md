@@ -242,6 +242,15 @@ These are leaf functions inside the devenv modules. The modules themselves stay 
 -   **`lib.dbNocow`**: the btrfs NOCOW marking (`lib/db-nocow.nix`, 0.66). The product says which directories to mark.
 -   **`lib.banner`**: one rich renderer taking JSON (title, commands, URLs, guard state) from Nix. It replaces odoo-nix's nine positional arguments and frappe-nix's flags.
 
+#### Shape in the base
+
+-   **`lib.ports`** keeps frappe-nix's functions, with the product's bases (`portsFor bases offset`) and variable (`parseEnvOffset { label, variable }`) passed in. Both products' current ports come out unchanged for any name (`lib-ports` holds their values). `lib.ports.options` is the `ports` option tree; frappe-nix's app-mode-only salt and variable are its `saltApplies` and `envApplies`. The per-service ports are derived defaults rather than `readOnly`, since a read-only option refuses `lib.mkForce` as well.
+-   **`lib.ciMode { label, envPrefix }`** is frappe-nix's snippets; `banner { name, details, interactive }` reproduces frappe-nix's line exactly.
+-   **`lib.sources`** is python/sources.py, one command with `enter` (shell entry) and `clone` (the scaffolder's first clone), configured by scope (frappe-nix `apps/`, odoo-nix every submodule), recursion, treeless paths and the product's update and remove commands. odoo-nix's checkout ran `git submodule update --recursive` without `--init`, which never checked out a nested submodule; the base adds `--init`. Both products' messages survive with `—` throughout, on stderr, and the lists in path order.
+-   **`lib.dbNocow`** stays bash, as Track D's "What stays bash" has it, with the product's `strategy` (mark the datadir, or its parent before initdb) and `server` (a `--datadir=` process, or a live pid file). `prepare` takes several directories in both.
+-   **`lib.banner`** prints the URLs first, then the product's facts, the guard state and the notes. A value known only at run time is an `@name@` placeholder filled by `--var`.
+-   A kebab-case `lib/` file is a camelCase attribute (`lib/db-nocow.nix` is `lib.dbNocow`).
+
 Done when odoo-nix's shell starts on per-project ports, both shells start in CI mode in CI, and the product copies are deleted.
 
 ### Phase 6: production pieces
@@ -348,7 +357,7 @@ Decided on 2026-10-17, for both products:
 | watch | What the shell does when a file changes. watch.python (bool, default true): restart the server on a Python change. frappe-nix keeps watch.{apps,excludePublishers,rtl,nativeSass} and gains watch.reassert (from assets.reassert). | odoo-nix dev.autoReload → watch.python; frappe-nix runtime.dev → watch.python. odoo-nix's assertions that watch.python needs workers = 0 and a devMode with reload stay. The dev tree is removed. |
 | devguard | Guard policy only: what is refused or redirected. Shared guards egress, mail, jobs, backups, objectstore, webhooks, each with enable and the same shape. Product guards beside them (integrations, google, plaid; iap). | scheduler and crons → jobs. devguard.mail keeps enable, sender and unmute (frappe-nix). |
 | mailpit | The catcher as a service: mailpit.{enable,host,port,httpPort}, mailpit.pop3.{enable,port,user,password}. The ports default from ports. Default: on whenever devguard.mail.enable is, and on in both products otherwise too, since a catcher that is up costs nothing and a developer testing mail with the guard off still wants one. | frappe-nix and odoo-nix devguard.mail.{host,smtpPort/port,httpPort}, frappe-nix devguard.mail.pop3.*. |
-| ports | ports.{base,offset,worktreeSalt} as frappe-nix has them, from lib.ports, and one read-only attribute per service port (ports.http, ports.smtp, ports.mailUi, ports.db, …) that the rest of the module reads. Each stays overridable with lib.mkForce for the rare fixed-port case. | odoo-nix odooConf.httpPort, odooConf.geventPort, odooConf.dbPort, and the Mailpit ports. odooConf, renamed `settings` (see the framework config row), keeps only options that end up in odoo.conf. |
+| ports | ports.{base,offset,worktreeSalt} as frappe-nix has them, from lib.ports, and one derived attribute per service port (ports.http, ports.smtp, ports.mailUi, ports.db, …) that the rest of the module reads. Each stays overridable with lib.mkForce for the rare fixed-port case, so none is readOnly (a read-only option refuses that override too). | odoo-nix odooConf.httpPort, odooConf.geventPort, odooConf.dbPort, and the Mailpit ports. odooConf, renamed `settings` (see the framework config row), keeps only options that end up in odoo.conf. |
 
 This keeps the decided name `port`. The SMTP port is `mailpit.port`, which defaults to `ports.smtp`, and the mail guard redirects to it.
 

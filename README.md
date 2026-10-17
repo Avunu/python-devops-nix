@@ -9,7 +9,7 @@ It holds the pieces that are independent of either product and expensive to get 
 
 ## Layout
 
-The flake is built on flake-parts, and its only inputs are nixpkgs and flake-parts. Each output is read from one directory, so adding a piece means adding a file:
+The flake is built on flake-parts, and its only inputs are nixpkgs and flake-parts. Each output is read from one directory, so adding a piece means adding a file (a kebab-case `lib/` file is a camelCase attribute: `lib/db-nocow.nix` is `lib.dbNocow`):
 
 | Path | Output |
 | --- | --- |
@@ -19,7 +19,7 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 
 Code that is not Nix sits beside it: `python/` (standard library only, written to 3.11), `sh/` (bash glue), and `tests/`, with the stub products and fixtures the checks run against.
 
-What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4) and repository hygiene (Phase 7):
+What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4), the development shell pieces (Phase 5) and repository hygiene (Phase 7):
 
 | Piece | What it does |
 | --- | --- |
@@ -39,6 +39,11 @@ What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard co
 | `lib.python.lockAudit { workspaceRoot, hasPackage, label, lock ? "uv.lock", relock ? …, rootPyproject ? … }` | `{ missing, message, assertCurrent }`: a stale `uv.lock` as a sentence naming the member and the requirement, instead of uv2nix's `attribute missing` |
 | `lib.python.buildDeps { pkgs, label, always ? { }, python ? … }` | `<label>-build-deps {update,check}`: `[tool.uv.extra-build-dependencies]` derived from `uv.lock` (python/uv_build_deps.py, also `lib.python.buildDepsModule`) |
 | `lib.python.threadCaps` | The BLAS and OpenMP thread caps for the application's environment |
+| `lib.ports.options { cfg, name, label, variable, bases, descriptions ? { }, baseService ? null, saltDefault ? true, saltApplies ? true, envApplies ? true, … }` | The `ports` option tree: `worktreeSalt`, `offset` (a hash of the name, 0 to 899), `base` (pins `baseService`) and one derived port per entry of `bases`, overridable with `lib.mkForce`. `lib.ports.{offsetFor,seed,gitKindAt,parseEnvOffset,effectiveOffset,portsFor}` are the pure pieces (CONVENTIONS.md, Ports) |
+| `lib.ciMode { label, envPrefix }` | enterShell snippets for `<P>_NIX_CI`: `isCi`, `exports` (`PC_TUI_ENABLED=0`, `DEVENV_IN_DIRENV_SHELL=true`), `unlessCi <shell>`, and `banner { name, details ? "", interactive }`, a one-line banner in CI (CONVENTIONS.md, CI mode) |
+| `lib.sources.command { pkgs, label, noun ? "project", scope ? [ ], recursive ? false, treeless ? [ ], updateCommand ? "", removeCommand ? "", nestedHint ? null, python ? … }` | `<label>-sources enter [ROOT]`, shell entry's submodule checkout (once per clone, paired branch, partial clone, prefetched pins, merged packs, shallow clones given their history), and `<label>-sources clone [--branch B] [--treeless] [--require-branch] URL PATH`, a scaffolder's first clone. python/sources.py, also `lib.sources.module` (CONVENTIONS.md, Sources) |
+| `lib.dbNocow { pkgs, label, strategy, server, pidFile ? "postmaster.pid" }` | `<label>-db-nocow {prepare,migrate}`: btrfs NOCOW for the database datadir, marking the datadir (`strategy = "datadir"`, MariaDB) or its parent before initdb (`"parent"`, PostgreSQL), and a server found by `--datadir=` (`server = "cmdline"`) or a live pid file (`"pidfile"`) (CONVENTIONS.md, Database copy-on-write) |
+| `lib.banner.command { pkgs, name, python ? … }`, `lib.banner.script { pkgs, banner, spec, vars ? { } }` | The shell banner, rendered with rich from a JSON spec (title, commands, URLs, facts, guard state, notes) with `@name@` placeholders filled at run time. python/banner.py, also `lib.banner.module` (CONVENTIONS.md, Banner) |
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval` and `nixosTest`, each named `<product>-<x>-check` (CONVENTIONS.md, Tests) |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy |
 | `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | The product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings (CONVENTIONS.md, Repository files) |
