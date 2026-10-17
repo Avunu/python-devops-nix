@@ -211,6 +211,12 @@ def pick(sets: Sequence[BackupSet], at: str | None) -> BackupSet:
     return matching[-1]
 
 
+def _private_dir(path: Path) -> None:
+    """Create PATH if missing, and make it the owner's alone either way."""
+    path.mkdir(mode=0o700, exist_ok=True)
+    path.chmod(0o700)
+
+
 def _sanitize(location: str) -> str:
     """A cache directory name for a source: one path component, no separators."""
     return re.sub(r"[^A-Za-z0-9._-]", "_", location.rstrip("/") + "/")
@@ -548,9 +554,14 @@ class Backups:
             raise BackupError(*chosen.problem.splitlines())
         say(f"backup: {chosen.name}")
 
+        # A cached backup is a copy of production's data: the directories this
+        # creates are the owner's alone, and so is every file in them. DEST
+        # itself is the caller's and keeps its mode.
         source_dir = Path(dest) / _sanitize(store.path(scope))
         set_dir = source_dir / chosen.name
-        set_dir.mkdir(parents=True, exist_ok=True)
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        _private_dir(source_dir)
+        _private_dir(set_dir)
 
         paths: dict[str, Path | None] = {}
         for role in self.roles:
@@ -581,6 +592,7 @@ class Backups:
         local = set_dir / obj.key.rsplit("/", 1)[-1]
         if use_cache and local.is_file() and local.stat().st_size == obj.size:
             say(f"cached  {obj.key}")
+            local.chmod(0o600)
             return local
         say(f"fetch   {obj.key}")
         partial = local.with_name(local.name + ".partial")
@@ -596,6 +608,7 @@ class Backups:
             raise BackupError(
                 f"short download: {obj.key} got {have} of {obj.size} bytes"
             )
+        partial.chmod(0o600)
         partial.replace(local)
         return local
 
