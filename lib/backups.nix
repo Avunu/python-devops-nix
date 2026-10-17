@@ -5,7 +5,7 @@
 { lib }:
 
 let
-  pythonLib = import ./python.nix { inherit lib; };
+  pythonLib = import ./python { inherit lib; };
 in
 rec {
   # The module itself, for a product that imports it in-process: copy it into

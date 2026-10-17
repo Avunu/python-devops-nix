@@ -1,6 +1,81 @@
-# Helpers for the Python this repository ships (PLAN.md, Python versions).
+# Helpers for the Python this repository ships (PLAN.md, Python versions), and
+# the pieces of a product's Python environment both products build the same
+# way (PLAN.md, Phase 4): the package fixes, rich for a product's tooling, the
+# stale-lock audit, the sdist build dependencies and the BLAS thread caps.
 { lib }:
+let
+  overrideSet = import ./overrides.nix { inherit lib; };
+in
 rec {
+  # The fixes for packages that need a system library, as one pyproject-nix
+  # overlay a product composes after uv2nix's and layers its own on top of
+  # (lib/python/overrides.nix has the list and the composition), and one by
+  # one, as { <package> = overlay; }.
+  inherit (overrideSet) overrides packageOverrides;
+
+  # A nixpkgs interpreter with rich (and `extraPackages`), for a product's own
+  # tooling: rich { python, extraPackages ? ps: [ ] }. lib/python/rich.nix.
+  rich = import ./rich.nix;
+
+  # The stale-lock audit: { missing, message, assertCurrent } for a workspace
+  # and the package set uv2nix resolved from its lock. lib/python/lock-audit.nix.
+  lockAudit = import ./lock-audit.nix { inherit lib; };
+
+  # BLAS and OpenMP thread pools capped at one thread, for the application's
+  # environment in every place it runs (the dev shell, the NixOS service, the
+  # container). NumPy, SciPy, pandas and matplotlib, any of which an add-on may
+  # pull in, size their pools to the host's CPU count on import. A
+  # request-serving application gains nothing from that pool: it costs OS
+  # threads on every import, the thread burst can fail outright on a many-core
+  # host (`OpenBLAS blas_thread_init: pthread_create failed ... Resource
+  # temporarily unavailable`), and the pool does not survive a forking
+  # server's fork cleanly. odoo-nix's lib/env.nix.
+  threadCaps = {
+    OPENBLAS_NUM_THREADS = "1";
+    OMP_NUM_THREADS = "1";
+    MKL_NUM_THREADS = "1";
+    NUMEXPR_NUM_THREADS = "1";
+  };
+
+  # python/uv_build_deps.py, for a product that imports it in-process.
+  buildDepsModule = ../../python/uv_build_deps.py;
+
+  # The command that keeps [tool.uv.extra-build-dependencies] in step with
+  # uv.lock: `<name> {update,check} [pyproject.toml] [uv.lock]`. See
+  # python/uv_build_deps.py.
+  #
+  #   label   the product's name, in the sentinel comments around the managed
+  #           block (`# >>> <label>: sdist build deps (managed) >>>`) and in
+  #           its messages
+  #   always  { <package> = [ <build dependency> ... ]; }: listed whatever the
+  #           lock says, in place of the derived entry
+  #   python  the interpreter it runs on (a tool: PLAN.md, Python versions)
+  buildDeps =
+    {
+      pkgs,
+      label,
+      always ? { },
+      python ? pkgs.python3,
+      name ? "${label}-build-deps",
+    }:
+    command {
+      inherit pkgs name python;
+      modules = builtins.path {
+        name = "uv-build-deps";
+        path = ../../python;
+        filter = path: _type: baseNameOf path == "uv_build_deps.py";
+      };
+      imports = "import uv_build_deps";
+      main = ''
+        uv_build_deps.main(
+            sys.argv[1:],
+            label=${builtins.toJSON label},
+            always=${builtins.toJSON always},
+            prog=${builtins.toJSON name},
+        )'';
+      passthru = { inherit label always; };
+    };
+
   # The interpreters the products' presets name, as nixpkgs attribute names.
   #
   # `presets` is a list of the products' presets files: JSON objects whose
@@ -65,7 +140,7 @@ rec {
   # `on_import(name, callback)`. Each graft gets its own copy, under its own
   # package, so a graft that ships to production imports nothing from one that
   # must not (PLAN.md, design rule 7). `mkGraft` puts it in place.
-  hook = ../python/devguard/_hook.py;
+  hook = ../../python/devguard/_hook.py;
 
   # A package to graft (`withGrafts`): `src`, the package's own directory
   # (holding its __init__.py), copied to $out/<name>/ with `hook` beside it as

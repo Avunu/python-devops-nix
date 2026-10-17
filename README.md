@@ -13,13 +13,13 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 
 | Path | Output |
 | --- | --- |
-| `lib/<name>.nix` | `lib.<name>`: functions that take `pkgs` and the product's names as arguments |
+| `lib/<name>.nix`, `lib/<name>/default.nix` | `lib.<name>`: functions that take `pkgs` and the product's names as arguments |
 | `modules/<name>.nix` | `flakeModules.<name>`: flake-parts modules a product imports |
 | `checks/<name>.nix` | `checks.<system>.<name>`, built in CI |
 
 Code that is not Nix sits beside it: `python/` (standard library only, written to 3.11), `sh/` (bash glue), and `tests/`, with the stub products and fixtures the checks run against.
 
-What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3) and repository hygiene (Phase 7):
+What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4) and repository hygiene (Phase 7):
 
 | Piece | What it does |
 | --- | --- |
@@ -34,6 +34,11 @@ What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard co
 | `lib.devguard.check { pkgs, product ? …, name ? …, interpreters ? … }` | The core's tests against a stub product, and the stub grafted beside a second graft, on every interpreter a preset names |
 | `lib.python.withGrafts { python, env, grafts }` | Grafts packages into a virtualenv's site-packages, each loaded at start-up by `zzz-<module>.pth` |
 | `lib.python.mkGraft { pkgs, name, src }`, `lib.python.hook` | A graft's package with the shared post-import hook (`_hook.py`) beside it |
+| `lib.python.overrides { pkgs }` | One pyproject-nix overlay with the fixes for packages that need a system library (psycopg2, python-ldap, lxml, pycups, python-magic, pyvips, cairocffi), composed after uv2nix's overlay and before the product's own. `lib.python.packageOverrides { pkgs }` has them one by one (CONVENTIONS.md, Package fixes) |
+| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich for a product's tooling, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped |
+| `lib.python.lockAudit { workspaceRoot, hasPackage, label, lock ? "uv.lock", relock ? …, rootPyproject ? … }` | `{ missing, message, assertCurrent }`: a stale `uv.lock` as a sentence naming the member and the requirement, instead of uv2nix's `attribute missing` |
+| `lib.python.buildDeps { pkgs, label, always ? { }, python ? … }` | `<label>-build-deps {update,check}`: `[tool.uv.extra-build-dependencies]` derived from `uv.lock` (python/uv_build_deps.py, also `lib.python.buildDepsModule`) |
+| `lib.python.threadCaps` | The BLAS and OpenMP thread caps for the application's environment |
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval` and `nixosTest`, each named `<product>-<x>-check` (CONVENTIONS.md, Tests) |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy |
 | `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | The product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings (CONVENTIONS.md, Repository files) |

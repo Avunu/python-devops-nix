@@ -21,7 +21,7 @@ let
     types
     ;
 
-  pythonLib = import ./python.nix { inherit lib; };
+  pythonLib = import ./python { inherit lib; };
 
   # "frappe-nix.secrets" or [ "frappe-nix" "secrets" ] -> [ "frappe-nix" "secrets" ]
   optionPathOf = p: if builtins.isList p then p else lib.splitString "." p;

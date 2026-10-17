@@ -1,0 +1,27 @@
+# frappe-nix's shape: a virtual root whose members are editable, the framework
+# from a URL archive, git sources, and entries whose backend is not setuptools
+# (`always`). The managed block is indented and empty, as a freshly scaffolded
+# project's is, and a hand-kept entry sits after it. expected.toml is this file
+# after `update`.
+[project]
+name = "frappe-nix-dev"
+version = "0.0.0"
+requires-python = ">=3.14,<3.15"
+dependencies = ["frappe", "frappe-runtime"]
+
+[tool.uv]
+package = false
+
+[tool.uv.extra-build-dependencies]
+    # >>> frappe-nix: sdist build deps (managed) >>>
+    "cairocffi" = ["setuptools", "cffi", "pycparser"]
+    "docopt" = ["setuptools"]
+    "frappe" = ["setuptools"]
+    "frappe-runtime" = ["hatchling"]
+    "gunicorn" = ["setuptools"]
+    "mysqlclient" = ["setuptools"]
+    "pypika" = ["setuptools"]
+    "pyqrcode" = ["setuptools"]
+    "rauth" = ["setuptools"]
+    # <<< frappe-nix: sdist build deps (managed) <<<
+"hand-kept" = ["flit-core"]
