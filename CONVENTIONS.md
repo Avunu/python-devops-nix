@@ -417,11 +417,11 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`.
 
 ## The development shell option tree
 
-**Status: proposed, awaiting review.**
+**Status:** _decided_ (adopted as proposed on 2026-10-17).
 
 Both devenv modules have a `devguard` tree. odoo-nix also has a `dev` tree, which holds one option, `dev.autoReload`. Since the whole module configures the development shell, `dev` names nothing, and the options related to it are spread elsewhere in both products (odoo-nix: `odooConf.devMode`, `odooConf.workers`, `testBrowser`, `ide`; frappe-nix: `runtime.dev`, `watch.*`, `assets.reassert.*`). `devguard` names a real subsystem and stays, but holds the Mailpit catcher's settings, which are not a guard. Ports are spread over four trees in odoo-nix.
 
-The proposal, for both products:
+For both products:
 
 | Tree | Holds | Moves in |
 | --- | --- | --- |

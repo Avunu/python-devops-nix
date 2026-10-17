@@ -1,6 +1,6 @@
 # python-devops-nix: plan
 
-Status: proposed, 2026-10-16. Nothing is extracted yet. This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
+Status: approved 2026-10-16, in progress. Phases 0 to 3 and 7 are done in both products, and Track D's D1 and D2 in frappe-nix; see the merged pull requests in each repository. This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
 
 ## Why this repository exists
 
@@ -335,7 +335,7 @@ frappe-nix has no `dev` tree. Its equivalents are spread too: `runtime.dev` (rel
 
 **Ports are spread across four trees.** frappe-nix derives every port from `ports.{base,offset,worktreeSalt}`. odoo-nix sets its ports in three places: `odooConf.httpPort`, `odooConf.geventPort` and `odooConf.dbPort` (5432 in `odooConf`), and `devguard.mail.{port,httpPort}`.
 
-The proposal for both products:
+Decided on 2026-10-17, for both products:
 
 | Tree | Holds | Moves in |
 | --- | --- | --- |
@@ -522,7 +522,7 @@ None. The following were settled on 2026-10-16 and are recorded in Track B:
 -   odoo-nix moves to per-project ports.
 -   The devguard option names are `mail.port` and `jobs.extraBlocked`.
 
-The development shell option tree (`watch`, `devguard`, `mailpit`, `ports`) is a proposal awaiting review.
+The development shell option tree (`watch`, `devguard`, `mailpit`, `ports`) was adopted as proposed on 2026-10-17.
 
 ## wordpress-nix
 
