@@ -102,8 +102,8 @@ The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_M
 
 ### Job denylist
 
--   **Convention:** `devguard.jobs.{enable,extraBlocked}`, and `blocked_jobs` in the Python settings. Log lines keep the framework's words (scheduler, crons). frappe-nix's `blockServerScripts` moves to `devguard.jobs.blockServerScripts`.
--   **Today:** frappe-nix has `scheduler.extraBlockedJobs` and `blocked_jobs`. odoo-nix has `crons.extraBlocked` and `blocked_crons`.
+-   **Convention:** `devguard.jobs.{enable,extraBlocked}`, and `blocked_jobs` in the Python settings. Log lines keep the framework's words (scheduler, crons). frappe-nix's `blockServerScripts` moves to `devguard.jobs.blockServerScripts`. In the Python settings, `guards.jobs.blocked_jobs` is the product's built-in list (its default), `guards.jobs.extra_blocked` the consumer's additions (`extraBlocked`, baked), and the guard reads their union, in order, as `settings().blocked_jobs`, which the core provides.
+-   **Today:** frappe-nix has `scheduler.extraBlockedJobs`, and `blocked_jobs` with `extra_blocked_jobs` in Python. odoo-nix has `crons.extraBlocked`, and `blocked_crons` with `extra_blocked_crons`.
 -   **Status:** decided.
 -   **Check:** yes, the option paths exist and the baked settings carry `blocked_jobs`.
 
@@ -113,6 +113,41 @@ The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_M
 -   **Today:** the names already match. The shapes under them differ.
 -   **Status:** proposed.
 -   **Check:** yes, compare the option trees under each guard.
+
+### The core and the product's package
+
+-   **Convention:** each product's guard package is `<p>_devguard`, built by `lib.devguard.mkPackage { pkgs, name, src, settings }` from this repository's core (`python/devguard`: `__init__.py`, `_hook.py`, `_settings.py`, `_patch.py`, `guards/egress.py`, `guards/mail_stdlib.py`) and the product's own tree, and grafted into the development virtualenv only, with `lib.python.withGrafts`. The build fails on a file both trees have, so a product cannot shadow the core. The product's tree holds:
+
+    -   `_product.py`, the contract:
+
+        | Name | Required | What |
+        | --- | --- | --- |
+        | `ENV_PREFIX` | yes | `<P>`. The settings variables are `<P>_DEVGUARD_*`. |
+        | `FRAMEWORK`, `PRODUCT` | yes | What a fail-closed `require` names: "`<FRAMEWORK>`'s internals have moved … Update `<PRODUCT>`". |
+        | `DEFAULTS` | no | `{ "guards": { <guard>: { <key>: value } } }`, merged over the core's defaults key by key: the product's own guards' settings, and any core default it changes. |
+        | `GUARDS` | no | The product's guard modules, by name under `guards/`, installed after `egress` and `mail_stdlib`, in order. |
+        | `EGRESS_ALLOW` | no | `((<guard>, <key>), …)`: settings lists egress allows as well as `egress.allow_hosts` (frappe-nix's `("integrations", "allow_hosts")`). |
+        | `log(guard, message)` | no | An extra log sink beside stderr (frappe-nix's `frappe.logger`). Its exceptions are swallowed. |
+        | `user_error(guard, message)` | no | Raises the framework's user-facing error (`frappe.throw`, Odoo's `UserError`), for `_patch.user_error`. Without it, or if it returns, `DevGuardBlocked` is raised. |
+
+    -   `guards/<guard>.py` for each guard of its own, each with `NAME` and `install()`, built on the core's `_hook.on_import` and `_patch` helpers;
+    -   its own helpers, in a module of its own (`_frappe.py`, `_odoo.py`), not in `_patch.py`.
+
+    The package name is not in the contract: the core reads it from the package itself, so the log prefix cannot disagree with the directory.
+
+    Settings resolve, highest first: the environment (`<P>_DEVGUARD_<GUARD>_<KEY>`, plus `<P>_DEVGUARD_ENABLED` and `<P>_DEVGUARD_DISABLE=<guard>,…`); the runtime file (`$<P>_DEVGUARD_RUNTIME`, else `$DEVENV_RUNTIME/devguard-runtime.json`), which the shell writes with the values only known once its processes start; the baked `_baked.json` (`mkPackage`'s `settings`); the product's defaults; the core's. The schema is `{ "enabled", "guards": { <guard>: { "enable", … } } }`, in snake_case. The core reads `egress.allow_hosts`, `mail.{host,port,http_port,pop3_enabled,pop3_port,pop3_user,pop3_password}` and `jobs.{blocked_jobs,extra_blocked}`; every other key is the product's.
+
+    What users see is fixed by the core: the `.pth` file is `zzz-<p>-devguard.pth`; every log line is `WARNING <p>_devguard[<guard>] <message>`, a guard's first is `… ACTIVE -- <what it does>`, and a refusal raises `DevGuardBlocked` (an `OSError`) reading `<p>_devguard[<guard>]: <message>`. `<P>_NIX_DEVGUARD` (see [Tool-owned variables](#tool-owned-variables)) is the shell's statement that devguard is on, for the product's own tools; the guard package does not read it.
+-   **Today:** each product has its own copy of the core. frappe-nix bakes a Python literal (`_baked.py`, through `toPy`) and has the runtime file; odoo-nix bakes `_baked.json` and has no runtime file. frappe-nix's banner reads `ACTIVE —`, odoo-nix's `ACTIVE --`. odoo-nix's egress lacks `passage()`, IPv4-mapped loopback and `*.localhost`.
+-   **Status:** proposed (PLAN.md, Phase 3).
+-   **Check:** yes. `lib.devguard.check { pkgs, product, interpreters }` runs the core's tests against a stub product on every interpreter the product's presets name, and the merged build refuses a shadowed core file. Each product keeps a check that its production environment has no `<p>_devguard`.
+
+### Grafts
+
+-   **Convention:** every package loaded at interpreter start, devguard or not, is grafted with `lib.python.withGrafts { python, env, grafts }`, which writes `zzz-<module, _ as ->.pth` running `import <module>; <module>.install()`. A graft that needs a post-import hook is built with `lib.python.mkGraft { pkgs, name, src }`, which adds the shared `_hook.py`; no graft carries its own copy.
+-   **Today:** frappe-nix has `graftFor` and `withGrafts` in `lib/python.nix`, and five copies of `_hook.py` (devguard, unixsock, nodebuild, benchcli, journald). odoo-nix has `withDevguard`, and its journald shim's `_NetsvcImportHook`.
+-   **Status:** proposed (PLAN.md, Phase 3).
+-   **Check:** yes, the base's `lib-devguard` check grafts two packages into one virtualenv and asserts the `.pth` names and that both hooks fire.
 
 ## Scaffolder
 
