@@ -2,7 +2,7 @@
 
 Shared building blocks and conventions for Avunu's Nix packaging of Python application frameworks: [frappe-nix](https://github.com/Avunu/frappe-nix) and [odoo-nix](https://github.com/Avunu/odoo-nix).
 
-It holds the pieces that are independent of either product and expensive to get wrong: the secrets toolkit and backup access, the core of the development guard rails (devguard), the Python environment fixes, small development-shell and NixOS helpers, and repository hygiene. The products' development shells, NixOS modules and containers stay in the products.
+It holds the pieces that are independent of either product and expensive to get wrong: the secrets toolkit and backup access, the core of the development guard rails (devguard), the Python environment fixes, small development-shell helpers, the production pieces inside the NixOS modules (unit hardening, migrate on deploy, sockets, nginx and journald logging), and repository hygiene. The products' development shells, NixOS modules and containers stay in the products.
 
 -   [PLAN.md](PLAN.md): what moves here, in what order, and how products consume it.
 -   [CONVENTIONS.md](CONVENTIONS.md): how both products name and do the jobs they share. Product maintainers read this before adding an option, flag, environment variable or command that the other product also has.
@@ -19,7 +19,7 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 
 Code that is not Nix sits beside it: `python/` (standard library only, written to 3.11), `sh/` (bash glue), and `tests/`, with the stub products and fixtures the checks run against.
 
-What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4), the development shell pieces (Phase 5) and repository hygiene (Phase 7):
+What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4), the development shell pieces (Phase 5), the production pieces (Phase 6) and repository hygiene (Phase 7):
 
 | Piece | What it does |
 | --- | --- |
@@ -44,6 +44,15 @@ What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard co
 | `lib.sources.command { pkgs, label, noun ? "project", scope ? [ ], recursive ? false, treeless ? [ ], updateCommand ? "", removeCommand ? "", nestedHint ? null, python ? … }` | `<label>-sources enter [ROOT]`, shell entry's submodule checkout (once per clone, paired branch, partial clone, prefetched pins, merged packs, shallow clones given their history, a checkout cut short finished, a retired submodule's old directory explained), and `<label>-sources clone [--branch B] [--treeless] [--require-branch] URL PATH`, a scaffolder's first clone. python/sources.py, also `lib.sources.module` (CONVENTIONS.md, Sources) |
 | `lib.dbNocow { pkgs, label, strategy, server, pidFile ? "postmaster.pid" }` | `<label>-db-nocow {prepare,migrate}`: btrfs NOCOW for the database datadir, marking the datadir (`strategy = "datadir"`, MariaDB) or its parent before initdb (`"parent"`, PostgreSQL), and a server found by `--datadir=` (`server = "cmdline"`) or a live pid file (`"pidfile"`) (CONVENTIONS.md, Database copy-on-write) |
 | `lib.banner.command { pkgs, name, python ? … }`, `lib.banner.script { pkgs, banner, spec, vars ? { } }` | The shell banner, rendered with rich from a JSON spec (title, commands, URLs, facts, guard state, notes) with `@name@` placeholders filled at run time. python/banner.py, also `lib.banner.module` (CONVENTIONS.md, Banner) |
+| `lib.nixos.hardening { readWritePaths ? [ ], profiles ? [ ], addressFamilies ? …, capabilities ? [ ], overrides ? { } }` | A unit's systemd sandbox: the baseline (`.baseline`: `ProtectSystem=strict`, no capabilities, `@system-service`, no W+X memory, …, and no `UMask`) with named profiles (`.profiles`: `jit`, `chromium`, `wkhtmltopdf`) for what a unit legitimately runs, each value a `mkDefault` (CONVENTIONS.md, Unit hardening) |
+| `lib.nixos.migrate.options { what, dumpTool, where }` | The `migrate.{enable,snapshot,rollbackOnFailure,snapshotRetention}` options |
+| `lib.nixos.migrate.script { pkgs, label, target, cfg, migrate, check ? null, onSuccess ? null, onFailure ? null, snapshotDir, prefix ? …, extension, dump, verify, restore, python ? … }` | A migrate unit's command: check, a private snapshot (0700 directory, 0600 file), its verification, the migration, rollback and the product's failure step, then retention. python/migrate.py, also `lib.nixos.migrate.modules` for in-process use; `lib.nixos.migrate.verifiers.{mysqldump,pgRestoreList}` verify both products' dumps (CONVENTIONS.md, Migrate on deploy) |
+| `lib.nixos.migrate.check { pkgs, product ? …, interpreters ? … }` | The flow's tests, on every interpreter a preset names |
+| `lib.nixos.unixSocket { user, group, sockets }` | `{ assertions, tmpfiles, directories }` for sockets that each live in a 0750 directory of their own, 0770 where a peer creates its socket too (CONVENTIONS.md, Unix sockets) |
+| `lib.nixos.nginx.{accessLog, journalJsonFormat, journalJsonFields, errorLog, errorLogAt, cloudflareRealIp, socketProxyHeaders}` | nginx's access log as JSON and its error log over syslog, both to the journal, and a unix-socket listener behind a Cloudflare tunnel (CONVENTIONS.md, nginx) |
+| `lib.journald.fields { prefix, role, site ? null, identifier ? … }`, `lib.journald.roles` | A unit's `APP_SERVICE`/`APP_SITE` journal fields and `<p>-<role>` identifier, from one list of roles (CONVENTIONS.md, Journald vocabulary) |
+| `lib.journald.mkGraft { pkgs, name, src }`, `lib.journald.module` | The product's journald graft with the formatter core (python/journald.py: `<N>{logger} [{tenant}] msg` on every line, the priority mapping, the `JOURNAL_STREAM` check, ANSI stripping) and the post-import hook beside it |
+| `lib.journald.check { pkgs, product ? …, interpreters ? … }` | The core's tests and a grafted stub, on every interpreter a preset names |
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval` and `nixosTest`, each named `<product>-<x>-check` (CONVENTIONS.md, Tests) |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy |
 | `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | The product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings (CONVENTIONS.md, Repository files) |
