@@ -47,7 +47,7 @@ rec {
           path = core;
         }
         {
-          label = "the product's tree (${toString src})";
+          label = "the product's tree (${name})";
           path = src;
         }
       ];
