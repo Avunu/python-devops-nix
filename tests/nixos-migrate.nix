@@ -77,8 +77,11 @@ in
         return machine.execute("systemctl restart stub-web-pg")[0] == 0
 
     def web(target):
-        return machine.succeed(
-            f"curl -s -o /dev/null -w '%{{http_code}}' --unix-socket /run/stub-nix/{target}/web.sock http://x/"
+        """The web unit's answer. A unit just (re)started is active before its
+        server has bound the socket, so retry until it answers at all."""
+        return machine.wait_until_succeeds(
+            f"curl -s -o /dev/null -w '%{{http_code}}' --unix-socket /run/stub-nix/{target}/web.sock http://x/",
+            timeout=60,
         )
 
     machine.wait_for_unit("multi-user.target")
@@ -164,8 +167,9 @@ in
     with subtest("nginx: the real-IP block, the JSON access log, the error log's severity"):
         machine.wait_for_unit("nginx.service")
         machine.wait_for_file("/run/stub-nix/maria/nginx.sock")
-        machine.succeed(
-            "curl -sf --unix-socket /run/stub-nix/maria/nginx.sock -H 'CF-Connecting-IP: 203.0.113.7' http://maria/probe"
+        machine.wait_until_succeeds(
+            "curl -sf --unix-socket /run/stub-nix/maria/nginx.sock -H 'CF-Connecting-IP: 203.0.113.7' http://maria/probe",
+            timeout=60,
         )
         machine.wait_until_succeeds("journalctl SYSLOG_IDENTIFIER=nginx_access -o cat | grep -F /probe")
         line = machine.succeed("journalctl SYSLOG_IDENTIFIER=nginx_access -o json | grep -F /probe | tail -n 1")
@@ -177,6 +181,7 @@ in
         # An upstream that is down is in nginx's error log, which reaches the
         # journal over syslog at its own severity.
         machine.succeed("systemctl stop stub-web-maria")
+        # stop waits for the unit to exit, so the next request finds nothing.
         machine.fail("curl -sf --unix-socket /run/stub-nix/maria/nginx.sock http://maria/down")
         machine.wait_until_succeeds("journalctl SYSLOG_IDENTIFIER=nginx -p err -o cat | grep -F 'connect() to unix:'")
   '';

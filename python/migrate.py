@@ -244,6 +244,10 @@ class Runner:
         self.say(f"taking pre-migrate snapshot -> {path}")
         try:
             rc = self.call(snap.dump, stdout=fd)
+            # The dump is the way back if the host goes down mid-migration:
+            # on disk before anything relies on it, not only in the page cache.
+            if rc == 0:
+                os.fsync(fd)
         finally:
             os.close(fd)
         if rc != 0:
