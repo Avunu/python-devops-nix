@@ -25,6 +25,23 @@ one that has been set up and is now missing was taken out by someone, and
 entry leaves it out and says how to bring it back. Past that, submodules move
 only when someone moves them, or when the product's update command does.
 
+Except one the first checkout did not finish. The first checkout is several
+steps (clone, hand the clone to git, fetch the pin, check it out) and git
+writes the index last, so a ^C or a killed shell in the middle leaves a `.git`
+in the directory and no index. That is not a submodule someone took out; it is
+one that was never put in, and until `classify` told the two apart it looked
+checked out for good: the app was empty, `git status` showed every file staged
+for deletion, and nothing ever retried (`checkout_unfinished`). Such a clone is
+finished from the clone it has (`finish_checkout`), if its directory holds
+nothing but the `.git`. With files in it they are somebody's (a checkout cut
+short while writing them leaves some), and `update --force` would overwrite
+them, so entry names the command and leaves them be.
+
+Which makes two entries at once a hazard: the later finds the earlier one's
+first checkout half done, which looks the same. So an entry holds a lock in the
+project's git directory (`entry_lock`) and a second one does not wait for it:
+it says so and leaves the sources to the first, and the next entry looks again.
+
 One path at a time: a single `git submodule update` over several paths gives
 up on all of them when one clone fails. .gitmodules, not `git submodule
 status`, names the submodules: the latter dies on the first gitlink with no
@@ -78,6 +95,26 @@ Every one of these clones is set never to recurse into submodules on fetch
 (`no_submodule_fetch`): otherwise git diffs each fetched commit looking for a
 moved gitlink, which in a treeless clone is a lazy fetch per commit.
 
+The same is done for a submodule's own submodules that someone initialised
+shallow (hrms's frappe-ui), though entry never initialises them itself
+(`deepen_nested`). Nix needs it: a flake that includes submodules, evaluated
+from a tree with uncommitted changes, fetches each one as a git input of its
+own and fails on a shallow one ("so 'revCount' is not available"). From a clean
+tree it reads them out of the commit, so the flake works right up to the first
+edit and then stops, with a message that names no cause.
+
+With a scope, a directory that is the checkout of a submodule the project has
+stopped registering is told apart from a stray repository (`is_retired`): its
+`.git` file points into the project's .git/modules, where git put the clone. A
+`git pull` of a rename or a removal leaves exactly that, because git drops the
+gitlink and the .gitmodules entry but never a directory that holds a
+repository. It is not something to vendor or push, as a stray repository is;
+it is the old copy of an app. Entry says whether anything in it would be lost
+(`unsaved_work`) and, when nothing would, how to clear it away, the clone and
+its config section with it: left behind, they make a later submodule at the
+same path look as if this clone had set it up before, and so not worth checking
+out. Entry deletes nothing itself.
+
 The product supplies (`Config`):
 
     label           the message prefix ("frappe-nix")
@@ -98,16 +135,26 @@ The product supplies (`Config`):
 """
 
 import argparse
+import contextlib
 import os
+import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:  # not Unix: entry runs unguarded, as it always did
+    fcntl = None  # type: ignore[assignment]
+
 #: How long a prefetch of a pinned commit may take before it is given up on.
 PREFETCH_TIMEOUT = 300
+
+#: How many levels of a submodule's own submodules entry looks through.
+MAX_NESTING = 4
 
 BLOBLESS = "blob:none"
 TREELESS = "tree:0"
@@ -164,6 +211,12 @@ class Report:
     stale: list[Submodule] = field(default_factory=list)
     nested: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    #: cloned, never checked out, and finished by this entry
+    resumed: list[str] = field(default_factory=list)
+    #: cloned, never checked out, with files in the way: left for a person
+    unfinished: list[str] = field(default_factory=list)
+    #: the directory of a submodule the project no longer registers
+    retired: list[str] = field(default_factory=list)
 
 
 # ── git ────────────────────────────────────────────────────────────────────
@@ -243,10 +296,13 @@ def parse_gitmodules(text: str) -> list[Submodule]:
     return subs
 
 
-def read_gitmodules() -> list[Submodule]:
-    if not os.path.isfile(".gitmodules"):
+def read_gitmodules(root: str = ".") -> list[Submodule]:
+    """The submodules `root`'s .gitmodules registers: the project's own by
+    default, a checked-out submodule's with its path."""
+    gitmodules = os.path.join(root, ".gitmodules")
+    if not os.path.isfile(gitmodules):
         return []
-    return parse_gitmodules(out("config", "-f", ".gitmodules", "--list", "-z"))
+    return parse_gitmodules(out("config", "-f", gitmodules, "--list", "-z"))
 
 
 def gitlinks() -> dict[str, str]:
@@ -280,6 +336,96 @@ def ever_set_up(name: str) -> bool:
     if gitdir and os.path.exists(gitdir):
         return True
     return ok("config", "--get", f"submodule.{name}.url")
+
+
+def git_dir_of(path: str) -> str:
+    """The git directory behind a checkout: its `.git` when that is a
+    directory, else where its `.git` file ("gitdir: <path>") points. "" for a
+    directory with neither. Read, not asked of git, because entry asks it of
+    every submodule every time."""
+    dotgit = os.path.join(path, ".git")
+    if os.path.isdir(dotgit):
+        return dotgit
+    try:
+        with open(dotgit) as handle:
+            first = handle.readline()
+    except OSError:
+        return ""
+    prefix = "gitdir:"
+    if not first.startswith(prefix):
+        return ""
+    return os.path.normpath(os.path.join(path, first[len(prefix) :].strip()))
+
+
+def checkout_unfinished(path: str) -> bool:
+    """Whether a clone was made and never checked out: it has a HEAD and no
+    index. git writes the index after the files, so a checkout cut short (a ^C,
+    a killed shell) leaves exactly this, and so does a clone made with
+    --no-checkout that nothing has checked out yet. To git it is a repository
+    with every file staged for deletion."""
+    gitdir = git_dir_of(path)
+    return (
+        bool(gitdir)
+        and os.path.exists(os.path.join(gitdir, "HEAD"))
+        and not os.path.exists(os.path.join(gitdir, "index"))
+    )
+
+
+def shallow_on_disk(path: str) -> bool:
+    """Whether a clone is shallow, read from its git directory."""
+    gitdir = git_dir_of(path)
+    return bool(gitdir) and os.path.exists(os.path.join(gitdir, "shallow"))
+
+
+def nested_checkouts(root: str, depth: int = 0) -> Iterator[str]:
+    """The submodules below `root` that are checked out, at any depth up to
+    MAX_NESTING, by the path they have from the project's root. They come from
+    `root`'s .gitmodules, not from `git submodule status`, which stops at the
+    first nested submodule with a broken ref (Frappe apps have those)."""
+    if depth >= MAX_NESTING:
+        return
+    for sub in read_gitmodules(root):
+        parts = sub.path.split("/")
+        if os.path.isabs(sub.path) or ".." in parts:
+            continue
+        nested = os.path.join(root, sub.path)
+        if os.path.exists(os.path.join(nested, ".git")):
+            yield nested
+            yield from nested_checkouts(nested, depth + 1)
+
+
+@contextlib.contextmanager
+def entry_lock() -> Iterator[bool]:
+    """Holds, for the length of one entry, a lock in the project's git
+    directory, and yields whether it got it. Entry runs on every direnv reload
+    and every `nix develop`, and two of them overlap (a reload while `devenv
+    up` starts). Without the lock the later one finds the earlier one's first
+    checkout half done, a `.git` and no index, which is also what a cut-short
+    checkout looks like, and would finish it underneath the first. Not
+    waiting: entry never fails or hangs on this, and the next one tries again.
+    Where it cannot be had at all (no repository, no fcntl, a read-only git
+    directory) entry goes ahead as it always did."""
+    path = out("rev-parse", "--git-path", "sources.lock") if fcntl else ""
+    try:
+        fd = (
+            os.open(os.path.abspath(path), os.O_RDWR | os.O_CREAT, 0o644)
+            if path
+            else -1
+        )
+    except OSError:
+        fd = -1
+    if fd < 0:
+        yield True
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        yield True
+    finally:
+        os.close(fd)
 
 
 def is_shallow(path: str) -> bool:
@@ -337,6 +483,29 @@ def directory_entries(path: str) -> list[str]:
         return []
 
 
+def unsaved_work(path: str) -> list[str]:
+    """What deleting the checkout at `path` would lose, in words: changes not
+    committed, commits no remote branch has (on a branch or on a detached
+    HEAD, where a submodule's checkout sits), stashed changes. A question git
+    cannot answer is an answer too: it is not safe to call the checkout
+    clean."""
+    status = git("status", "--porcelain", cwd=path)
+    unpushed = git(
+        "log", "--oneline", "-1", "--branches", "HEAD", "--not", "--remotes", cwd=path
+    )
+    stash = git("stash", "list", cwd=path)
+    if status.returncode or unpushed.returncode or stash.returncode:
+        return ["state git could not read"]
+    found = []
+    if status.stdout.strip():
+        found.append("uncommitted changes")
+    if unpushed.stdout.strip():
+        found.append("commits no remote branch has")
+    if stash.stdout.strip():
+        found.append("stashed changes")
+    return found
+
+
 # ── shell entry ────────────────────────────────────────────────────────────
 
 
@@ -344,6 +513,7 @@ class Sources:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.links: dict[str, str] = {}
+        self._modules: str | None = None
 
     @property
     def label(self) -> str:
@@ -431,6 +601,13 @@ class Sources:
         if absorb.returncode:
             say(absorb.stderr.rstrip())
             return False
+        return self.finish_checkout(sub)
+
+    def finish_checkout(self, sub: Submodule) -> bool:
+        """Check the pin out of a clone that has none: the second half of
+        first_checkout, and all that is left to do for a clone it did not get
+        to finish. Leaves the clone as it is when git fails, so that the next
+        entry can try again."""
         # The pin is usually on another branch than the one just cloned, and
         # `submodule update` asks the clone for it before it fetches anything.
         self.prefetch_pin(sub.path)
@@ -510,6 +687,78 @@ class Sources:
         no_submodule_fetch(sub.path)
         return True
 
+    def deepen_nested(self, path: str) -> None:
+        """Give the shallow clones below a submodule their history, once. They
+        are the submodule's own submodules (hrms has frappe-ui), cloned with
+        --depth by whoever initialised them, and entry never initialises them
+        (a fresh checkout is not recursive: Frappe apps ship nested submodules
+        with broken refs). The history matters to Nix: evaluating a flake that
+        includes submodules, from a tree with uncommitted changes, fetches each
+        one as a git input of its own and fails on a shallow one ("so
+        'revCount' is not available"). From a clean tree Nix reads them out of
+        the commit and never notices, so the flake works until the first edit."""
+        for nested in nested_checkouts(path):
+            if not shallow_on_disk(nested):
+                continue
+            what = (
+                "commits only"
+                if self.config.filter_for(nested) == TREELESS
+                else "commits and folders, no file contents"
+            )
+            say(
+                f"{self.label}: {nested} (a submodule of a submodule) is a shallow clone — fetching its history",
+                f"  ({what}), once: Nix cannot fetch a flake's submodules from a shallow one.",
+                "  This can take a while.",
+            )
+            if not self.add_history(Submodule(name=nested, path=nested)):
+                say(
+                    f"{self.label}: could not fetch {nested}'s history — the next shell entry tries again"
+                )
+
+    def modules_dir(self) -> str:
+        """The project's .git/modules, as a real path ("" outside a
+        repository). Asked of git once, and only when something needs it."""
+        if self._modules is None:
+            relative = out("rev-parse", "--git-path", "modules")
+            self._modules = os.path.realpath(relative) if relative else ""
+        return self._modules
+
+    def is_retired(self, path: str) -> bool:
+        """Whether a directory is the checkout of a submodule the project has
+        since stopped registering: its `.git` file points into the project's
+        .git/modules, where git put the clone. A repository that keeps its own
+        `.git` directory is one somebody `git add`ed as it was, and is not."""
+        modules = self.modules_dir()
+        gitdir = git_dir_of(path)
+        if not modules or not gitdir or os.path.isdir(os.path.join(path, ".git")):
+            return False
+        return os.path.realpath(gitdir).startswith(modules + os.sep)
+
+    def explain_retired(self, path: str) -> None:
+        """What a `git pull` leaves of a submodule upstream renamed or dropped:
+        git removes the gitlink and the .gitmodules entry but not a directory
+        that holds a repository, nor the clone under .git/modules. Whether it
+        is safe to delete is decided here, since that is the only question
+        anyone has about it. A pin on a branch the clone does not follow shows
+        as commits no remote branch has: it errs toward asking to look."""
+        real = os.path.realpath(git_dir_of(path))
+        name = os.path.relpath(real, self.modules_dir())
+        clone = os.path.relpath(real, os.path.realpath(os.getcwd()))
+        work = unsaved_work(path)
+        lines = [
+            f"{self.label}: {path} is the old checkout of a submodule this {self.config.noun} no longer registers —"
+        ]
+        if work:
+            lines.append(
+                f"  one that was renamed or removed. It holds {', '.join(work)}, so look before you delete it."
+            )
+        else:
+            lines += [
+                "  one that was renamed or removed. Nothing in it is uncommitted or unpushed; to clear it away:",
+                f"    rm -rf {shlex.quote(path)} {shlex.quote(clone)} && git config --remove-section {shlex.quote('submodule.' + name)}",
+            ]
+        say(*lines)
+
     def classify(self) -> tuple[Report, list[Submodule], dict[str, Submodule]]:
         """Sort every in-scope submodule into the report's lists. Returns the
         report, the submodules to check out for the first time, and the
@@ -542,7 +791,11 @@ class Sources:
                 path = f"{directory}/{entry}"
                 if path in registered or not os.path.isdir(path):
                     continue
-                if os.path.exists(os.path.join(path, ".git")):
+                if not os.path.exists(os.path.join(path, ".git")):
+                    continue
+                if self.is_retired(path):
+                    report.retired.append(path)
+                else:
                     report.nested.append(path)
         return report, first, checked
 
@@ -551,7 +804,13 @@ class Sources:
         cwd = os.getcwd()
         os.chdir(root)
         try:
-            return self._enter()
+            with entry_lock() as acquired:
+                if not acquired:
+                    say(
+                        f"{self.label}: another shell entry is setting up the sources — leaving them to it"
+                    )
+                    return Report()
+                return self._enter()
         finally:
             os.chdir(cwd)
 
@@ -566,6 +825,9 @@ class Sources:
                 f"{self.label}: {path} is a git repository but not a registered submodule —"
             )
             say(*self.config.nested_hint)
+
+        for path in report.retired:
+            self.explain_retired(path)
 
         for sub in first:
             # Git refuses to clone into a directory with anything in it. Say
@@ -590,26 +852,41 @@ class Sources:
             self.undo_first_checkout(sub, active_before)
 
         for path, sub in checked.items():
+            # A clone with a `.git` and no index is not checked out, whatever
+            # `.git` suggests: an earlier entry was cut short. Finish it, but
+            # only into an empty directory; files there are somebody's, and
+            # `update --force` would overwrite them.
+            if checkout_unfinished(path) and path in self.links:
+                if directory_entries(path) != [".git"]:
+                    report.unfinished.append(path)
+                else:
+                    say(
+                        f"{self.label}: {path} was cloned but its checkout never finished — checking out its pinned commit"
+                    )
+                    report.resumed.append(path)
+                    if not self.finish_checkout(sub):
+                        report.failed.append(path)
+                        continue
             if is_partial(path):
                 no_submodule_fetch(path)
                 self.stop_treeless(path)
                 self.prefetch_pin(path)
                 tidy_packs(path)
-            if not is_shallow(path):
-                continue
-            what = (
-                "commits only"
-                if self.config.filter_for(path) == TREELESS
-                else "commits and folders, no file contents"
-            )
-            say(
-                f"{self.label}: {path} is a shallow clone — fetching its branch's history",
-                f"  ({what}), once. This can take a while.",
-            )
-            if not self.add_history(sub):
-                say(
-                    f"{self.label}: could not fetch {path}'s history — the next shell entry tries again"
+            if is_shallow(path):
+                what = (
+                    "commits only"
+                    if self.config.filter_for(path) == TREELESS
+                    else "commits and folders, no file contents"
                 )
+                say(
+                    f"{self.label}: {path} is a shallow clone — fetching its branch's history",
+                    f"  ({what}), once. This can take a while.",
+                )
+                if not self.add_history(sub):
+                    say(
+                        f"{self.label}: could not fetch {path}'s history — the next shell entry tries again"
+                    )
+            self.deepen_nested(path)
 
         self.summarise(report)
         return report
@@ -621,6 +898,13 @@ class Sources:
             say(
                 f"{self.label}: could not check out: {paths} — see git's error above.",
                 f"  The next shell entry tries again, or: git submodule update --init{recursive} -- {paths}",
+            )
+        for path in report.unfinished:
+            say(
+                f"{self.label}: {path} was cloned but its checkout never finished, and its directory has files in it,",
+                "  so the shell leaves it alone. This checks out what the "
+                f"{self.config.noun} records and overwrites what is there:",
+                f"    git submodule update --init --force{recursive} -- {path}",
             )
         if report.unchecked:
             paths = " ".join(report.unchecked)

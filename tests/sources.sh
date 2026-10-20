@@ -181,6 +181,8 @@ for a in "${NAMES[@]}" core; do commit_to "$a" develop "develop 2"; done
 git clone -q "$BENCH" "$ROOT/clone"
 git clone -q "$BENCH" "$ROOT/clone2"
 git clone -q "$BENCH" "$ROOT/clone3"
+git clone -q "$BENCH" "$ROOT/clone4"
+git clone -q "$BENCH" "$ROOT/clone5"
 
 # fresh: what `git submodule deinit` leaves, its clone kept in the git dir.
 git submodule deinit -q -f -- "$P/fresh"
@@ -338,6 +340,57 @@ mv "$ROOT/remotes/fresh.git.away" "$ROOT/remotes/fresh.git"
 run
 check "and the next entry tries again" at_pin "$P/fresh"
 
+echo "── a first checkout that was cut short ──────────────────────────"
+# A first checkout is a clone, then the pin's files, and git writes the index
+# last. A ^C, or a shell killed, in between leaves a clone in the git dir, a
+# `.git` in the directory and no index: to git a repository whose every file is
+# staged for deletion, and to the next entry one that has a `.git` and so is
+# checked out. It stayed that way until someone noticed the app was empty.
+strip_worktree() { find "$1" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +; }
+cd "$ROOT/clone4"
+run
+check_eq "(the first entry checks everything out)" 0 "$RC"
+# present: killed while the files were being fetched, so the directory is empty.
+PGD=".git/modules/$P/present"
+touch "$PGD/marker"
+rm "$PGD/index"
+strip_worktree "$P/present"
+# fresh: killed while the files were being written, so some of them are there.
+rm ".git/modules/$P/fresh/index"
+printf 'edited\n' > "$P/fresh/fresh/hooks.py"
+# taken: cut short before git was handed the clone, so its git dir is still in
+# the directory.
+rm "$P/taken/.git"
+mv ".git/modules/$P/taken" "$P/taken/.git"
+git config --file "$P/taken/.git/config" --unset core.worktree
+rm "$P/taken/.git/index"
+strip_worktree "$P/taken"
+run
+check_eq "exits 0" 0 "$RC"
+check "says it is finishing the one with nothing in it" \
+  says "stub-nix: $P/present was cloned but its checkout never finished — checking out its pinned commit"
+check "…and the one cloned in place" \
+  says "stub-nix: $P/taken was cloned but its checkout never finished — checking out its pinned commit"
+check "checks the pin out" at_pin "$P/present"
+check_eq "…leaving the worktree clean" "" "$(git -C "$P/present" status --porcelain)"
+check "…from the clone it had, not a new one" test -e "$PGD/marker"
+check "the one cloned in place too" at_pin "$P/taken"
+check_eq "…clean" "" "$(git -C "$P/taken" status --porcelain)"
+check_not "one with files in its directory is left alone" test -e ".git/modules/$P/fresh/index"
+check_eq "…its files as they were" edited "$(cat "$P/fresh/fresh/hooks.py")"
+check "…and named, with the command that finishes it" \
+  says "git submodule update --init --force$RECURSIVE -- $P/fresh"
+check "…which says what that overwrites" says "overwrites what is there"
+run
+check "a second entry does not mention the finished ones" silent_on "$P/present"
+check "…nor the one cloned in place" silent_on "$P/taken"
+check "…but still names the one that needs a hand" says "$P/fresh was cloned but its checkout never finished"
+# shellcheck disable=SC2086
+git submodule update -q --init --force $RECURSIVE -- "$P/fresh"
+check "the command it gave finishes it" at_pin "$P/fresh"
+run
+check_eq "and then there is nothing to say" "" "$OUT"
+
 echo "── a repository with submodules of its own ──────────────────────"
 # As hrms has frappe-ui. A fetch's on-demand submodule check diffs every commit
 # it brings in for a moved gitlink, and in a treeless clone each of those trees
@@ -389,6 +442,74 @@ if [ "$SHAPE" = modules ]; then
   cd "$ROOT/clone"
   run
   check_eq "core stays commits only" tree:0 "$(git -C core config --get remote.origin.partialclonefilter)"
+fi
+
+echo "── a submodule's own submodule that is shallow ──────────────────"
+# As hrms's frappe-ui is, when it was cloned with --depth. Nix, evaluating a
+# flake that includes submodules from a tree with uncommitted changes, fetches
+# each one as a git input of its own and cannot fetch a shallow one ("so
+# 'revCount' is not available"); from a clean tree it reads them out of the
+# commit, which is why the flake worked until the day the tree was dirty.
+cd "$ROOT/nestclone"
+UI="$P/nested/frontend/ui"
+git -C "$P/nested" submodule update -q --init -- frontend/ui
+git -C "$UI" fetch -q --depth 1 origin develop
+ui_head="$(git -C "$UI" rev-parse HEAD)"
+check "(it starts out shallow)" test "$(git -C "$UI" rev-parse --is-shallow-repository)" = true
+run
+check_eq "exits 0" 0 "$RC"
+check_eq "its history is fetched" false "$(git -C "$UI" rev-parse --is-shallow-repository)"
+check_eq "…its checkout where it was" "$ui_head" "$(git -C "$UI" rev-parse HEAD)"
+check "…the commits before it are there" git -C "$UI" cat-file -e "$ui_head~1^{commit}"
+check "says what it is fetching" \
+  says "stub-nix: $UI (a submodule of a submodule) is a shallow clone — fetching its history"
+check "…and why" says "Nix cannot fetch a flake's submodules from a shallow one"
+check "…and that it is the nested one, not the app" silent_on "stub-nix: $P/nested is a shallow clone"
+before="$(snapshot)"
+run
+after="$(snapshot)"
+check_eq "the next entry changes nothing" "$before" "$after"
+check_eq "…and says nothing" "" "$OUT"
+
+if [ "$SHAPE" = apps ]; then
+  echo "── the old checkout of a submodule that is no longer registered ─"
+  # What a `git pull` of a rename (or a removal) leaves behind: the gitlink and
+  # the .gitmodules entry go, but git will not delete a directory that holds a
+  # repository, and the clone in the git dir stays too. The entry used to call
+  # it "a git repository that is not a registered submodule" and advise
+  # vendoring it or pushing it somewhere, which is not what it is.
+  cd "$ROOT/clone5"
+  run
+  for a in taken inplace; do
+    git update-index --force-remove -- "$P/$a"
+    git config -f .gitmodules --remove-section "submodule.$P/$a"
+  done
+  printf 'mine\n' > "$P/inplace/local.txt"
+  git -C "$P/inplace" add local.txt
+  git -C "$P/inplace" commit -q -m "a local commit"
+  run
+  check_eq "exits 0" 0 "$RC"
+  check "names it for what it is" \
+    says "stub-nix: $P/taken is the old checkout of a submodule this bench no longer registers"
+  check "…says nothing in it would be lost" says "Nothing in it is uncommitted or unpushed"
+  check "…and how to clear it away, its clone and its config with it" \
+    says "rm -rf $P/taken .git/modules/$P/taken && git config --remove-section submodule.$P/taken"
+  check "…not as a repository that is not a registered submodule" \
+    silent_on "$P/taken is a git repository but not a registered submodule"
+  check "one with a commit of its own is named the same way" \
+    says "stub-nix: $P/inplace is the old checkout of a submodule this bench no longer registers"
+  check "…and says what it holds" says "It holds commits no remote branch has, so look before you delete it"
+  check "…and does not offer to delete it" silent_on "rm -rf $P/inplace"
+  check "nothing is removed" test -d "$P/taken" -a -d "$P/inplace" -a -d ".git/modules/$P/taken"
+  printf 'mine\n' > "$P/taken/untracked.txt"
+  run
+  check "a file of its own is said too" says "It holds uncommitted changes, so look before you delete it"
+  rm "$P/taken/untracked.txt"
+  rm -rf "$P/taken" ".git/modules/$P/taken"
+  git config --remove-section "submodule.$P/taken"
+  run
+  check "once it is cleared away it is not mentioned" silent_on "$P/taken"
+  check "…and the other still is" says "$P/inplace is the old checkout"
 fi
 
 echo "── a pin the clone does not have ────────────────────────────────"
