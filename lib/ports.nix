@@ -6,8 +6,10 @@
 # Every port is a fixed base plus one offset, 0..899, decided at evaluation.
 # devenv's port allocator is the identity under its flake integration
 # (src/modules/processes.nix falls back to `base` when the native CLI's primop
-# is absent), so nothing moves a port that is already taken. Two projects that
-# hash to the same offset collide, and the offset is what keeps them apart.
+# is absent), so nothing evaluated moves a port that is already taken. Two
+# projects that hash to the same offset collide, and the offset is what keeps
+# them apart, unless the product leases its ports at `devenv up`, which makes
+# these the preferred ones (CONVENTIONS.md, Ports; frappe-nix does).
 #
 # The functions are pure, so a test can call them with any checkout path and
 # any environment; a product's devenv module calls them with builtins.getEnv,
