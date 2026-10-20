@@ -310,10 +310,26 @@ The leaf pieces inside both devenv modules (PLAN.md, Phase 5). The modules thems
 
 ### Migrate on deploy
 
--   **Convention:** shared: the `migrate.{enable,snapshot,rollbackOnFailure,snapshotRetention}` options, the snapshot flow, and verifying the snapshot before migrating (`pg_restore --list` in odoo-nix, a MariaDB equivalent in frappe-nix). Product-specific: what is left running after a failed migrate. frappe-nix keeps serving in Frappe's native maintenance mode. Odoo has no maintenance mode, and serving a half-migrated schema is not safe, so odoo-nix stops the service.
--   **Today:** frappe-nix runs migrate with `RemainAfterExit` and a marker file; services require only init, so a failed migrate leaves the site serving in maintenance mode. odoo-nix migrates on every start with `--if-needed`, keeps its marker in the database, and `odoo.service` requires the migrate unit, so a failed migrate stops serving. frappe-nix does not verify its snapshot yet.
+-   **Convention:** shared: the `migrate.{enable,snapshot,rollbackOnFailure,snapshotRetention}` options (defaults `true`, `true`, `true`, `3`), the snapshot flow, and verifying the snapshot before migrating. Product-specific: what is left running after a failed migrate. frappe-nix keeps serving in Frappe's native maintenance mode. Odoo has no maintenance mode, and serving a half-migrated schema is not safe, so odoo-nix stops the service.
+
+    The options are `migrate = lib.nixos.migrate.options { what, dumpTool, where };` in the product's option tree; a product adds its own beside them (frappe-nix's `maintenanceMode` and `offline`, odoo-nix's `full` and `timeout`). The unit's `ExecStart` is `lib.getExe (lib.nixos.migrate.script { ... })`, which runs python/migrate.py's flow for one target with the product's executables:
+
+    | Step | Argument | Contract |
+    | --- | --- | --- |
+    | check | `check` (optional) | Exit 0 to migrate, 100 when there is nothing to do (it prints why), anything else is an error before anything changed. frappe-nix: the build marker and the uninstalled-site guard. |
+    | snapshot | `snapshotDir`, `prefix` (default `premigrate-<target>`), `extension`, `dump` | `dump` writes to stdout; the file is `<prefix>-YYYYmmdd-HHMMSS<extension>`, 0600 from its first byte, in a directory made and kept 0700. A failed or empty dump is removed and stops the deploy before it migrates. |
+    | verify | `verify` | `verify SNAPSHOT` exits 0 when the dump is whole. One that does not is removed and stops the deploy. `lib.nixos.migrate.verifiers.mysqldump { pkgs, compressed ? true }` (gzip's check and mysqldump's closing `-- Dump completed` line) and `.pgRestoreList { pkgs, postgresql }` (`pg_restore --list`). |
+    | migrate | `migrate` | The migration. frappe-nix's turns maintenance mode on first. |
+    | success | `onSuccess` (optional) | After a migration that exited 0; a failure here is a warning. Then the newest `snapshotRetention` snapshots are kept. frappe-nix: maintenance mode off, write the marker. |
+    | rollback | `restore` | With `rollbackOnFailure`: `restore SNAPSHOT` puts the database back as the dump has it (frappe-nix: drop every table, then load the dump; odoo-nix: drop and recreate the database, then `pg_restore`). |
+    | failure | `onFailure` (optional) | After the rollback, with `MIGRATE_EXIT` and `MIGRATE_ROLLBACK` (`restored`, `failed`, `none`). The unit then exits with the migration's status. |
+
+    Every step runs with `MIGRATE_TARGET` and, once there is one, `MIGRATE_SNAPSHOT`. Messages are `<label>(<target>): …` on stderr, with a `<N>` syslog prefix when stderr is the journal, so a failed migrate is found at `journalctl -p err`. Failed migrations keep their snapshots; only a success prunes.
+
+    The failure behaviour is wiring, not an argument to the flow: frappe-nix's migrate unit is `RemainAfterExit` and the services only order after it, and its migrate and `onFailure` steps leave maintenance mode on; odoo-nix's `odoo.service` `Requires=` a migrate unit without `RemainAfterExit`, so every start of Odoo migrates first and a failure keeps it down. A product whose own migrate tool decides in-process when a snapshot is due (odoo-nix's `odoo db migrate`, which snapshots only when its plan is not empty) vendors python/migrate.py and python/journald.py (`lib.nixos.migrate.modules`) and calls `Runner.take()`, `restore()` and `prune()`, or gives the flow a `check` that runs its change detection.
+-   **Today:** frappe-nix runs migrate with `RemainAfterExit` and a marker file, in bash, and does not verify its snapshot. odoo-nix migrates on every start with `--if-needed`, keeps its marker in the database, snapshots and verifies in Python (`odoo db migrate`), and `odoo.service` requires the migrate unit.
 -   **Status:** decided.
--   **Check:** yes for the options (evaluation); the flow is a VM test in each product.
+-   **Check:** yes. `lib-nixos` evaluates the options and the flow's configuration in a stub product; `lib-nixos-migrate-flow` runs the flow's unit tests on every preset interpreter; `lib-nixos-migrate` runs it in a VM against MariaDB and PostgreSQL, in both products' failure shapes. Each product's VM test covers its own steps.
 
 ### Production secrets
 
@@ -328,6 +344,47 @@ The leaf pieces inside both devenv modules (PLAN.md, Phase 5). The modules thems
 -   **Today:** odoo-nix has `slowQueryMs` and sets `log_line_prefix`. frappe-nix has none.
 -   **Status:** proposed.
 -   **Check:** yes, the option exists.
+
+### Unit hardening
+
+-   **Convention:** every unit a product defines gets `lib.nixos.hardening { readWritePaths, profiles ? [ ], addressFamilies ? [ AF_UNIX AF_INET AF_INET6 ], capabilities ? [ ], overrides ? { } }` merged into its `serviceConfig`. The baseline (`lib.nixos.hardening.baseline`) is `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`, `ProtectSystem=strict` with the unit's `ReadWritePaths`, `ProtectHome`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `ProtectProc=invisible`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, `MemoryDenyWriteExecute`, `RemoveIPC`, an empty `CapabilityBoundingSet` and `AmbientCapabilities`, `SystemCallArchitectures=native`, and `SystemCallFilter=@system-service ~@privileged` failing with `EPERM`. Each value is a `mkDefault`, so a host can relax one key on one unit; `ReadWritePaths` is a plain list, so a host's paths add to the product's.
+
+    There is **no `UMask=0077`**, here or in any unit: units that write state also write files nginx serves through the service group (Frappe's Website Theme CSS, frappe-nix#83; Odoo's filestore under `xSendfile`, odoo-nix#51). Private files get their modes where they are written, as the migrate snapshots do.
+
+    A unit names what it legitimately needs, and documents it next to the call:
+
+    | Need | How | Who |
+    | --- | --- | --- |
+    | A JIT (W+X memory) | `profiles = [ "jit" ]` | Node (frappe-nix's socketio) |
+    | Headless Chromium | `profiles = [ "chromium" ]`: the JIT, `capset` (each child drops its capabilities, even under `--no-sandbox`), user namespaces, `AF_NETLINK` | frappe-nix's units that render PDFs, with `chromium.enable` |
+    | wkhtmltopdf | `profiles = [ "wkhtmltopdf" ]`: QtWebKit's JIT | frappe-nix's units that render PDFs, with `wkhtmltopdf.enable` |
+    | Only unix sockets | `addressFamilies = [ "AF_UNIX" ]` | a unit that reaches its database over its socket alone |
+    | Still runs as root | `capabilities = [ ... ]`, which also lets `@privileged` calls through the filter | odoo-nix's `odoo-init` until init runs as the service user ([Production secrets](#production-secrets)) |
+    | Anything else | `overrides = { <key> = <value>; }`, with a comment saying why | |
+
+    `ProtectSystem=strict` leaves `/run` writable, so a socket directory needs no `ReadWritePaths` (its mode is the gate: [Unix sockets](#unix-sockets)); a state directory does. A path in `ReadWritePaths` must exist when the unit starts; create it with tmpfiles.
+-   **Today:** neither product sets any of it.
+-   **Status:** proposed (PLAN.md, Phase 6).
+-   **Check:** yes. `lib-nixos` evaluates the baseline, the profiles and the overrides in a stub product, and asserts no unit has a `UMask`. `lib-nixos-hardening` runs Python with a ctypes callback, Node, headless Chromium and wkhtmltopdf under it in a VM, and shows the baseline refuses a JIT and a root unit keeps only the capabilities it names. A product's VM tests run its units under it.
+
+### Unix sockets
+
+-   **Convention:** a socket lives in a directory of its own (never straight in `/run` or `/`), created by tmpfiles and owned by the service user and group: `0750` when the service creates the socket and a peer in the group (nginx) only connects, `0770` when a peer creates its own socket there too (nginx's listen socket). The socket file's own mode gates nothing, since nginx chmods its listen sockets to `0666`. `lib.nixos.unixSocket { user, group, sockets = [ { option, path, peerCreates ? false, example ? … } ] }` returns `{ assertions, tmpfiles, directories }`: one assertion per socket option (`<option> must be an absolute path inside its own directory (e.g. …), not directly in /run: the directory's mode is what keeps the socket private.`), one tmpfiles rule per directory, and the directories. An unset path (`""` or `null`) is skipped.
+-   **Today:** both products assert it with their own wording and write the rules by hand. frappe-nix creates every socket directory `0770`; odoo-nix only has nginx's socket, in a `0770` directory.
+-   **Status:** proposed (PLAN.md, Phase 6).
+-   **Check:** yes, `lib-nixos` (the rules and the messages) and `lib-nixos-migrate` (the modes on a running system, with nginx connecting through them).
+
+### nginx
+
+-   **Convention:** nginx logs to the journal:
+
+    -   the access log as `journal_json`, one JSON object per request with `time`, `site`, `method`, `uri`, `status`, `bytes`, `request_time`, `upstream_time`, `remote_addr`, `user_agent` and `referer`, under `SYSLOG_IDENTIFIER=nginx_access`: `services.nginx.commonHttpConfig = lib.nixos.nginx.accessLog cfg.logging.accessLog;` (`access_log off;` when false). `lib.nixos.nginx.journalJsonFormat` is the `log_format` line, and `journalJsonFields` its fields;
+    -   the error log over syslog, so it keeps its severity: `services.nginx.logError = lib.mkDefault lib.nixos.nginx.errorLog;` (at `error`; `errorLogAt <level>` for another).
+
+    A virtual host that listens on a unix socket behind a Cloudflare tunnel adds `lib.nixos.nginx.cloudflareRealIp` (`set_real_ip_from unix:; real_ip_header CF-Connecting-IP;`) to its `extraConfig`, never on a TCP listener, and each of its locations turns `recommendedProxySettings` off and adds `lib.nixos.nginx.socketProxyHeaders` (`X-Forwarded-Proto https`, since TLS ended at the connector).
+-   **Today:** both products have byte-identical copies of the access log, the real-IP block and the socket headers. frappe-nix sends the error log to syslog; odoo-nix leaves it on stderr, where every line is info.
+-   **Status:** proposed (PLAN.md, Phase 6).
+-   **Check:** yes, `lib-nixos` (the configuration text) and `lib-nixos-migrate` (the client address from the header in the access log, and an upstream error at priority err).
 
 ### NixOS module path
 
@@ -354,24 +411,39 @@ The leaf pieces inside both devenv modules (PLAN.md, Phase 5). The modules thems
 
 ### Journald enablement
 
--   **Convention:** journald formatting is always on when stderr is the journal, loaded through a `.pth` graft.
--   **Today:** frappe-nix does this. odoo-nix needs `ODOO_NIX_JOURNALD=1` and an option, through a sitecustomize shim.
+-   **Convention:** journald formatting is always on when stderr is the journal, loaded through a `.pth` graft built with `lib.journald.mkGraft { pkgs, name, src }` (`<p>_journald`), which puts the post-import hook (`_hook.py`) and the formatter core (`_journald.py`) beside the product's tree. The product's `install()` does nothing unless `_journald.journal_stream()`: `JOURNAL_STREAM` names stderr's own device and inode, which an inherited variable on a redirected stderr does not. It ships to production as well as development, inert wherever stderr is not the journal. A command line that logs to the journal itself vendors `lib.journald.module`.
+-   **Today:** frappe-nix does this, with its own copy of the core. odoo-nix needs `ODOO_NIX_JOURNALD=1` and an option, through a sitecustomize shim.
 -   **Status:** proposed.
--   **Check:** partly. A test points `JOURNAL_STREAM` at its own stderr and asserts the `<N>` prefix.
+-   **Check:** yes. `lib-journald` grafts a stub product and points `JOURNAL_STREAM` at a file, on every preset interpreter.
 
 ### Journald vocabulary
 
--   **Convention:** `SyslogIdentifier=<p>-<role>`, and one written list of roles.
--   **Today:** frappe-nix uses `frappe-<role>`, with `APP_SERVICE` one of runtime, web, worker, scheduler, socketio, init, migrate, db, redis and nginx. odoo-nix uses `odoo`, `odoo-init` and `odoo-migrate`, with web as the main unit.
+-   **Convention:** every unit carries `LogExtraFields` `APP_SERVICE=<role>`, plus `APP_SITE=<site or database>` when it serves exactly one, and a unit the product defines has `SyslogIdentifier=<p>-<role>`; an upstream unit the product only enables (the database, Redis, nginx) keeps its own identifier. `serviceConfig = { ... } // lib.journald.fields { prefix = "<p>"; role; site ? null; identifier ? … };` writes them, and refuses a role not in the list. The roles (`lib.journald.roles`):
+
+    | Role | Unit |
+    | --- | --- |
+    | `runtime` | frappe-nix's unified runtime (web, realtime, jobs, scheduler) |
+    | `web` | the HTTP server: gunicorn, `odoo.service` |
+    | `worker` | a background-job worker |
+    | `scheduler` | the scheduler |
+    | `socketio` | the realtime server |
+    | `init` | setup before anything else starts |
+    | `migrate` | migrate on deploy |
+    | `db` | the database server |
+    | `redis` | Redis |
+    | `nginx` | nginx |
+
+    A unit that needs telling apart within its role passes `identifier` (frappe-nix's `frappe-worker-<queue>`, `frappe-db-password`).
+-   **Today:** frappe-nix uses `frappe-<role>`, with these roles. odoo-nix uses `odoo`, `odoo-init` and `odoo-migrate`, with `web` as the main unit's role.
 -   **Status:** proposed.
--   **Check:** yes. frappe-nix's `tests/logging-fields.nix` and odoo-nix's `tests/module-eval.nix` assert the same field vocabulary.
+-   **Check:** yes. `lib-nixos` evaluates the fields in a stub product, and frappe-nix's `tests/logging-fields.nix` and odoo-nix's `tests/module-eval.nix` assert them against `lib.journald.roles`.
 
 ### Journald line format
 
--   **Convention:** `<N>{logger} [{site or db}] msg`.
--   **Today:** frappe-nix writes `<N>{module} [{site}] msg`. odoo-nix writes `<N>{dbname} {logger}: msg`.
+-   **Convention:** `<N>{logger} [{site or db}] msg`, from `JournaldFormatter(logger=None, tenant=None)` in the core (python/journald.py). `<N>` is the record's syslog priority by threshold (critical 2, error 3, warning 4, info 6, below 7), on every line of the record, tracebacks included; ANSI escapes are stripped; there is no timestamp, pid or level name, which journald records itself. The product says who the tenant is (`tenant(record)`: Frappe's `frappe.local.site`, Odoo's `record.dbname`), may fix the logger name (Frappe prints the module, not `<module>-<site>`), and may append what its framework puts after a message by overriding `message()` (Odoo's `perf_info`). Its patching into the framework's logging stays its own.
+-   **Today:** frappe-nix writes `<N>{module} [{site}] msg`, without ANSI stripping. odoo-nix writes `<N>{dbname} {logger}: msg`, with it.
 -   **Status:** proposed.
--   **Check:** yes, a formatter unit test.
+-   **Check:** yes, `lib-journald`, on every preset interpreter.
 
 ## Containers
 
