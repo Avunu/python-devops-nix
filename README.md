@@ -17,7 +17,7 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 | `modules/<name>.nix` | `flakeModules.<name>`: flake-parts modules a product imports |
 | `checks/<name>.nix` | `checks.<system>.<name>`, built in CI |
 
-Code that is not Nix sits beside it: `python/` (standard library only, written to 3.11), `sh/` (bash glue), and `tests/`, with the stub products and fixtures the checks run against.
+Code that is not Nix sits beside it: `python/` (written to 3.11; standard library only, except rich for the commands that prompt or render), and `tests/`, with the stub products and fixtures the checks run against.
 
 What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4), the development shell pieces (Phase 5), the production pieces (Phase 6) and repository hygiene (Phase 7):
 
