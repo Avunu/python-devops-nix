@@ -1,12 +1,14 @@
 # edit-secret, rekey-secrets and check-secrets (lib.secrets.tools' scripts),
-# driven by tests/secrets-cli.sh against a real ragenix and the committed
-# alice/bob keys. The scripts are rendered twice, against alice and then
-# alice+bob, so "someone changed `recipients` in flake.nix and ran
-# rekey-secrets" is an actual sequence rather than an assumption.
+# and the writeRules snippet, driven by tests/secrets-cli.sh against a real
+# ragenix and the committed alice/bob keys. The scripts are rendered twice,
+# against alice and then alice+bob, so "someone changed `recipients` in
+# flake.nix and ran rekey-secrets" is an actual sequence rather than an
+# assumption.
 { pkgs, self }:
 let
   stub = import ../tests/secrets.nix { inherit pkgs self; };
-  one = (stub.toolsFor { alice = stub.pub "alice"; }).scripts { };
+  oneTools = stub.toolsFor { alice = stub.pub "alice"; };
+  one = oneTools.scripts { };
   two =
     (stub.toolsFor {
       alice = stub.pub "alice";
@@ -28,20 +30,28 @@ checks.script "lib-secrets-cli"
       jq
       python3
       coreutils
+      gnugrep
+      diffutils
     ];
     drvArgs = {
       editSecret = one.edit-secret.exec;
       checkSecret = one.check-secrets.exec;
       rekeySecrets = two.rekey-secrets.exec;
+      writeRules = ''
+        set -euo pipefail
+        ${oneTools.writeRules}
+        cat "$RULES"
+      '';
       passAsFile = [
         "editSecret"
         "checkSecret"
         "rekeySecrets"
+        "writeRules"
       ];
     };
   }
   ''
-    bash ${../tests/secrets-cli.sh} \
+    WRITE_RULES="$writeRulesPath" bash ${../tests/secrets-cli.sh} \
       "$editSecretPath" "$rekeySecretsPath" "$checkSecretPath" \
       ${../tests/fixtures/keys} | tee "$out"
   ''

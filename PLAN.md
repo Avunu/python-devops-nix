@@ -151,7 +151,7 @@ It goes first because it is nearly identical in both products, so the extraction
 -   `lib.secrets.tools { pkgs, label, restoreCommand, bucketExample, verifyListing }` provides agecheck, the rules file, the scripts and `setup-backup-access`. `verifyListing` is the product's snippet for confirming the credentials reach its backups.
 -   `lib.backups.fetch { pkgs, label, envPrefix, layout }` provides fetch, list and cache. `layout` is the product's parser from an object listing to backup sets. The source overrides are `<P>_NIX_BACKUP_SOURCE` and `<P>_NIX_MC` (see [Track B](#track-b-conventions)).
 -   The fetch layer is Python. It starts from odoo-nix's `remote.py`, not frappe-nix's `backup-fetch.sh`: the two are in different languages, so this is a rewrite of frappe-nix's side, not an extraction. frappe-nix's bash copy is deleted, not shared. The layer is a module that odoo-nix's CLI imports in-process and a command that frappe-nix's CLI calls. Because of that import, it is tested on odoo-nix's interpreters as well (see [Python versions](#python-versions)). The `layout` parsers are Python functions. frappe-nix's parser is its first piece of [Track D](#track-d-frappe-nixs-command-line-in-python).
--   `backup-access.sh` stays bash. It is already a byte-identical copy in both products, and it is a prompt plus three commands.
+-   `backup-access.sh` was shared as bash at first, a byte-identical copy in both products. It prompts, so by [rule 5](#design-rules) it moved to Python with `edit-secret` and `rekey-secrets` (python/secret_tools.py), its gum prompts replaced by rich's; `check-secrets`, which only runs agecheck, stays an `exec` shim.
 -   One output name in both products: `flake.lib.secrets`. The old `frappeSecrets` and `odooSecrets` names stay as aliases for one release.
 
 #### Done when
@@ -442,7 +442,6 @@ These are glue under rule 5:
 -   the container entrypoints;
 -   `frappe-upstream`;
 -   the `nixfmt` shim;
--   `backup-access.sh` (shared in Phase 2);
 -   the secret wrappers that only decrypt and `exec`;
 -   the NixOS unit scripts in `modules/nixos.nix`.
 
