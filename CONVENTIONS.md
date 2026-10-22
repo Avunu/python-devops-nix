@@ -2,7 +2,7 @@
 
 How frappe-nix and odoo-nix name and do the jobs they both do. Where the two products do the same job, they do it the same way and under the same names. This file records one decision per job and where each product stands on it.
 
-It is the record of what the products do on their `main` branches as of 2026-10-22. frappe-nix v1.2.0 shipped most of it, and the rest lands in each product's next release. It started as the first draft of [PLAN.md, Track B](PLAN.md#track-b-conventions) on 2026-10-16. PLAN.md is now the historical record of that work, and its [Follow-ups](PLAN.md#follow-ups) list what is left. A pull request that changes a convention, or a product's adoption of one, updates this file.
+It is the record of what the products do on their `main` branches as of 2026-10-22. odoo-nix v1.1.0 shipped all of it; frappe-nix v1.2.0 and v1.2.1 shipped most of it, and the rest lands in frappe-nix's next release. It started as the first draft of [PLAN.md, Track B](PLAN.md#track-b-conventions) on 2026-10-16. PLAN.md is now the historical record of that work, and its [Follow-ups](PLAN.md#follow-ups) list what is left. A pull request that changes a convention, or a product's adoption of one, updates this file.
 
 ## How to read this
 
@@ -236,8 +236,8 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`, both Python since frappe-
 ### Next steps
 
 -   **Convention:** the same closing wording in both, naming each product's own command: restore when secrets are declared, otherwise provision.
--   **Adopted:** odoo-nix#71 suggests `odoo db restore <db>` or `odoo db provision`. frappe-nix suggests `bench restore` or `provision-site`, and `bench provision` once frappe-nix#166 lands (pending).
--   **Status:** partial: pending frappe-nix#166.
+-   **Adopted:** odoo-nix#71 suggests `odoo db restore <db>` or `odoo db provision`. frappe-nix suggests `bench restore` or `bench provision` (frappe-nix#166).
+-   **Status:** decided.
 -   **Check:** no; wording is reviewed.
 
 ## Flake
@@ -294,8 +294,8 @@ The leaf pieces inside both devenv modules (PLAN.md, Phase 5), adopted in frappe
 ### Command layout
 
 -   **Convention:** every command lives under the product's umbrella command, `bench` or `odoo`. frappe-nix's `provision-site` is `bench provision`, and `provision-site` stays as an alias until 2.0.0.
--   **Adopted:** odoo-nix has everything under `odoo` (`db`, `module`, `project`). frappe-nix's `bench provision` is pending frappe-nix#166 (Track D, D5); until it lands, `provision-site` is standalone.
--   **Status:** partial: pending frappe-nix#166.
+-   **Adopted:** odoo-nix has everything under `odoo` (`db`, `module`, `project`). frappe-nix has `bench provision` under `bench` (frappe-nix#166, Track D, D5), with `provision-site` kept as a deprecated alias until 2.0.0.
+-   **Status:** decided.
 -   **Check:** not yet in the base.
 
 ### Source management
@@ -511,7 +511,7 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
 
     **Auto-merge is only as safe as the checks marked required on the default branch**, so `flake` is a required check. Without it, auto-merge merges a bump before its checks fail.
 -   **Adopted:**
-    -   frappe-nix: SHA pins and the `lint`, `flake` and `vm-tests` jobs; the reusable workflow since frappe-nix#159. Its `main` requires only the docs check (`build / Check`), so `flake` is not required, and frappe-nix#163 merged with `flake` failing ([PLAN.md, follow-up f](PLAN.md#follow-ups)).
+    -   frappe-nix: SHA pins and the `lint`, `flake` and `vm-tests` jobs; the reusable workflow since frappe-nix#159. Its `main` requires the docs check (`build / Check`) and `flake`; `flake` became required on 2026-10-22, after frappe-nix#163 merged with it failing ([PLAN.md, follow-up f](PLAN.md#follow-ups)).
     -   odoo-nix: SHA pins, the `lint` job (odoo-nix#76), and `flake`, which builds every check; the reusable workflow since odoo-nix#78. Its `main` requires `flake` and `pr-policy`, since odoo-nix#63 merged red.
 -   **Status:** partial: frappe-nix's required checks.
 -   **Check:** not yet in the base for the `uses:` pins ([PLAN.md, follow-up a](PLAN.md#follow-ups)). Required checks are repository settings, which no check in the tree can see.
@@ -583,8 +583,8 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
     | `checkName <x>` | The derivation name, `<product>-<x>-check`, for a check built some other way. |
 
     `lib.checks.nixLint` and `lib.checks.sharedConfig` are built with it and take the same `product`.
--   **Adopted:** odoo-nix#77 registers every check through it (`module-nginx` became `nginx`). frappe-nix uses it for a few checks and registers the rest with `runCommand` and `runNixOSTest`; most derivations already follow the name, except `frappe-benchcli-check` and `frappe-journald-check`. frappe-nix#160 (pending) moves every check to it.
--   **Status:** partial: pending frappe-nix#160.
+-   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through it (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
+-   **Status:** decided.
 -   **Check:** the base's `lib-mk` tests the helper. A pattern over check attribute names is not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
 
 ### Commits
