@@ -4,8 +4,8 @@ Shared building blocks and conventions for Avunu's Nix packaging of Python appli
 
 It holds the pieces that are independent of either product and expensive to get wrong: the secrets toolkit and backup access, the core of the development guard rails (devguard), the Python environment fixes, small development-shell helpers, the production pieces inside the NixOS modules (unit hardening, migrate on deploy, sockets, nginx and journald logging), and repository hygiene. The products' development shells, NixOS modules and containers stay in the products.
 
--   [PLAN.md](PLAN.md): what moves here, in what order, and how products consume it.
--   [CONVENTIONS.md](CONVENTIONS.md): how both products name and do the jobs they share. Product maintainers read this before adding an option, flag, environment variable or command that the other product also has.
+-   [CONVENTIONS.md](CONVENTIONS.md): how both products name and do the jobs they share, and where each stands. Product maintainers read this before adding an option, flag, environment variable or command that the other product also has.
+-   [PLAN.md](PLAN.md): the plan that built this repository, complete as of 2026-10-22 and kept as the historical record, with what shipped and the [follow-ups](PLAN.md#follow-ups) that remain.
 
 ## Layout
 
@@ -19,7 +19,7 @@ The flake is built on flake-parts, and its only inputs are nixpkgs and flake-par
 
 Code that is not Nix sits beside it: `python/` (written to 3.11; standard library only, except rich for the commands that prompt or render), and `tests/`, with the stub products and fixtures the checks run against.
 
-What it provides so far, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4), the development shell pieces (Phase 5), the production pieces (Phase 6) and repository hygiene (Phase 7):
+What it provides, the secrets toolkit (PLAN.md, Phase 2), the devguard core (Phase 3), the Python environment pieces (Phase 4), the development shell pieces (Phase 5), the production pieces (Phase 6) and repository hygiene (Phase 7):
 
 | Piece | What it does |
 | --- | --- |
@@ -68,7 +68,7 @@ nix flake check           # every check, as CI builds it
 prek run --all-files      # the hooks CI's lint job runs
 ```
 
-CI also builds frappe-nix's and odoo-nix's checks against each pull request, once a product takes this flake as an input.
+CI also builds frappe-nix's and odoo-nix's checks against each pull request.
 
 ## License
 

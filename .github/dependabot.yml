@@ -4,8 +4,10 @@ version: 2
 # required checks go green, except action bumps, which a person reviews (see
 # .github/workflows/auto-merge.yml, which calls the reusable dependabot-auto-merge.yml).
 #
-# The shape both products follow (CONVENTIONS.md, Dependabot): the `chore` prefix, a
-# seven-day cooldown, and one group per ecosystem, so each ecosystem is one pull request.
+# The shape both products follow (CONVENTIONS.md, Dependabot): a seven-day cooldown and
+# one group per ecosystem, so each ecosystem is one pull request. The products use the
+# `fix(deps)` prefix, so a bump cuts a patch release; this repository has no releases,
+# so its bumps are `chore`.
 updates:
   # Nix flake inputs: nixpkgs and flake-parts. Dependabot reads flake.lock directly.
   # Weekly, not daily: nixpkgs tracks nixos-unstable and moves constantly. Grouped so
