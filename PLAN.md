@@ -1,6 +1,46 @@
 # python-devops-nix: plan
 
-Status: approved 2026-10-16, in progress. Phases 0 to 3 and 7 are done in both products, and Track D's D1 and D2 in frappe-nix; see the merged pull requests in each repository. This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
+Status: complete as of 2026-10-22. This is the historical record of the plan, approved 2026-10-16. The conventions it produced are recorded in [CONVENTIONS.md](CONVENTIONS.md), and each product's current documentation lives in that product ([frappe-nix](https://github.com/Avunu/frappe-nix/tree/main/docs), [odoo-nix](https://github.com/Avunu/odoo-nix/tree/main/docs)). What is left is under [Follow-ups](#follow-ups). This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
+
+## Outcome
+
+Every phase and track shipped. Pull requests are this repository's (`#N`), frappe-nix's (`frappe-nix#N`) and odoo-nix's (`odoo-nix#N`). frappe-nix released v1.2.0 and odoo-nix v1.0.0 with the work below, on `release-1` branches.
+
+| Phase or track | Base | frappe-nix | odoo-nix |
+| --- | --- | --- | --- |
+| Phase 0, fix now | — | frappe-nix#90 (unused input), #91 (partial clones), #92 (every check in CI), #93 (root bench as the service user), #94 (`containers.registry`) | odoo-nix#49 (stale docs), #50 (`containers.registry`), #51 (private dumps) |
+| Phase 1, the repository | #1 | — | — |
+| Phase 2, secrets toolkit | #4, #5, #15 (the secret tools in Python, gum removed) | frappe-nix#97 | odoo-nix#52 |
+| Phase 3, devguard core | #6, #13 | frappe-nix#112 | odoo-nix#56 |
+| Phase 4, Python environment | #7 | frappe-nix#127 | odoo-nix#59 |
+| Phase 5, development shell pieces | #8, #11, #12 | frappe-nix#130, #144 (port leases) | odoo-nix#62 |
+| Phase 6, production pieces | #14 | frappe-nix#151, #154 (the scheduler lock bind-mount) | odoo-nix#73 |
+| Phase 7, repository hygiene | #3 | frappe-nix#159 (reusable auto-merge, cooldown, scope list); #160 (every check through `lib.checks.mk`) pending | odoo-nix#76 (prek lint job, `.envrc`, `ty.toml`), #77 (`lib.checks.mk` and check names), #78 (reusable auto-merge, cooldown) |
+| Track B, conventions | CONVENTIONS.md | frappe-nix#98 (restore), #108 (scaffolder), #123 (names), #124 (option tree), #157 (containers) | odoo-nix#53 (restore), #57 (names), #58 (option tree), #71 (scaffolder), #79 (docs pages), #81 (containers) |
+| Track C, parity | — | frappe-nix#151 (`environmentFiles`, slow queries, snapshot verification), #156 (`ide`) | odoo-nix#72 (`odoo module remove`), #73 (`LoadCredential`, init as the service user, error log to syslog), #76 (lint job and repository files), #79 (docs) |
+| Track D, frappe-nix's command line in Python | — | D1 frappe-nix#98, D2 #108, D3 #131, D4 #149 and #150 (`bench-update`, `update-deps`, `relock`, node tools), D5 #166 (`bench provision`) pending, D6 #120 | odoo-nix#71 (the scaffolder in Python, outside Track D), #82 (`odoo project relock`) |
+
+Deliberately deferred to each product's 2.0.0, because each changes a running deployment: unit hardening (`services.<p>-nix.hardening.enable`, off through 1.x), non-root containers (`containers.nonRoot`, off through 1.x), and odoo-nix's role image name (`containers.roleImageNames`, off through 1.x, so the image keeps its `<name>-odoo` name). Every renamed option, flag and environment variable keeps its alias, with a warning, until the same release.
+
+## Follow-ups
+
+What the plan promised and did not finish, and what the work turned up.
+
+-   **a. The base's conformance checks.** CONVENTIONS.md promises mechanical checks that this repository does not ship: tool-owned environment variables follow `<P>_NIX_*`, option paths exist (restore, devguard, the option tree, identity, module path), the commands accept the shared flags (restore, scaffolder), every `uses:` is pinned by SHA, `.github/dependabot.yml` has the `fix(deps)` prefix and the cooldown, and check names follow the pattern. Until they exist, the [Success looks like](#success-looks-like) criterion "the base's checks confirm both products follow it" holds only through each product's own tests and review. An environment-variable check needs an allow-list: frappe-nix still reads `FRAPPE_UNIXSOCK_ENABLED`, and frappe-runtime its own `FRAPPE_SERVE_ASSETS` and `FRAPPE_WEB_THREADS`.
+-   **b. `lib.containers`.** Both products now write the same image pieces by hand: OCI labels, `/etc/passwd` and `/etc/group` for uid and gid 1000, the HTTP healthcheck and the writable directories. One helper in the base.
+-   **c. One commit scope list, owned by the base.** frappe-nix's `committed.toml` has 61 scopes (the union of both repositories' history, frappe-nix#159); odoo-nix's has 30, and they differ. The list belongs in this repository, compared by `lib.checks.sharedConfig` like the other shared files, and odoo-nix adopts it.
+-   **d. frappe-nix's tooling on `lib.python.rich`.** frappe-nix-tools still uses nixpkgs' plain rich (`lib/standards/package.nix`). Moving it needs the base threaded through `lib/standards/outputs.nix`.
+-   **e. odoo-nix:**
+    -   a `python -m odoo` fallback where an Enterprise tree has no `odoo-bin`;
+    -   the OCA catalog for 20.0, which odoo-nix#75 shipped without;
+    -   the CLI's usage line names the program `python -m odoo_nix_cli`, where it should say `odoo` (click is called without `prog_name`);
+    -   a consumer `.#relock` flake app, for a project whose shell cannot evaluate because its lock is stale (today `.#relock` re-locks odoo-nix's own fixtures).
+-   **f. Make `flake` a required check on frappe-nix's `main`.** Auto-merge is only as safe as the required checks. frappe-nix requires only the docs check, so Dependabot's frappe-nix#163 merged with `flake` failing, as odoo-nix#63 did before odoo-nix required it. This is the owner's decision.
+-   **g. frappe-nix's `bench-restore` test isolation.** The `--at yesterday` case asserts on the bench log that every case in the run shares (each case truncates it, rather than having its own), so it is not isolated from the cases before it. Give each case its own log.
+-   **h. The 2.0.0 default flips**, in each product: hardening on, non-root containers, odoo-nix's `<name>/odoo` image name, and every alias above removed.
+-   **i. Releases of this repository.** [Releases and compatibility](#releases-and-compatibility) planned `v0.x.y` tags and then `v1`. None has been cut: the products pin a commit of `main` (the auto-merge workflow's pin reads `# main (no release yet)`), and Dependabot moves it.
+
+The rest of this document is the plan as it was written and amended while the work ran. Where it says "today", it means 2026-10-16.
 
 ## Why this repository exists
 
