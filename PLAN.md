@@ -1,10 +1,10 @@
 # python-devops-nix: plan
 
-Status: complete as of 2026-10-22. frappe-nix v1.2.0 shipped most of the work, and frappe-nix#159 and the later pull requests land in its next release; in odoo-nix all of it is on `main`, with its next release pending. This is the historical record of the plan, approved 2026-10-16. The conventions it produced are recorded in [CONVENTIONS.md](CONVENTIONS.md), and each product's current documentation lives in that product ([frappe-nix](https://github.com/Avunu/frappe-nix/tree/main/docs), [odoo-nix](https://github.com/Avunu/odoo-nix/tree/main/docs)). What is left is under [Follow-ups](#follow-ups). This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
+Status: complete as of 2026-10-22. odoo-nix v1.1.0 shipped all of it; frappe-nix v1.2.0 and v1.2.1 shipped most of it, and frappe-nix#159 and the later pull requests land in its next release. This is the historical record of the plan, approved 2026-10-16. The conventions it produced are recorded in [CONVENTIONS.md](CONVENTIONS.md), and each product's current documentation lives in that product ([frappe-nix](https://github.com/Avunu/frappe-nix/tree/main/docs), [odoo-nix](https://github.com/Avunu/odoo-nix/tree/main/docs)). What is left is under [Follow-ups](#follow-ups). This repository was planned as nix-dev-base; it is renamed python-devops-nix because its scope is now Python application products only.
 
 ## Outcome
 
-Every phase and track shipped. Pull requests are this repository's (`#N`), frappe-nix's (`frappe-nix#N`) and odoo-nix's (`odoo-nix#N`). frappe-nix v1.2.0 shipped most of the work below; frappe-nix#159 and the pull requests after it land in frappe-nix's next release. In odoo-nix everything below is on `main`, and its next release is pending: its release pull request has not been cut yet.
+Every phase and track shipped. Pull requests are this repository's (`#N`), frappe-nix's (`frappe-nix#N`) and odoo-nix's (`odoo-nix#N`). frappe-nix v1.2.0 shipped most of the work below, and v1.2.1 fixed its frappe-nix-tools build (frappe-nix#173); frappe-nix#159 and the pull requests after it land in frappe-nix's next release. odoo-nix v1.1.0 shipped everything below.
 
 | Phase or track | Base | frappe-nix | odoo-nix |
 | --- | --- | --- | --- |
@@ -15,10 +15,10 @@ Every phase and track shipped. Pull requests are this repository's (`#N`), frapp
 | Phase 4, Python environment | #7 | frappe-nix#127 | odoo-nix#59 |
 | Phase 5, development shell pieces | #8, #11, #12 | frappe-nix#130, #144 (port leases) | odoo-nix#62 |
 | Phase 6, production pieces | #14 | frappe-nix#151, #154 (the scheduler lock bind-mount) | odoo-nix#73 |
-| Phase 7, repository hygiene | #3 | frappe-nix#159 (reusable auto-merge, cooldown, scope list); #160 (every check through `lib.checks.mk`) pending | odoo-nix#76 (prek lint job, `.envrc`, `ty.toml`), #77 (`lib.checks.mk` and check names), #78 (reusable auto-merge, cooldown) |
+| Phase 7, repository hygiene | #3 | frappe-nix#159 (reusable auto-merge, cooldown, scope list); #160 (every check through `lib.checks.mk`) | odoo-nix#76 (prek lint job, `.envrc`, `ty.toml`), #77 (`lib.checks.mk` and check names), #78 (reusable auto-merge, cooldown) |
 | Track B, conventions | CONVENTIONS.md | frappe-nix#98 (restore), #108 (scaffolder), #123 (names), #124 (option tree), #157 (containers) | odoo-nix#53 (restore), #57 (names), #58 (option tree), #71 (scaffolder), #79 (docs pages), #81 (containers) |
 | Track C, parity | — | frappe-nix#151 (`environmentFiles`, slow queries, snapshot verification), #156 (`ide`) | odoo-nix#72 (`odoo module remove`), #73 (`LoadCredential`, init as the service user, error log to syslog), #76 (lint job and repository files), #79 (docs) |
-| Track D, frappe-nix's command line in Python | — | D1 frappe-nix#98, D2 #108, D3 #131, D4 #149 and #150 (`bench-update`, `update-deps`, `relock`, node tools), D5 #166 (`bench provision`) pending, D6 #120 | odoo-nix#71 (the scaffolder in Python, outside Track D), #82 (`odoo project relock`) |
+| Track D, frappe-nix's command line in Python | — | D1 frappe-nix#98, D2 #108, D3 #131, D4 #149 and #150 (`bench-update`, `update-deps`, `relock`, node tools), D5 #166 (`bench provision`), D6 #120 | odoo-nix#71 (the scaffolder in Python, outside Track D), #82 (`odoo project relock`) |
 
 Deliberately deferred to each product's 2.0.0, because each changes a running deployment: unit hardening (`services.<p>-nix.hardening.enable`, off through 1.x), non-root containers (`containers.nonRoot`, off through 1.x), and odoo-nix's role image name (`containers.roleImageNames`, off through 1.x, so the image keeps its `<name>-odoo` name). Every renamed option, flag and environment variable keeps its alias, with a warning, until the same release.
 
@@ -35,10 +35,11 @@ What the plan promised and did not finish, and what the work turned up.
     -   the OCA catalog for 20.0, which odoo-nix#75 shipped without;
     -   the CLI's usage line names the program `python -m odoo_nix_cli`, where it should say `odoo` (click is called without `prog_name`);
     -   a consumer `.#relock` flake app, for a project whose shell cannot evaluate because its lock is stale (today `.#relock` re-locks odoo-nix's own fixtures).
--   **f. Make `flake` a required check on frappe-nix's `main`.** Auto-merge is only as safe as the required checks. frappe-nix requires only the docs check, so Dependabot's frappe-nix#163 merged with `flake` failing, as odoo-nix#63 did before odoo-nix required it. This is the owner's decision.
+-   **f. Done: `flake` is a required check on frappe-nix's `main`** (2026-10-22). Until then only the docs check was required, so Dependabot's frappe-nix#163 merged with `flake` failing, as odoo-nix#63 had before odoo-nix required it, and the 1.2.0 release merged with frappe-nix-tools failing its own test (fixed in 1.2.1, frappe-nix#173).
 -   **g. frappe-nix's `bench-restore` "--at yesterday is refused" case fails intermittently.** The command exited 1 with the right message, but the `! logged " restore "` assertion failed. The root cause is unknown, and the case passes on rerun and on `main`; for example, frappe-nix's Actions job 119544049176 (frappe-nix#159, 2026-10-21). Investigate before trusting the case.
 -   **h. The 2.0.0 default flips**, in each product: hardening on, non-root containers, odoo-nix's `<name>/odoo` image name, and every alias above removed.
 -   **i. Releases of this repository.** [Releases and compatibility](#releases-and-compatibility) planned `v0.x.y` tags and then `v1`. None has been cut: the products pin a commit of `main` (the auto-merge workflow's pin reads `# main (no release yet)`), and Dependabot moves it.
+-   **j. frappe-nix's built bench asks for its assets with a URL built from a shell error.** Bench's asset download runs `git show-ref --tags` in `apps/frappe`, which is not a git repository in a built bench, and puts the error text into `releases/download/…`. The build falls back to building the assets, so nothing breaks, but the download never works and the log is noisy.
 
 The rest of this document is the plan as it was written and amended while the work ran. Where it says "today", it means 2026-10-16.
 
