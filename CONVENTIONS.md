@@ -2,7 +2,7 @@
 
 How frappe-nix and odoo-nix name and do the jobs they both do. Where the two products do the same job, they do it the same way and under the same names. This file records one decision per job and where each product stands on it.
 
-It is the record of what the products do, as of 2026-10-22: frappe-nix v1.2.0 and odoo-nix v1.0.0, and both products' `main` on that date. It started as the first draft of [PLAN.md, Track B](PLAN.md#track-b-conventions) on 2026-10-16. PLAN.md is now the historical record of that work, and its [Follow-ups](PLAN.md#follow-ups) list what is left. A pull request that changes a convention, or a product's adoption of one, updates this file.
+It is the record of what the products do on their `main` branches as of 2026-10-22. frappe-nix v1.2.0 shipped most of it, and the rest lands in each product's next release. It started as the first draft of [PLAN.md, Track B](PLAN.md#track-b-conventions) on 2026-10-16. PLAN.md is now the historical record of that work, and its [Follow-ups](PLAN.md#follow-ups) list what is left. A pull request that changes a convention, or a product's adoption of one, updates this file.
 
 ## How to read this
 
