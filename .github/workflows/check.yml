@@ -8,6 +8,8 @@ name: check
 #                checks.x86_64-linux attribute
 #   downstream   frappe-nix's and odoo-nix's checks.x86_64-linux, built against this
 #                pull request's head, for each product that takes this flake as an input
+#   report       a comment on the pull request when a job fails: the failed derivations
+#                and the end of their logs (.github/actions/check-report)
 #
 # The downstream job is the main defence against one bad change breaking both products at
 # once, and it has to pass before a release.
@@ -51,13 +53,29 @@ jobs:
           use-flakehub: false
 
       - name: nix flake check
-        run: nix flake check -L --show-trace
+        shell: bash # -o pipefail, through the tee
+        run: nix flake check -L --show-trace 2>&1 | tee "$RUNNER_TEMP/nix.log"
 
-      # `nix fmt` must leave the tree as committed.
+      - if: failure()
+        uses: ./.github/actions/nix-failures
+        with:
+          log: ${{ runner.temp }}/nix.log
+          title: checks
+          output: ${{ runner.temp }}/failures/checks.md
+
+      # `nix fmt` must leave the tree as committed. On a pull request, autofix.yml pushes
+      # what it rewrites.
       - name: nix fmt
         run: |
           nix fmt
           git diff --exit-code
+
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failures-checks
+          path: ${{ runner.temp }}/failures/checks.md
+          if-no-files-found: ignore
 
   downstream:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
@@ -104,6 +122,7 @@ jobs:
 
       - name: Build ${{ matrix.product }}'s checks against this head
         if: steps.product.outputs.adopted == 'true'
+        shell: bash # -o pipefail, through the tee
         env:
           REF: ${{ steps.product.outputs.ref }}
         run: |
@@ -117,4 +136,39 @@ jobs:
           fi
           echo "Building ${#names[@]} checks: ${names[*]}"
           nix build -L --keep-going --no-link --show-trace "${override[@]}" \
-            "${names[@]/#/$REF#checks.x86_64-linux.}"
+            "${names[@]/#/$REF#checks.x86_64-linux.}" 2>&1 | tee "$RUNNER_TEMP/nix.log"
+
+      - if: failure()
+        uses: ./.github/actions/nix-failures
+        with:
+          log: ${{ runner.temp }}/nix.log
+          title: downstream (${{ matrix.product }})
+          output: ${{ runner.temp }}/failures/downstream-${{ matrix.product }}.md
+
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failures-downstream-${{ matrix.product }}
+          path: ${{ runner.temp }}/failures/downstream-${{ matrix.product }}.md
+          if-no-files-found: ignore
+
+  report:
+    needs: [lint, checks, downstream]
+    # `!cancelled()`: a run a newer push superseded has nothing to say. A fork's pull
+    # request gets a read-only token, so no comment.
+    if: >-
+      !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # the checkout of the action
+      pull-requests: write # the comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      - uses: ./.github/actions/check-report
+        with:
+          needs: ${{ toJSON(needs) }}

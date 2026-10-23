@@ -1,0 +1,39 @@
+name: autofix
+
+# Pushes what `nix fmt` and the prek hooks would rewrite to the pull request's branch, for
+# a clone that does not run them, through this repository's pre-commit-autofix action
+# (docs/conventions.md, CI). check.yml's `lint` and `checks` stay the gate; this makes
+# them pass. The push is GITHUB_TOKEN's and starts no workflow, so the action dispatches
+# check.yml on the branch.
+#
+# Only a branch of this repository: a fork's is not this token's to push to, and the lint
+# job's diff is the answer there.
+
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: autofix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 20
+    permissions:
+      contents: write # the push
+      actions: write # gh workflow run
+      pull-requests: write # the comment
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true # zizmor: ignore[artipacked] the action pushes
+
+      - uses: ./.github/actions/pre-commit-autofix
+        with:
+          fixers: nix fmt
+          dispatch: check.yml

@@ -1,0 +1,54 @@
+name: Sticky pull request comment
+description: >-
+  Keeps one comment per marker on a pull request: creates it, or edits the one an earlier
+  run left, so a pull request carries the latest report, not one comment per push.
+
+# A caller pins it by SHA, as the reusable workflows (docs/conventions.md, CI):
+#
+#   - uses: Avunu/python-devops-nix/.github/actions/sticky-comment@<sha> # main (no release yet)
+#     with:
+#       marker: check-report
+#       body-file: ${{ runner.temp }}/report.md
+#       mode: ${{ steps.verdict.outputs.failed == 'true' && 'upsert' || 'update' }}
+#
+# The job needs `pull-requests: write`. It never fails the job: the comment is a report
+# about the checks, not one of them, so a refused or failed API call is a warning.
+
+inputs:
+  marker:
+    description: >-
+      The comment's identity, written as `<!-- <marker> -->` on its first line. Letters,
+      digits and `.`, `_`, `:`, `-`.
+    required: true
+  body-file:
+    description: The comment's Markdown, without the marker.
+    required: true
+  mode:
+    description: >-
+      `upsert` creates the comment or edits it. `update` only edits one that is already
+      there: a passing run uses it, so a green pull request gets no comment, and a red one
+      that went green has its comment brought up to date.
+    default: upsert
+  pr:
+    description: >-
+      The pull request number. By default the event's, or, on a dispatched run, the open
+      pull request whose head is the run's branch.
+    default: ${{ github.event.pull_request.number }}
+  token:
+    description: "A token with `pull-requests: write`."
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        MARKER: ${{ inputs.marker }}
+        BODY_FILE: ${{ inputs.body-file }}
+        MODE: ${{ inputs.mode }}
+        PR: ${{ inputs.pr }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/sticky-comment.sh"

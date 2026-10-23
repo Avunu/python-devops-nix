@@ -1,0 +1,52 @@
+name: Nix build failures
+description: >-
+  Turns the log of a failed `nix build` or `nix flake check` into Markdown: each
+  derivation that failed, with the end of its build log, or the evaluation error.
+
+# For a pull request comment (sticky-comment) or the job summary. The build step tees its
+# output, and this runs after it on failure:
+#
+#   - name: Build the checks
+#     shell: bash
+#     run: nix build -L --keep-going ... 2>&1 | tee "$RUNNER_TEMP/nix.log"
+#   - if: failure()
+#     uses: Avunu/python-devops-nix/.github/actions/nix-failures@<sha> # main (no release yet)
+#     with:
+#       log: ${{ runner.temp }}/nix.log
+#       title: flake
+#       output: ${{ runner.temp }}/failures/flake.md
+#
+# `shell: bash` is what makes the step `bash -eo pipefail`, so the build's failure is the
+# step's and not tee's success; without it a step runs `bash -e`. The Markdown is also
+# appended to the job summary.
+
+inputs:
+  log:
+    description: The build's combined output.
+    required: true
+  title:
+    description: The heading, usually the job's name.
+    required: true
+  output:
+    description: Where to write the Markdown; its directory is created.
+    required: true
+  tail:
+    description: How many lines of each failed derivation's log to keep.
+    default: "60"
+  max:
+    description: How many failed derivations to show; the rest are listed by name.
+    default: "10"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        LOG: ${{ inputs.log }}
+        TITLE: ${{ inputs.title }}
+        OUT: ${{ inputs.output }}
+        TAIL: ${{ inputs.tail }}
+        MAX: ${{ inputs.max }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/nix-failures.sh"
+        cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
