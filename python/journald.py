@@ -1,7 +1,7 @@
 """journald-native log lines for a Python application under systemd.
 
-The core both products' formatters share (docs/library.md, Production):
-frappe-nix's frappe_journald and odoo-nix's journald shim, which grew apart in parallel.
+The core both products' formatters share (PLAN.md, Phase 6): frappe-nix's
+frappe_journald and odoo-nix's journald shim, which grew apart in parallel.
 What is here knows nothing about the framework. The product keeps its own
 patching into the framework's logging (which logger, which handler, when) and
 says what the tenant of a record is: Frappe's site, Odoo's database.
@@ -10,7 +10,7 @@ A line leaves as
 
     <N>{logger} [{tenant}] {message}
 
-(docs/conventions.md, Journald line format). ``<N>`` is the record's syslog
+(CONVENTIONS.md, Journald line format). ``<N>`` is the record's syslog
 priority, which journald's stream transport reads off the start of each line
 (sd-daemon(3), ``SyslogLevelPrefix=``, on by default) and stores as PRIORITY.
 There is no timestamp, pid or level name: journald records all three itself.
@@ -30,8 +30,8 @@ the same environment run from a shell, a container or a captured subprocess
 keeps the framework's own format.
 
 Standard library only, written to Python 3.11: it loads into the
-application's own interpreter (docs/library.md, Python versions). A product
-vendors it, by ``lib.journald.mkGraft`` into its graft as ``_journald.py`` or by
+application's own interpreter (PLAN.md, Python versions). A product vendors
+it, by ``lib.journald.mkGraft`` into its graft as ``_journald.py`` or by
 ``lib.journald.module`` anywhere else, and imports nothing of it from this
 repository at run time.
 """
