@@ -1,8 +1,8 @@
-# Source repositories as git submodules (PLAN.md, Phase 5): the first clone a
-# scaffolder makes, and what shell entry does about them. The logic is
-# python/sources.py; its docstring has the reasoning (paired branch, partial
-# clone, no pack pile-up), ported from frappe-nix's lib/apps-report.nix and
-# odoo-nix's lib/submodules-init.nix.
+# Source repositories as git submodules (docs/library.md, Development shell):
+# the first clone a scaffolder makes, and what shell entry does about them. The
+# logic is python/sources.py; its docstring has the reasoning (paired branch,
+# partial clone, no pack pile-up), ported from frappe-nix's lib/apps-report.nix
+# and odoo-nix's lib/submodules-init.nix.
 { lib }:
 
 let
@@ -10,8 +10,8 @@ let
 in
 rec {
   # The module itself, for a product that imports it in-process (frappe-nix's
-  # scaffolder): copy it into the product's package (PLAN.md, design rule 6)
-  # and call `clone(...)` or `Sources(Config(...)).enter(root)`.
+  # scaffolder): copy it into the product's package (docs/library.md, design
+  # rule 6) and call `clone(...)` or `Sources(Config(...)).enter(root)`.
   module = ../python/sources.py;
 
   # The command: `<name> enter [--treeless PATH]... [ROOT]` for shell entry
@@ -35,7 +35,7 @@ rec {
   #                  .gitmodules section
   #   nestedHint     the lines (each indented by two spaces) after "<path> is a
   #                  git repository but not a registered submodule —"
-  #   python         the interpreter it runs on (a tool: PLAN.md, Python
+  #   python         the interpreter it runs on (a tool: docs/library.md, Python
   #                  versions)
   #   git            put first on PATH
   command =

@@ -1,8 +1,9 @@
-# lib.python.overrides against a stub pyproject-nix package set (PLAN.md,
-# design rule 8): a scope of stand-in derivations, each installing the file
-# its fix patches, with the line the real package carries. A source build gains
-# its headers and a wheel does not; the runtime fixes reach both; a package the
-# set lacks stays absent; and a product's overlay layers on top.
+# lib.python.overrides against a stub pyproject-nix package set
+# (docs/library.md, design rule 8): a scope of stand-in derivations, each
+# installing the file its fix patches, with the line the real package carries. A
+# source build gains its headers and a wheel does not; the runtime fixes reach
+# both; a package the set lacks stays absent; and a product's overlay layers on
+# top.
 { pkgs, self }:
 let
   inherit (pkgs) lib;

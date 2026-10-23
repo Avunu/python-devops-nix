@@ -1,6 +1,7 @@
-# The secrets toolkit (PLAN.md, Phase 2): age ciphertext committed to the
-# repository, agenix-shell decryption in the development shell, generated agenix
-# rules, the recipient-drift check, and the commands around them.
+# The secrets toolkit (docs/library.md, Secrets and backups): age ciphertext
+# committed to the repository, agenix-shell decryption in the development shell,
+# generated agenix rules, the recipient-drift check, and the commands around
+# them.
 #
 #   schema    the pure derivation of a product's secret set
 #   mkModule  the flake-parts module that declares the options and wires
@@ -247,8 +248,8 @@ rec {
   #                 `description` and `example`, and per role a `description`
   #                 and `default`
   #   agenix-shell  the product's agenix-shell input. Taken as an argument, not
-  #                 an input of this flake (PLAN.md, design rule 3). Its module
-  #                 is imported here, so a consumer declares only the
+  #                 an input of this flake (docs/library.md, design rule 3).
+  #                 Its module is imported here, so a consumer declares only the
   #                 product's options; flake-parts deduplicates it by key if
   #                 the product imports it too.
   #   libName       the flake output: flake.lib.<libName>
@@ -622,8 +623,8 @@ rec {
       };
       agecheckBin = lib.getExe agecheck;
 
-      # The commands with logic in them (python/secret_tools.py; PLAN.md,
-      # design rule 5): edit-secret, rekey-secrets, setup-backup-access and the
+      # The commands with logic in them (python/secret_tools.py;
+      # docs/library.md, design rule 5): edit-secret, rekey-secrets, setup-backup-access and the
       # rules renderer. Their configuration is a JSON file the tool reads into
       # a typed Config, failing on an unknown or missing key, rather than
       # values spliced into code.

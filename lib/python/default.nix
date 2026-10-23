@@ -1,7 +1,8 @@
-# Helpers for the Python this repository ships (PLAN.md, Python versions), and
-# the pieces of a product's Python environment both products build the same
-# way (PLAN.md, Phase 4): the package fixes, rich for a product's tooling, the
-# stale-lock audit, the sdist build dependencies and the BLAS thread caps.
+# Helpers for the Python this repository ships (docs/library.md, Python
+# versions), and the pieces of a product's Python environment both products
+# build the same way (docs/library.md, Python environment): the package fixes,
+# rich for a product's tooling, the stale-lock audit, the sdist build
+# dependencies and the BLAS thread caps.
 { lib }:
 let
   overrideSet = import ./overrides.nix { inherit lib; };
@@ -49,7 +50,8 @@ rec {
   #           its messages
   #   always  { <package> = [ <build dependency> ... ]; }: listed whatever the
   #           lock says, in place of the derived entry
-  #   python  the interpreter it runs on (a tool: PLAN.md, Python versions)
+  #   python  the interpreter it runs on (a tool: docs/library.md, Python
+  #           versions)
   buildDeps =
     {
       pkgs,
@@ -152,7 +154,7 @@ rec {
   # The post-import hook every `.pth` graft carries (python/devguard/_hook.py):
   # `on_import(name, callback)`. Each graft gets its own copy, under its own
   # package, so a graft that ships to production imports nothing from one that
-  # must not (PLAN.md, design rule 7). `mkGraft` puts it in place.
+  # must not (docs/library.md, design rule 7). `mkGraft` puts it in place.
   hook = ../../python/devguard/_hook.py;
 
   # A package to graft (`withGrafts`): `src`, the package's own directory

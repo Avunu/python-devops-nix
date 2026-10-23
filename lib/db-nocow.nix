@@ -1,7 +1,7 @@
 # Keeps a development shell's database datadir off btrfs copy-on-write
-# (PLAN.md, Phase 5): frappe-nix's lib/db-nocow.nix (MariaDB) and odoo-nix's
-# port of it (PostgreSQL), as one command. Glue, so bash (PLAN.md, design
-# rule 5, and Track D's "What stays bash").
+# (docs/library.md, Development shell): frappe-nix's lib/db-nocow.nix (MariaDB)
+# and odoo-nix's port of it (PostgreSQL), as one command. Glue, so bash
+# (docs/library.md, design rule 5).
 #
 # A database rewrites its pages in place all day (InnoDB 16 KB, PostgreSQL
 # 8 KB). On a copy-on-write filesystem no write lands in place: each one

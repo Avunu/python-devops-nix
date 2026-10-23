@@ -1,9 +1,9 @@
-# A unix socket in its own directory (PLAN.md, Phase 6; CONVENTIONS.md, Unix
-# sockets). The socket file's own mode gates nothing: nginx chmods its listen
-# sockets to 0666, and a Python server's follows its umask. The directory
-# around it does, so each socket lives in a directory of its own (never
-# straight in /run, which everyone can traverse), created by tmpfiles and owned
-# by the service user and group:
+# A unix socket in its own directory (docs/library.md, Production;
+# docs/conventions.md, Unix sockets). The socket file's own mode gates nothing:
+# nginx chmods its listen sockets to 0666, and a Python server's follows its
+# umask. The directory around it does, so each socket lives in a directory of
+# its own (never straight in /run, which everyone can traverse), created by
+# tmpfiles and owned by the service user and group:
 #
 #   0750  the service creates the socket; a peer in the group (nginx) only
 #         connects to it

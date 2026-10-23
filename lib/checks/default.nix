@@ -1,8 +1,8 @@
 # Checks a product registers in its own flake, and the helper it registers
-# them with. CONVENTIONS.md, Tests, has the naming scheme `mk` applies.
+# them with. docs/conventions.md, Tests, has the naming scheme `mk` applies.
 { lib }:
 let
-  # The base's copies of the shared repository files (CONVENTIONS.md,
+  # The base's copies of the shared repository files (docs/conventions.md,
   # Repository files), which `sharedConfig` and `nixLint` compare a product's
   # copies with.
   baseFiles = {
@@ -181,7 +181,7 @@ in
 
   # The product's copies of the shared repository files, compared with the
   # base's: each must make every setting the base's copy makes, with the same
-  # value, and may add its own (CONVENTIONS.md, Repository files).
+  # value, and may add its own (docs/conventions.md, Repository files).
   # `exceptions` maps a file to the key paths of base settings the product
   # sets differently, each one documented in the product, e.g.
   # { ".editorconfig" = [ [ "*.py" "indent_style" ] ]; }. statix.toml is

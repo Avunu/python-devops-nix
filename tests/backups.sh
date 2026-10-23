@@ -217,8 +217,9 @@ else
 fi
 
 # ── 13. --at takes ISO 8601 and any leading part of a name ───────────────
-# CONVENTIONS.md, Restore, --at: ISO 8601 in both products, and each product's
-# own backup naming as well. A partial time is the newest backup within it.
+# docs/conventions.md, Restore, --at: ISO 8601 in both products, and each
+# product's own backup naming as well. A partial time is the newest backup
+# within it.
 for at in 2026-01-01 2026-01-01T01:01:01 "2026-01-01 01:01" 2026-01-01T01:01:01Z 20260101 20260101_01; do
   bf fetch --at "$at"
   if [ "$RC" -eq 0 ] && [ "$(printf '%s' "$OUT" | jq -r .name)" = "20260101_010101" ]; then

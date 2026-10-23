@@ -1,5 +1,5 @@
-# Fixes for the Python packages both products build that need a system
-# library (PLAN.md, Phase 4), as pyproject-nix package-set overlays
+# Fixes for the Python packages both products build that need a system library
+# (docs/library.md, Python environment), as pyproject-nix package-set overlays
 # (`final: prev: { ... }`). Each takes the better of the two products' fixes:
 #
 #   psycopg2     pg_config to build, libpq to link                 (odoo-nix)
@@ -38,8 +38,8 @@
 #       productOverrides    # mysqlclient, the framework's own build, ...
 #     ]);
 #
-# pyproject-nix and uv2nix stay the product's inputs (PLAN.md, design rule 3):
-# an overlay is a plain function, and nothing here needs their library.
+# pyproject-nix and uv2nix stay the product's inputs (docs/library.md, design
+# rule 3): an overlay is a plain function, and nothing here needs their library.
 { lib }:
 let
   # uv2nix records how it builds each package in passthru.format: "wheel" or

@@ -1,6 +1,6 @@
-# CI mode for a development shell (PLAN.md, Phase 5): what enterShell does
-# differently when <P>_NIX_CI is set. frappe-nix's lib/ci-mode.nix, with the
-# variable and the label passed in.
+# CI mode for a development shell (docs/library.md, Development shell): what
+# enterShell does differently when <P>_NIX_CI is set. frappe-nix's
+# lib/ci-mode.nix, with the variable and the label passed in.
 #
 # Read when enterShell runs, not at evaluation, so one shell derivation serves
 # both. A CI job enters the shell once (`nix develop --no-pure-eval -c <the

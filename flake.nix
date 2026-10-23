@@ -1,9 +1,9 @@
 {
   description = "Shared building blocks and conventions for frappe-nix and odoo-nix";
 
-  # nixpkgs and flake-parts only (PLAN.md, design rule 3). Products `follows`
-  # both, so adopting this flake adds one node to their lock. Anything heavier
-  # is taken as an argument from the product, never as an input here.
+  # nixpkgs and flake-parts only (docs/library.md, design rule 3). Products
+  # `follows` both, so adopting this flake adds one node to their lock. Anything
+  # heavier is taken as an argument from the product, never as an input here.
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts = {
@@ -46,7 +46,7 @@
       { self, ... }:
       {
         # The systems both products build for. x86_64-darwin is gone from
-        # nixpkgs 26.11 and from both products (CONVENTIONS.md, Systems).
+        # nixpkgs 26.11 and from both products (docs/conventions.md, Systems).
         systems = [
           "x86_64-linux"
           "aarch64-linux"

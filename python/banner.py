@@ -1,7 +1,7 @@
 """A development shell's welcome banner, printed once on enterShell.
 
-One renderer for both products (PLAN.md, Phase 5), in place of frappe-nix's
-flags and odoo-nix's nine positional arguments. Everything it shows comes from
+One renderer for both products (docs/library.md, Development shell), in
+place of frappe-nix's flags and odoo-nix's nine positional arguments. Everything it shows comes from
 one JSON file the product writes at evaluation:
 
     {

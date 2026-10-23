@@ -1,0 +1,27 @@
+name: docs
+
+# Checks docs/ on every pull request that touches it, as the shared site
+# (https://docs.avunu.net/python-devops-nix/) will build it, links to the other projects
+# included. The work is done by Avunu/site-docs's reusable check-docs.yml, pinned to a
+# commit as the products pin it: the tool moves with the pin. Nothing here publishes: the
+# token is read-only and there is no secret. The project has to be registered in
+# site-docs's projects.json for the check to find it.
+on:
+  pull_request:
+    paths:
+      - docs/**
+      - .github/workflows/docs.yml
+
+permissions: {}
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    permissions:
+      contents: read # checkout
+    uses: Avunu/site-docs/.github/workflows/check-docs.yml@e8aa2979d84a312318e8edfc230c6b62ed196f81 # 2026-10-22
+    with:
+      path: python-devops-nix # its path in site-docs's projects.json

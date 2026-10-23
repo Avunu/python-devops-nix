@@ -4,8 +4,8 @@
 
 SPEC_JSON is {"files": [name, ...], "exceptions": {name: [[key, ...], ...]}}.
 Each file is read from both directories and parsed into nested mappings (see
-`load`). The rule (CONVENTIONS.md, Repository files): every setting the base's
-copy makes, the product's copy makes too, with the same value. The product may
+`load`). The rule (docs/conventions.md, Repository files): every setting the
+base's copy makes, the product's copy makes too, with the same value. The product may
 add settings of its own. A list is a value, compared whole. An exception names
 the path of one base setting the product may set differently or leave out, and
 the product documents why next to it.
@@ -129,7 +129,7 @@ def main() -> int:
     if failures:
         print(
             f"{failures} difference(s) from the base's copies. Copy the base's"
-            " settings in, or list a documented exception (CONVENTIONS.md,"
+            " settings in, or list a documented exception (docs/conventions.md,"
             " Repository files)."
         )
         return 1

@@ -1,4 +1,4 @@
-# Stub products for lib.secrets (PLAN.md, design rule 8), shared by the
+# Stub products for lib.secrets (docs/library.md, design rule 8), shared by the
 # lib-agecheck, lib-secrets-cli, lib-secrets-schema and lib-secrets-module
 # checks. Two shapes, the two in use:
 #
@@ -115,7 +115,7 @@ rec {
 
   # agenix-shell's flake module, reduced to the two options the secrets module
   # sets. The real one is the product's input; the base takes it as an
-  # argument and has none of its own (PLAN.md, design rule 3).
+  # argument and has none of its own (docs/library.md, design rule 3).
   agenix-shell.flakeModules.default = {
     options.agenix-shell = {
       secrets = lib.mkOption {

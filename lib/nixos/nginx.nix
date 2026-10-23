@@ -1,8 +1,8 @@
-# nginx as both products configure it in front of the application (PLAN.md,
-# Phase 6; CONVENTIONS.md, nginx). Everything goes to the journal: the access
-# log as one JSON object per request, the error log over syslog so it keeps
-# its severity. Both products had byte-identical copies of the access log, and
-# frappe-nix alone had the error log.
+# nginx as both products configure it in front of the application
+# (docs/library.md, Production; docs/conventions.md, nginx). Everything goes to
+# the journal: the access log as one JSON object per request, the error log over
+# syslog so it keeps its severity. Both products had byte-identical copies of
+# the access log, and frappe-nix alone had the error log.
 #
 #   services.nginx = {
 #     logError = lib.mkDefault python-devops-nix.lib.nixos.nginx.errorLog;

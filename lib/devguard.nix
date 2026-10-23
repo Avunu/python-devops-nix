@@ -1,8 +1,8 @@
-# The devguard core (PLAN.md, Phase 3): the post-import hook, settings
+# The devguard core (docs/library.md, devguard): the post-import hook, settings
 # resolution, the patch helpers, and the two transport-level guards, egress and
 # mail_stdlib. The Python is python/devguard/; a product supplies the rest of
 # its package (_product.py and the guards that patch its framework), and
-# `mkPackage` merges the two. CONVENTIONS.md, devguard, has the contract.
+# `mkPackage` merges the two. docs/conventions.md, devguard, has the contract.
 { lib }:
 
 let
@@ -30,7 +30,7 @@ rec {
   # DEVELOPMENT ONLY. It stops a development copy reaching production, so
   # being absent from every production environment is the property that
   # matters: graft it into the development virtualenv, never the production
-  # one, and check that it is absent there (PLAN.md, design rule 7).
+  # one, and check that it is absent there (docs/library.md, design rule 7).
   mkPackage =
     {
       pkgs,
@@ -55,8 +55,8 @@ rec {
       passthru = { inherit settings; };
     };
 
-  # The stub product the base's tests run against (PLAN.md, design rule 8),
-  # with the settings `check` expects baked in.
+  # The stub product the base's tests run against (docs/library.md, design rule
+  # 8), with the settings `check` expects baked in.
   stub =
     pkgs:
     mkPackage {
