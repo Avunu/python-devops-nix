@@ -524,9 +524,39 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     Its inputs carry the policy. `update-types` (default `major minor patch other`, where `other` is an update with no semver type, such as a flake input) lists what auto-merges; `exclude-ecosystems` (default `github_actions`) lists ecosystems a person reviews; `merge-method` (default `squash`) is passed to `gh pr merge`. frappe-nix and odoo-nix take the defaults. The workflow decides by ecosystem and update type, not by group, so a group a person reviews is the caller's `if`: odoo-nix skips `dependabot/nix/ocb-*`, because an OCB bump can need a relock. wordpress-nix takes the defaults too: it merges major bumps, and its gate is its required OCI build, not an input. A repository that wants majors reviewed passes `update-types: minor patch other`.
 
     **Auto-merge is only as safe as the checks marked required on the default branch**, so `flake` is a required check. Without it, auto-merge merges a bump before its checks fail.
+
+    **Fixes are pushed, not only reported.** An `autofix` workflow runs `nix fmt` and the prek hooks over each pull request from a branch of the repository, through this repository's `pre-commit-autofix` action, and pushes what they rewrite as a `style:` commit, so a contributor without `prek install` gets a passing `lint` without a second round trip. `lint` stays the gate. A push made with `GITHUB_TOKEN` starts no workflow, so the action dispatches the workflows whose checks the default branch requires on the branch, as each product's release workflow does for the release pull request. That is also why it cannot loop. A fork's branch is not the token's to push to, so a fork's pull request gets the lint job's diff instead:
+
+    ```yaml
+    on: pull_request
+
+    permissions: {}
+
+    jobs:
+      autofix:
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        permissions:
+          contents: write # the push
+          actions: write # gh workflow run
+          pull-requests: write # the comment
+        steps:
+          - uses: actions/checkout@<sha> # v7
+            with:
+              ref: ${{ github.event.pull_request.head.sha }}
+              persist-credentials: true # zizmor: ignore[artipacked] the action pushes
+          - uses: Avunu/python-devops-nix/.github/actions/pre-commit-autofix@<sha> # main (no release yet)
+            with:
+              fixers: nix fmt
+              dispatch: |
+                check.yml
+                pr-policy.yml
+    ```
+
+    **Failures are reported on the pull request.** A job that builds Nix tees its log, and on failure the `nix-failures` action turns it into the failed derivations and the end of each one's log, uploaded as a `failures-<job>` artifact. A last `report` job runs the `check-report` action, which comments the jobs' results and those details on the pull request when a job failed, and edits that comment once they pass, so a green pull request gets no comment and a red one that went green does not keep a stale one. A test runner that measures coverage comments its coverage and failed tests the same way, through the `sticky-comment` action.
 -   **Adopted:**
     -   frappe-nix: SHA pins and the `lint`, `flake` and `vm-tests` jobs; the reusable workflow since frappe-nix#159. Its `main` requires the docs check (`build / Check`) and `flake`; `flake` became required on 2026-10-22, after frappe-nix#163 merged with it failing.
     -   odoo-nix: SHA pins, the `lint` job (odoo-nix#76), and `flake`, which builds every check; the reusable workflow since odoo-nix#78. Its `main` requires `flake` and `pr-policy`, since odoo-nix#63 merged red.
+    -   Both, and this repository: `autofix` and the `report` job. frappe-nix's `app-test` comments its `frappe-test` report (coverage, stage verdicts and failed tests) on the app's pull request. odoo-nix measures no coverage yet, so its report is the failures alone.
 -   **Status:** partial: frappe-nix's required checks.
 -   **Check:** not yet in the base for the `uses:` pins ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Required checks are repository settings, which no check in the tree can see.
 

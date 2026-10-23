@@ -1,0 +1,112 @@
+name: pre-commit autofix
+description: >-
+  Runs the repository's prek hooks over a pull request's branch and pushes what the
+  fixing hooks (formatters, ruff --fix, import sorting) rewrote, for a contributor whose
+  clone does not run them.
+
+# The `lint` job stays the gate: it fails on any file a hook would rewrite, and this does
+# not change that. It fixes the branch so the next run of `lint` passes. A caller runs it
+# in a workflow of its own, on `pull_request`, after a checkout of the head that keeps its
+# credentials (the push needs them):
+#
+#   on: pull_request
+#   permissions: {}
+#   concurrency:
+#     group: autofix-${{ github.event.pull_request.number }}
+#     cancel-in-progress: true
+#   jobs:
+#     autofix:
+#       if: github.event.pull_request.head.repo.full_name == github.repository
+#       runs-on: ubuntu-latest
+#       permissions:
+#         contents: write # the push
+#         actions: write # gh workflow run
+#         pull-requests: write # the comment
+#       steps:
+#         - uses: actions/checkout@<sha> # v7
+#           with:
+#             ref: ${{ github.event.pull_request.head.sha }}
+#             persist-credentials: true # zizmor: ignore[artipacked] the push
+#         - uses: Avunu/python-devops-nix/.github/actions/pre-commit-autofix@<sha> # main (no release yet)
+#           with:
+#             fixers: nix fmt
+#             dispatch: |
+#               check.yml
+#               pr-policy.yml
+#
+# A push made with GITHUB_TOKEN raises no `pull_request` event, so the new head gets no
+# checks of its own: `dispatch` names the workflows to run on the branch after the push,
+# the ones whose checks the default branch requires, as the products' release workflows
+# do for the release pull request. The same fact is why this cannot loop: its own push
+# does not run it again, and if it did, the hooks would find nothing left to fix.
+#
+# A fork's branch is not this token's to push to: the caller's `if` skips it, and the
+# lint job's diff is the answer there. Nothing is pushed when the hooks change nothing,
+# or when the branch moved while they ran (the run for the new head fixes that one).
+
+inputs:
+  commit-message:
+    description: >-
+      The fix commit's subject. A conventional `style:` commit by default, which every
+      product's commit policy accepts and release-please releases nothing for.
+    default: "style: apply the pre-commit hooks' fixes"
+  fixers:
+    description: >-
+      Commands to run before the hooks, one per line: fixers the hooks do not run, such
+      as `nix fmt`. The runner must have what they need.
+    default: ""
+  dispatch:
+    description: >-
+      Workflows to run on the branch after a push, one per line, each as `gh workflow run`
+      takes it: the file name, then any `-f input=value`.
+    default: ""
+  passes:
+    description: >-
+      How many times to run the hooks at most. A fixer can leave work for one that ran
+      before it, so they run again until they pass or a pass changes nothing.
+    default: "3"
+  token:
+    description: The token that pushes, dispatches and comments.
+    default: ${{ github.token }}
+
+outputs:
+  sha:
+    description: The pushed commit, or empty when nothing was pushed.
+    value: ${{ steps.fix.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - uses: j178/prek-action@af4d4fcb6922b8e6f65c0426947125fcc38794ce # v3.0.2
+      with:
+        install-only: "true"
+
+    - id: fix
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        BRANCH: ${{ github.event.pull_request.head.ref }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        PR: ${{ github.event.pull_request.number }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        FIXERS: ${{ inputs.fixers }}
+        DISPATCH: ${{ inputs.dispatch }}
+        PASSES: ${{ inputs.passes }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/autofix.sh"
+
+    - if: steps.fix.outputs.sha != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        MARKER: pre-commit-autofix
+        BODY_FILE: ${{ runner.temp }}/pre-commit-autofix.md
+        MODE: upsert
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/../sticky-comment/sticky-comment.sh"

@@ -1,0 +1,72 @@
+name: Check report
+description: >-
+  Comments a workflow's results on its pull request: a table of its jobs, and what each
+  failed job left in a `failures-*` artifact (nix-failures writes them). A failing run
+  comments; a passing one only brings an earlier comment up to date.
+
+# The last job of the workflow, after every job it reports on:
+#
+#   report:
+#     needs: [lint, flake]
+#     if: >-
+#       !cancelled() && (github.event_name == 'workflow_dispatch' ||
+#       github.event.pull_request.head.repo.full_name == github.repository)
+#     runs-on: ubuntu-latest
+#     permissions:
+#       pull-requests: write # the comment
+#     steps:
+#       - uses: Avunu/python-devops-nix/.github/actions/check-report@<sha> # main (no release yet)
+#         with:
+#           needs: ${{ toJSON(needs) }}
+#
+# `!cancelled()`, not `always()`: a run a newer push superseded has nothing to say. A
+# dispatched run (after pre-commit-autofix's push) finds its pull request by branch.
+
+inputs:
+  needs:
+    description: "`toJSON(needs)` of the job."
+    required: true
+  title:
+    description: The report's name, and with it the comment's marker.
+    default: ${{ github.workflow }}
+  token:
+    description: "A token with `pull-requests: write`."
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    # A self-hosted runner can keep an earlier job's temp files.
+    - shell: bash
+      run: rm -rf "$RUNNER_TEMP/check-report"
+
+    # A run with nothing to report uploaded nothing; that is not this job's failure.
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      continue-on-error: true
+      with:
+        pattern: failures-*
+        path: ${{ runner.temp }}/check-report/failures
+        merge-multiple: true
+
+    - id: body
+      shell: bash
+      env:
+        NEEDS: ${{ inputs.needs }}
+        TITLE: ${{ inputs.title }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        FAILURES: ${{ runner.temp }}/check-report/failures
+        OUT: ${{ runner.temp }}/check-report/body.md
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/check-report.sh"
+
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        MARKER: ${{ steps.body.outputs.marker }}
+        BODY_FILE: ${{ runner.temp }}/check-report/body.md
+        MODE: ${{ steps.body.outputs.mode }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: bash "$GITHUB_ACTION_PATH/../sticky-comment/sticky-comment.sh"
