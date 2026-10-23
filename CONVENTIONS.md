@@ -405,10 +405,16 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
 
 ### Framework config blocks
 
--   **Convention:** `settings` wherever a block becomes the framework's config file, as in nixpkgs. frappe-nix: `sites.<fqdn>.settings` and `settingsFiles` (`site_config.json`, with files for secrets). odoo-nix: `settings` in both the devenv and the NixOS module, holding only `odoo.conf` keys. Declared keys inside a freeform `settings` are camelCase (`settings.dbName`); undeclared keys pass through in the framework's own spelling.
--   **Adopted:** frappe-nix#123 (`extraConfig` and `extraConfigFiles` aliased); odoo-nix#57 and #58 (`odooConf.*` aliased to `settings`, and its port keys to `ports.*`).
+-   **Convention:** `settings` wherever a block becomes the framework's config file, following [NixOS RFC 42](https://github.com/NixOS/rfcs/blob/master/rfcs/0042-config-option.md):
+    -   `settings` is a submodule whose `freeformType` is the file's `pkgs.formats` type: `pkgs.formats.json` for frappe-nix's `site_config.json`, and `pkgs.formats.ini` for odoo-nix's `odoo.conf`, by section (`settings.options.<key>`), as nixpkgs' `services.odoo` has it.
+    -   Keys inside `settings` use the framework's own spelling (`host_name`, `db_name`), declared or not, so `settings` is a one-to-one picture of the file.
+    -   The module sets the keys it computes in `config.…settings`, at `mkDefault` where a user may change them and at normal priority, with a comment, where the module depends on the value. Reading `settings` therefore shows the effective file (minus secrets), and a user's value wins without `mkForce`.
+    -   Only a few valuable keys (RFC 42 Part 2: mandatory or commonly set) are declared as typed sub-options; the module's own typed options (ports, workers, database) set their keys rather than being declared twice.
+    -   Secrets never go in `settings`: frappe-nix has `settingsFiles` and `encryptionKeyFile`, odoo-nix `adminPasswordFile` and `environmentFiles`, both read through `LoadCredential`.
+    -   The development shell's odoo-nix `settings` is the exception: a typed camelCase tree (`settings.dbName`) that predates this rule and keeps its shape through 1.x.
+-   **Adopted:** frappe-nix#123 (`extraConfig` and `extraConfigFiles` aliased), frappe-nix#177 (`sites.<fqdn>.settings` freeform JSON; `db_name` and `db_type` warn when they differ from `database.name` through 1.x, and become module-owned in 2.0.0); odoo-nix#57 and #58 (`odooConf.*` aliased to `settings`, and its port keys to `ports.*`), odoo-nix#91 (`settings` freeform INI by section; the flat `settings.<key>` form is an alias for `settings.options.<key>`, with a warning, until 2.0.0).
 -   **Status:** decided.
--   **Check:** not yet in the base.
+-   **Check:** not yet in the base. A check that each product's `settings` option has a `pkgs.formats` freeform type would be cheap ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
 
 ### Identity options
 
