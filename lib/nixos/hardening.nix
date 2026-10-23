@@ -1,6 +1,7 @@
-# A systemd sandboxing baseline for the units a product defines (PLAN.md,
-# Phase 6; CONVENTIONS.md, Unit hardening). Neither product set any of this
-# before: every unit ran with the full view of the host its user has.
+# A systemd sandboxing baseline for the units a product defines
+# (docs/library.md, Production; docs/conventions.md, Unit hardening). Neither
+# product set any of this before: every unit ran with the full view of the host
+# its user has.
 #
 #   serviceConfig = {
 #     User = cfg.user;

@@ -1,7 +1,7 @@
-# A stub product's NixOS module (PLAN.md, design rule 8): services.stub-nix,
-# built from lib.nixos and lib.journald the way frappe-nix and odoo-nix use
-# them. checks/lib-nixos.nix evaluates it and asserts what it renders;
-# tests/nixos-migrate.nix runs it.
+# A stub product's NixOS module (docs/library.md, design rule 8):
+# services.stub-nix, built from lib.nixos and lib.journald the way frappe-nix
+# and odoo-nix use them. checks/lib-nixos.nix evaluates it and asserts what it
+# renders; tests/nixos-migrate.nix runs it.
 #
 # Each target is one database with a web unit in front of it, in one of the
 # two products' shapes:

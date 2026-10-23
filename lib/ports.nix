@@ -1,7 +1,7 @@
-# A development shell's TCP ports (PLAN.md, Phase 5; CONVENTIONS.md, The
-# development shell option tree): frappe-nix's lib/ports.nix, as odoo-nix
-# ported it (odoo-nix#58), with the product's base ports and variable name
-# passed in.
+# A development shell's TCP ports (docs/library.md, Development shell;
+# docs/conventions.md, The development shell option tree): frappe-nix's
+# lib/ports.nix, as odoo-nix ported it (odoo-nix#58), with the product's base
+# ports and variable name passed in.
 #
 # Every port is a fixed base plus one offset, 0..899, decided at evaluation.
 # devenv's port allocator is the identity under its flake integration
@@ -9,7 +9,7 @@
 # is absent), so nothing evaluated moves a port that is already taken. Two
 # projects that hash to the same offset collide, and the offset is what keeps
 # them apart, unless the product leases its ports at `devenv up`, which makes
-# these the preferred ones (CONVENTIONS.md, Ports; frappe-nix does).
+# these the preferred ones (docs/conventions.md, Ports; frappe-nix does).
 #
 # The functions are pure, so a test can call them with any checkout path and
 # any environment; a product's devenv module calls them with builtins.getEnv,
@@ -72,7 +72,7 @@ rec {
   # offset.
   portsFor = bases: offset: lib.mapAttrs (_: base: base + offset) bases;
 
-  # The `ports` option tree (CONVENTIONS.md, The development shell option
+  # The `ports` option tree (docs/conventions.md, The development shell option
   # tree), for a product's devenv module to put at `<p>-nix.ports`:
   #
   #   worktreeSalt  salt the offset with a linked worktree's path

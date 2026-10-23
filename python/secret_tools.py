@@ -1,5 +1,6 @@
-"""The secrets toolkit's commands (PLAN.md, Phase 2): edit-secret,
-rekey-secrets, setup-backup-access, and the agenix rules they share.
+"""The secrets toolkit's commands (docs/library.md, Secrets and backups):
+edit-secret, rekey-secrets, setup-backup-access, and the agenix rules they
+share.
 
     rules ROOT                      print the agenix rules file for ROOT
     edit-secret <name> [identity]   decrypt into $EDITOR, re-encrypt, stage
@@ -39,7 +40,7 @@ where `git add` has to run.
 
 Standard library only, except setup-backup-access, which imports rich for its
 prompts (lib.python.rich). Written to Python 3.11; it runs as its own process
-on the interpreter the product picks (PLAN.md, Python versions).
+on the interpreter the product picks (docs/library.md, Python versions).
 """
 
 import json

@@ -1,8 +1,8 @@
-# Migrate on deploy (PLAN.md, Phase 6; CONVENTIONS.md, Migrate on deploy):
-# the migrate.* options both products already name the same, and the snapshot
-# flow behind them as one command (python/migrate.py). The product supplies
-# what is specific to its database and framework: how to dump, verify and
-# restore, how to migrate, and what a failed migration leaves running.
+# Migrate on deploy (docs/library.md, Production; docs/conventions.md, Migrate
+# on deploy): the migrate.* options both products already name the same, and the
+# snapshot flow behind them as one command (python/migrate.py). The product
+# supplies what is specific to its database and framework: how to dump, verify
+# and restore, how to migrate, and what a failed migration leaves running.
 { lib }:
 let
   inherit (lib) mkOption types;
@@ -102,7 +102,7 @@ rec {
   #                `verifiers` for both products' databases
   #   restore      `restore SNAPSHOT` puts the database back as the dump has it
   #   python       the interpreter it runs on: the application's, in a
-  #                production closure (PLAN.md, Python versions)
+  #                production closure (docs/library.md, Python versions)
   #
   # The executables run with the unit's user, environment and sandbox.
   script =

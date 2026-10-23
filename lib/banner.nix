@@ -1,7 +1,7 @@
-# A development shell's welcome banner (PLAN.md, Phase 5): one rich renderer
-# taking JSON (title, commands, URLs, facts, guard state, notes) from Nix, in
-# place of frappe-nix's flags and odoo-nix's nine positional arguments.
-# python/banner.py has the JSON's shape.
+# A development shell's welcome banner (docs/library.md, Development shell): one
+# rich renderer taking JSON (title, commands, URLs, facts, guard state, notes)
+# from Nix, in place of frappe-nix's flags and odoo-nix's nine positional
+# arguments. python/banner.py has the JSON's shape.
 #
 #   banner = lib.banner.command { inherit pkgs; python = pkgs.python312; name = "odoo-nix-banner"; };
 #
@@ -18,7 +18,8 @@ rec {
   module = ../python/banner.py;
 
   # `<name> SPEC.json [--var NAME=VALUE]...`, on lib.python.rich for `python`
-  # (a tool: PLAN.md, Python versions; never the application's environment).
+  # (a tool: docs/library.md, Python versions; never the application's
+  # environment).
   command =
     {
       pkgs,

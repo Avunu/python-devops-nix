@@ -1,7 +1,7 @@
-"""Migrate on deploy, behind a verified snapshot (PLAN.md, Phase 6).
+"""Migrate on deploy, behind a verified snapshot (docs/library.md, Production).
 
 The flow both products run before new code serves an old schema
-(CONVENTIONS.md, Migrate on deploy):
+(docs/conventions.md, Migrate on deploy):
 
     check     is there anything to do? (the product's command; optional)
     snapshot  dump the database into a private file, then verify the dump

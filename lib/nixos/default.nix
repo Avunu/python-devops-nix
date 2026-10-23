@@ -1,5 +1,5 @@
-# The production pieces inside both products' NixOS modules (PLAN.md,
-# Phase 6). The modules themselves stay in the products; these are the parts
+# The production pieces inside both products' NixOS modules (docs/library.md,
+# Production). The modules themselves stay in the products; these are the parts
 # that are the same security posture in both, and should not differ.
 #
 #   hardening   a systemd sandboxing baseline, applied per unit, with named

@@ -2,5 +2,5 @@
 # interpreter either product's presets name (3.11 to 3.14 today), so nothing
 # newer than 3.11 may be used: no PEP 695 syntax, itertools.batched or
 # typing.override. Raise this in the pull request that retires the oldest
-# preset (PLAN.md, Python versions).
+# preset (docs/library.md, Python versions).
 target-version = "py311"

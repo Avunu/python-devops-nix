@@ -10,7 +10,7 @@ name: check
 #                pull request's head, for each product that takes this flake as an input
 #
 # The downstream job is the main defence against one bad change breaking both products at
-# once (PLAN.md, Phase 1), and it has to pass before a release.
+# once, and it has to pass before a release.
 #
 # VM tests are built with everything else, as odoo-nix does: nix-installer-action's `kvm`
 # default makes the daemon advertise the `kvm` system feature on the hosted runner.

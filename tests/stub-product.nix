@@ -1,5 +1,5 @@
-# A stub product for testing lib.checks (PLAN.md, design rule 8): a tree with
-# the shared repository files as a product would carry them, and helpers to
+# A stub product for testing lib.checks (docs/library.md, design rule 8): a tree
+# with the shared repository files as a product would carry them, and helpers to
 # derive broken variants of it and to assert that a check fails on one.
 #
 # The tree is built here rather than committed, because a nested

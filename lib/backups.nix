@@ -1,7 +1,7 @@
 # The backup fetch, list and cache layer behind each product's restore command
-# (PLAN.md, Phase 2). The logic is python/backups.py; see its docstring for the
-# store, the overrides and the cache, and its `Layout` for what a product
-# supplies.
+# (docs/library.md, Secrets and backups). The logic is python/backups.py; see
+# its docstring for the store, the overrides and the cache, and its `Layout` for
+# what a product supplies.
 { lib }:
 
 let
@@ -9,8 +9,8 @@ let
 in
 rec {
   # The module itself, for a product that imports it in-process: copy it into
-  # the product's package (PLAN.md, design rule 6), e.g. as `_backups.py`, and
-  # construct `Backups(label=…, env_prefix=…, layout=…)`.
+  # the product's package (docs/library.md, design rule 6), e.g. as
+  # `_backups.py`, and construct `Backups(label=…, env_prefix=…, layout=…)`.
   module = ../python/backups.py;
 
   # The command: `<label>-backup-fetch {list,folders,fetch}`.

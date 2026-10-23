@@ -1,6 +1,6 @@
-# The journal side of a product's production units (PLAN.md, Phase 6;
-# CONVENTIONS.md, Logging): the field vocabulary every unit carries, and the
-# formatter core that gives each Python log line its syslog priority
+# The journal side of a product's production units (docs/library.md, Production;
+# docs/conventions.md, Logging): the field vocabulary every unit carries, and
+# the formatter core that gives each Python log line its syslog priority
 # (python/journald.py). A host shipping the journal to a log store selects by
 # these fields and by PRIORITY, so they are a contract, not decoration.
 { lib }:
@@ -67,7 +67,7 @@ rec {
       identifier ? if lib.elem role upstreamRoles then null else "${prefix}-${role}",
     }:
     assert lib.assertMsg (lib.elem role roles)
-      "lib.journald.fields: ${builtins.toJSON role} is not a role; CONVENTIONS.md, Journald vocabulary, lists ${lib.concatStringsSep ", " roles}";
+      "lib.journald.fields: ${builtins.toJSON role} is not a role; docs/conventions.md, Journald vocabulary, lists ${lib.concatStringsSep ", " roles}";
     {
       LogExtraFields = [ "APP_SERVICE=${role}" ] ++ lib.optional (site != null) "APP_SITE=${site}";
     }
@@ -85,7 +85,7 @@ rec {
   # framework's logging with `on_import`. Fails if the tree has either file.
   #
   # Unlike devguard, it ships to production, inert wherever stderr is not the
-  # journal (PLAN.md, design rule 7 names it).
+  # journal (docs/library.md, design rule 7 names it).
   mkGraft =
     {
       pkgs,

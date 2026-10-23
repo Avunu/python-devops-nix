@@ -1,17 +1,25 @@
+---
+title: Conventions
+description: How frappe-nix and odoo-nix name and do the jobs they both do, and where each product stands on each decision.
+order: 1
+tags: [conventions, frappe-nix, odoo-nix]
+updated: 2026-10-23
+---
+
 # Conventions
 
-How frappe-nix and odoo-nix name and do the jobs they both do. Where the two products do the same job, they do it the same way and under the same names. This file records one decision per job and where each product stands on it.
+How frappe-nix and odoo-nix name and do the jobs they both do. Where the two products do the same job, they do it the same way and under the same names. This page records one decision per job and where each product stands on it.
 
-It is the record of what the products do on their `main` branches as of 2026-10-22. odoo-nix v1.1.0 shipped all of it; frappe-nix v1.2.0 and v1.2.1 shipped most of it, and the rest lands in frappe-nix's next release. It started as the first draft of [PLAN.md, Track B](PLAN.md#track-b-conventions) on 2026-10-16. PLAN.md is now the historical record of that work, and its [Follow-ups](PLAN.md#follow-ups) list what is left. A pull request that changes a convention, or a product's adoption of one, updates this file.
+It is the record of what the products do on their `main` branches as of 2026-10-22. odoo-nix v1.1.0 shipped all of it; frappe-nix v1.2.0 and v1.2.1 shipped most of it, and the rest lands in frappe-nix's next release. It was first drafted on 2026-10-16, and what is left is tracked in each repository's issues. A pull request that changes a convention, or a product's adoption of one, updates this page.
 
 ## How to read this
 
 Each section gives:
 
 -   **Convention**: what both products do.
--   **Adopted**: where each product stands, with the pull request that adopted it where that helps. `frappe-nix#N` and `odoo-nix#N` are the products' pull requests; `#N` is this repository's. A pull request still open on 2026-10-22 is marked _pending_.
+-   **Adopted**: where each product stands, with the pull request that adopted it where that helps. `frappe-nix#N` and `odoo-nix#N` are the products' pull requests; `#N` is this repository's. A linked number is an open issue. A pull request still open on 2026-10-22 is marked _pending_.
 -   **Status**: _decided_ (both products follow it, or are bound to), _partial_ (one product, or part of the convention, is not there yet; the Adopted line says what), or _deferred to 2.0.0_ (shipped opt-in through 1.x and the default from the product's 2.0.0).
--   **Check**: what checks the convention mechanically. A check this repository ships is named. Where the base does not ship one yet, the line says so and points to [PLAN.md, follow-up a](PLAN.md#follow-ups), and names the product's own tests where they cover it.
+-   **Check**: what checks the convention mechanically. A check this repository ships is named. Where the base does not ship one yet, the line says so and points to [#19](https://github.com/Avunu/python-devops-nix/issues/19), which tracks the base's conformance checks, and names the product's own tests where they cover it.
 
 `<P>` stands for the product's environment prefix (`FRAPPE`, `ODOO`), and `<p>` for its lower-case name (`frappe`, `odoo`).
 
@@ -19,7 +27,7 @@ Each section gives:
 
 Both products moved to the names here, even where that was a breaking change. Every rename ships with a migration note in the product's changelog and upgrading page. Every renamed option, flag and environment variable keeps an alias that warns until the product's next major release, a deliberate `Release-As: 2.0.0`, so a consumer that follows `release-1` never loses a name it set. In flake-parts `perSystem` and in odoo-nix's devenv module, the alias goes on the product's internal `deprecations` list, folded into `lib.warn`, because `mkRenamedOptionModule` cannot warn there (odoo-nix's devenv module renames with `lib.doRename` and `warn = false` beside that list); the NixOS modules use `mkRenamedOptionModule`.
 
-A change that alters a running deployment without anyone asking for it ships opt-in through 1.x and becomes the default in 2.0.0: unit hardening, non-root containers and odoo-nix's role image name. [PLAN.md, follow-up h](PLAN.md#follow-ups) tracks the flips.
+A change that alters a running deployment without anyone asking for it ships opt-in through 1.x and becomes the default in 2.0.0: unit hardening, non-root containers and odoo-nix's role image name. [frappe-nix#182](https://github.com/Avunu/frappe-nix/issues/182) tracks frappe-nix's flips; odoo-nix's ship in its own 2.0.0.
 
 ## Naming rule
 
@@ -40,7 +48,7 @@ nixpkgs is not consistent about the option for an app's public hostname (nextclo
     -   frappe-nix (frappe-nix#123) exports `FRAPPE_NIX_DEVGUARD` and reads `FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_NIX_BACKUP_SOURCE`, `FRAPPE_NIX_MC` and `FRAPPE_NIX_BACKUP_CACHE`. The old names (`FRAPPE_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_BACKUP_SOURCE`, `FRAPPE_BACKUP_MC`, `FRAPPE_BACKUP_CACHE`, `FRAPPE_OFFLINE_MIGRATE*`, `FRAPPE_BENCH_UPDATE_FORCE` and others) are read with a warning until 2.0.0. `FRAPPE_UNIXSOCK_ENABLED` is still outside the pattern, and frappe-runtime reads its own `FRAPPE_SERVE_ASSETS` and `FRAPPE_WEB_THREADS`.
     -   odoo-nix (odoo-nix#57) reads `ODOO_NIX_*` and exports `ODOO_NIX_DEVGUARD`. `ODOO_DB`, `ODOO_TEST_ALLOW_SKIP`, `ODOO_HTTP_PORT` and `ODOO_GEVENT_PORT` stay, with a warning, until 2.0.0. `ODOO_NIX_JOURNALD` is no longer read, and setting it warns.
 -   **Status:** partial: frappe-nix's `FRAPPE_UNIXSOCK_ENABLED`.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)). Such a check needs an allow-list for a framework's own variables and the aliases.
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Such a check needs an allow-list for a framework's own variables and the aliases.
 
 The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_MC` and `<P>_NIX_BACKUP_CACHE`. Its `legacyEnv` argument reads an old name, with a warning, for the deprecation window. The connection itself keeps the names the `backup-access` secret already uses in both products, which belong to the secret's format rather than to a product: `BACKUPS_URL`, `BACKUPS_ACCESS_KEY`, `BACKUPS_SECRET_KEY`, `BACKUPS_BUCKET` and `BACKUPS_PREFIX`.
 
@@ -60,35 +68,35 @@ The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_M
 -   **Convention:** restore overwrites an existing database by default. `--no-force` refuses instead.
 -   **Adopted:** frappe-nix always did (frappe-nix#98 kept it). odoo-nix since odoo-nix#53, where `--force` is accepted as a no-op with a warning until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)). Each product's restore tests assert it (frappe-nix's `tests/bench-restore.sh`).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Each product's restore tests assert it (frappe-nix's `tests/bench-restore.sh`).
 
 ### Migrate after restore
 
 -   **Convention:** restore runs the framework's migration afterwards, on by default. `--no-migrate` and `restore.migrate` turn it off.
 -   **Adopted:** frappe-nix always had both. odoo-nix since odoo-nix#53 (`--migrate/--no-migrate`, `restore.migrate`).
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Neutralise
 
 -   **Convention:** `--neutralize`, `--no-neutralize` and `restore.neutralize` in both. In frappe-nix, neutralising pauses the scheduler and mutes mail in the restored database, as defence in depth below devguard.
 -   **Adopted:** odoo-nix had both; its `restore.neutralize` is on in the development shell and off on a server. frappe-nix since frappe-nix#98 and #123, with `restore.neutralize` on by default; a restore from an explicit file is neutralised only with `--neutralize`.
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Files
 
 -   **Convention:** `--files` and `restore.files`. frappe-nix keeps `--private-files` as its own extra.
 -   **Adopted:** frappe-nix#123: `restore.files` is a bool or `"none" | "private" | "all"` (default `"none"`), since Frappe has private and public files; `restore.withFiles` is its alias. odoo-nix#57: `--files/--no-files` and `restore.files`, with `--attachments` and `restore.attachments` as aliases until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Unguarded restore
 
 -   **Convention:** restore refuses to run without devguard, unless `<P>_NIX_RESTORE_ALLOW_UNGUARDED` is set. `restore.requireDevguard` (default true) in both.
 -   **Adopted:** frappe-nix#98 and #123; odoo-nix#53, whose command line also reads `ODOO_NIX_RESTORE_REQUIRE_DEVGUARD`.
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)). The refusal is in each product's restore tests.
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). The refusal is in each product's restore tests.
 
 ### Point in time (`--at`)
 
@@ -104,21 +112,21 @@ The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_M
 -   **Convention:** the option is named `port`, matching both Python settings schemas. Where it lives is in [the development shell option tree](#the-development-shell-option-tree): `mailpit.port`.
 -   **Adopted:** frappe-nix#124 and odoo-nix#58. frappe-nix's `devguard.mail.smtpPort` and `devguard.mail.port`, and odoo-nix's `devguard.mail.port`, are aliases until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Job denylist
 
 -   **Convention:** `devguard.jobs.{enable,extraBlocked}`, and `blocked_jobs` in the Python settings. Log lines keep the framework's words (scheduler, crons). frappe-nix's `blockServerScripts` is `devguard.jobs.blockServerScripts`. In the Python settings, `guards.jobs.blocked_jobs` is the product's built-in list (its default), `guards.jobs.extra_blocked` the consumer's additions (`extraBlocked`, baked), and the guard reads their union, in order, as `settings().blocked_jobs`, which the core provides.
 -   **Adopted:** frappe-nix#112 and #124; odoo-nix#56 and #58. `scheduler` (frappe-nix) and `crons` (odoo-nix) are aliases until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base for the option paths ([PLAN.md, follow-up a](PLAN.md#follow-ups)). `lib-devguard` tests the union.
+-   **Check:** not yet in the base for the option paths ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). `lib-devguard` tests the union.
 
 ### Shared guard names
 
 -   **Convention:** the guards both products have keep their names, `egress`, `mail`, `mail_stdlib`, `objectstore`, `backups`, `jobs` and `webhooks`, with the same option shape under each (`enable` and the same settings). Product guards sit beside them (frappe-nix's `integrations`, `google` and `plaid`; odoo-nix's `iap`).
 -   **Adopted:** both (frappe-nix#124, odoo-nix#58).
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### The core and the product's package
 
@@ -157,7 +165,7 @@ The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_M
 
 ## Python environment
 
-Both products build their environment the same way: pyproject-nix, uv2nix and pyproject-build-systems (the product's inputs, not the base's), `sourcePreference = "wheel"`, `mkEditablePyprojectOverlay` for development, and `.pth` grafts. These sections fix the pieces around that (PLAN.md, Phase 4).
+Both products build their environment the same way: pyproject-nix, uv2nix and pyproject-build-systems (the product's inputs, not the base's), `sourcePreference = "wheel"`, `mkEditablePyprojectOverlay` for development, and `.pth` grafts. These sections fix the pieces around that ([library](library.md#python-environment)).
 
 ### Package fixes
 
@@ -170,7 +178,7 @@ Both products build their environment the same way: pyproject-nix, uv2nix and py
 
 -   **Convention:** a product's own tooling (a banner, a command line) runs on `lib.python.rich { python, extraPackages ? ps: [ ] }`: nixpkgs' rich, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped. It is never added to the application's environment.
 -   **Adopted:** odoo-nix#59 (its command line, scaffolder and banner). frappe-nix's banner runs on it through `lib.banner`, but frappe-nix-tools, its command-line package, is still built on nixpkgs' plain rich (`lib/standards/package.nix`).
--   **Status:** partial: frappe-nix's tooling ([PLAN.md, follow-up d](PLAN.md#follow-ups)).
+-   **Status:** partial: frappe-nix's tooling ([frappe-nix#179](https://github.com/Avunu/frappe-nix/issues/179)).
 -   **Check:** the base's `lib-python-rich` builds it on every preset interpreter, with rich's suite.
 
 ### Stale lock
@@ -203,14 +211,14 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`, both Python since frappe-
 -   **Convention:** `--version`. The old names stay as aliases until 2.0.0.
 -   **Adopted:** frappe-nix#108 (`--frappe-version` aliased) and odoo-nix#71 (`--series` read with a warning).
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Flags
 
 -   **Convention:** both scaffolders have `--dry-run`, `--skip-lock`, `-y/--yes`, `--commit`, `--force`, `--name`, and migrating an existing tree. frappe-nix's `--site` is `--default-site`.
 -   **Adopted:** frappe-nix#108 (`--site` aliased until 2.0.0) and odoo-nix#71 (with `--migrate`, `--init` and `--db`).
 -   **Status:** decided.
--   **Check:** not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Exit codes
 
@@ -251,7 +259,7 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`, both Python since frappe-
 
 ## Development shell
 
-The leaf pieces inside both devenv modules (PLAN.md, Phase 5), adopted in frappe-nix#130 and odoo-nix#62. The modules themselves stay in the products.
+The leaf pieces inside both devenv modules ([library](library.md#development-shell)), adopted in frappe-nix#130 and odoo-nix#62. The modules themselves stay in the products.
 
 ### Ports
 
@@ -294,7 +302,7 @@ The leaf pieces inside both devenv modules (PLAN.md, Phase 5), adopted in frappe
 ### Command layout
 
 -   **Convention:** every command lives under the product's umbrella command, `bench` or `odoo`. frappe-nix's `provision-site` is `bench provision`, and `provision-site` stays as an alias until 2.0.0.
--   **Adopted:** odoo-nix has everything under `odoo` (`db`, `module`, `project`). frappe-nix has `bench provision` under `bench` (frappe-nix#166, Track D, D5), with `provision-site` kept as a deprecated alias until 2.0.0.
+-   **Adopted:** odoo-nix has everything under `odoo` (`db`, `module`, `project`). frappe-nix has `bench provision` under `bench` (frappe-nix#166), with `provision-site` kept as a deprecated alias until 2.0.0.
 -   **Status:** decided.
 -   **Check:** not yet in the base.
 
@@ -308,13 +316,13 @@ The leaf pieces inside both devenv modules (PLAN.md, Phase 5), adopted in frappe
 ### Relock
 
 -   **Convention:** one consumer-facing relock command in both, run from the shell. A product also offers it as a flake app (`nix run .#relock`) for a project whose shell cannot evaluate because its lock is stale.
--   **Adopted:** frappe-nix#150: `relock` in the shell and `nix run .#relock` are one program (`--uv-only`, `--node-locks`); `update-deps` and `bench update` call it. odoo-nix#82: `odoo project relock`, with the workspace lock in Python. odoo-nix's `.#relock` re-locks its own test fixtures only, so a consumer has no flake app yet ([PLAN.md, follow-up e](PLAN.md#follow-ups)).
+-   **Adopted:** frappe-nix#150: `relock` in the shell and `nix run .#relock` are one program (`--uv-only`, `--node-locks`); `update-deps` and `bench update` call it. odoo-nix#82: `odoo project relock`, with the workspace lock in Python. odoo-nix's `.#relock` re-locks its own test fixtures only, so a consumer has no flake app yet ([odoo-nix#95](https://github.com/Avunu/odoo-nix/issues/95)).
 -   **Status:** partial: odoo-nix's flake app.
 -   **Check:** not yet in the base.
 
 ## Production
 
-The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 and odoo-nix#73.
+The pieces in the NixOS modules ([library](library.md#production)), adopted in frappe-nix#151 and odoo-nix#73.
 
 ### Migrate on deploy
 
@@ -414,7 +422,7 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
     -   The development shell's odoo-nix `settings` is the exception: a typed camelCase tree (`settings.dbName`) that predates this rule and keeps its shape through 1.x.
 -   **Adopted:** frappe-nix#123 (`extraConfig` and `extraConfigFiles` aliased), frappe-nix#177 (`sites.<fqdn>.settings` freeform JSON; `db_name` and `db_type` warn when they differ from `database.name` through 1.x, and become module-owned in 2.0.0); odoo-nix#57 and #58 (`odooConf.*` aliased to `settings`, and its port keys to `ports.*`), odoo-nix#91 (`settings` freeform INI by section; the flat `settings.<key>` form is an alias for `settings.options.<key>`, with a warning, until 2.0.0).
 -   **Status:** decided.
--   **Check:** not yet in the base. A check that each product's `settings` option has a `pkgs.formats` freeform type would be cheap ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base. A check that each product's `settings` option has a `pkgs.formats` freeform type would be cheap ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Identity options
 
@@ -475,7 +483,7 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
     -   frappe-nix#157: `[<registry>/]<name>/<role>` and `container-<role>`, with the old output names aliased until 2.0.0 (`frappe-nix.containers.aliases`). The runtime, web, socketio and nginx images have a healthcheck; scheduler, the workers and bench do not. With `containers.nonRoot` the images run as `frappe`.
     -   odoo-nix#81: the output is `container-odoo`. The image name stays `[<registry>/]<name>-odoo` by default through 1.x, with a warning, and becomes `<name>/odoo` with `containers.roleImageNames`, the default from 2.0.0. With `containers.nonRoot` it runs as `odoo`, home `/var/lib/odoo`. `containers.labels` overrides the labels.
 -   **Status:** decided for the outputs, the labels and the healthchecks; deferred to 2.0.0 for `containers.nonRoot` and odoo-nix's role image name.
--   **Check:** not yet in the base. Each product evaluates its image configs (odoo-nix's `container-user`). A shared `lib.containers` would put these pieces in one place ([PLAN.md, follow-up b](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base. Each product evaluates its image configs (odoo-nix's `container-user`). A shared `lib.containers` would put these pieces in one place ([#20](https://github.com/Avunu/python-devops-nix/issues/20)).
 
 ## Repository
 
@@ -517,10 +525,10 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
 
     **Auto-merge is only as safe as the checks marked required on the default branch**, so `flake` is a required check. Without it, auto-merge merges a bump before its checks fail.
 -   **Adopted:**
-    -   frappe-nix: SHA pins and the `lint`, `flake` and `vm-tests` jobs; the reusable workflow since frappe-nix#159. Its `main` requires the docs check (`build / Check`) and `flake`; `flake` became required on 2026-10-22, after frappe-nix#163 merged with it failing ([PLAN.md, follow-up f](PLAN.md#follow-ups)).
+    -   frappe-nix: SHA pins and the `lint`, `flake` and `vm-tests` jobs; the reusable workflow since frappe-nix#159. Its `main` requires the docs check (`build / Check`) and `flake`; `flake` became required on 2026-10-22, after frappe-nix#163 merged with it failing.
     -   odoo-nix: SHA pins, the `lint` job (odoo-nix#76), and `flake`, which builds every check; the reusable workflow since odoo-nix#78. Its `main` requires `flake` and `pr-policy`, since odoo-nix#63 merged red.
 -   **Status:** partial: frappe-nix's required checks.
--   **Check:** not yet in the base for the `uses:` pins ([PLAN.md, follow-up a](PLAN.md#follow-ups)). Required checks are repository settings, which no check in the tree can see.
+-   **Check:** not yet in the base for the `uses:` pins ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Required checks are repository settings, which no check in the tree can see.
 
 ### Repository files
 
@@ -561,7 +569,7 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
     -   odoo-nix#78: nix (with the `ocb` and `odoo-ls` groups), pre-commit and github-actions, all `fix(deps)`, all with the cooldown. It has no uv entry, because its template's lock cannot be resolved without a project.
     -   This repository, which has no releases, uses `chore`.
 -   **Status:** decided.
--   **Check:** not yet in the base: a check over `.github/dependabot.yml` for the prefix and the cooldown ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** not yet in the base: a check over `.github/dependabot.yml` for the prefix and the cooldown ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Docs pipeline
 
@@ -591,13 +599,13 @@ The pieces in the NixOS modules (PLAN.md, Phase 6), adopted in frappe-nix#151 an
     `lib.checks.nixLint` and `lib.checks.sharedConfig` are built with it and take the same `product`.
 -   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through it (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
 -   **Status:** decided.
--   **Check:** the base's `lib-mk` tests the helper. A pattern over check attribute names is not yet in the base ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+-   **Check:** the base's `lib-mk` tests the helper. A pattern over check attribute names is not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Commits
 
 -   **Convention:** conventional commits, enforced by `committed` in a required `pr-policy` job, with one scope list for both products. A breaking change is a deliberate `Release-As: N.0.0` footer, never `!` or `BREAKING CHANGE`, which the policy refuses; `deprecate` is a commit type of its own.
 -   **Adopted:** both enforce it with `committed.toml` and `pr-policy`. The scope lists differ: frappe-nix's has 61 scopes, the union of both repositories' history (frappe-nix#159), and odoo-nix's has 30.
--   **Status:** partial: one scope list, owned by this repository ([PLAN.md, follow-up c](PLAN.md#follow-ups)).
+-   **Status:** partial: one scope list, owned by this repository ([#21](https://github.com/Avunu/python-devops-nix/issues/21)).
 -   **Check:** each product's `pr-policy` job. Not yet in the base, which has no `committed.toml` of its own.
 
 ## The development shell option tree
@@ -619,6 +627,6 @@ This keeps the decided name `port`: the SMTP port is `mailpit.port`, which defau
 
 Left alone, since neither product is clearly better: frappe-nix's `appsReconcile`, `renamedApps` and `replacedApps`, and odoo-nix's `layout.*`.
 
-Both products also have `ide.enable`, which links `./.venv` to the development environment for editors: frappe-nix's (frappe-nix#156, default true) also generates a `pyrightconfig.json`; odoo-nix's, the Track C source, seeds `.vscode/settings.json` and runs odoo-ls under `ide.languageServer`.
+Both products also have `ide.enable`, which links `./.venv` to the development environment for editors: frappe-nix's (frappe-nix#156, default true) also generates a `pyrightconfig.json`; odoo-nix's, the original, seeds `.vscode/settings.json` and runs odoo-ls under `ide.languageServer`.
 
-**Check:** not yet in the base: the option paths exist in both devenv modules, and the `dev` tree does not ([PLAN.md, follow-up a](PLAN.md#follow-ups)).
+**Check:** not yet in the base: the option paths exist in both devenv modules, and the `dev` tree does not ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
