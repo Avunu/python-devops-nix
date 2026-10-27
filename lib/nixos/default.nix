@@ -7,7 +7,8 @@
 #   migrate     the migrate.* options and the snapshot flow (lib/nixos/migrate.nix)
 #   unixSocket  a socket in its own 0750 or 0770 directory (lib/nixos/unix-socket.nix)
 #   nginx       the journal_json access log, the error log to syslog, the
-#               real-IP block for a unix-socket listener (lib/nixos/nginx.nix)
+#               real-IP block for a unix-socket listener, and the service,
+#               upstream, virtual host and location builders (lib/nixos/nginx.nix)
 #
 # The journald field vocabulary units carry is lib.journald.fields.
 { lib }:

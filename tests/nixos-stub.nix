@@ -374,20 +374,23 @@ in
         [
           cfg.group
         ];
-    services.nginx = lib.mkIf (lib.any (t: t.nginx.enable) (lib.attrValues cfg.targets)) {
-      enable = true;
-      recommendedProxySettings = true;
-      logError = lib.mkDefault nixos.nginx.errorLog;
-      commonHttpConfig = nixos.nginx.accessLog cfg.logging.accessLog;
-      virtualHosts = lib.mapAttrs (_: t: {
-        listen = lib.optional (t.nginx.socketPath != "") { addr = "unix:${t.nginx.socketPath}"; };
-        extraConfig = lib.optionalString (t.nginx.socketPath != "") nixos.nginx.cloudflareRealIp;
-        locations."/" = {
-          proxyPass = "http://unix:${t.web.socketPath}:";
-          recommendedProxySettings = t.nginx.socketPath == "";
-          extraConfig = lib.optionalString (t.nginx.socketPath != "") nixos.nginx.socketProxyHeaders;
-        };
-      }) (lib.filterAttrs (_: t: t.nginx.enable) cfg.targets);
-    };
+    services.nginx = lib.mkIf (lib.any (t: t.nginx.enable) (lib.attrValues cfg.targets)) (
+      nixos.nginx.serviceDefaults { inherit (cfg.logging) accessLog; }
+      // {
+        upstreams = lib.mapAttrs (_: t: nixos.nginx.upstream { inherit (t.web) socketPath; }) (
+          lib.filterAttrs (_: t: t.nginx.enable) cfg.targets
+        );
+        virtualHosts = lib.mapAttrs (
+          name: t:
+          nixos.nginx.vhost { inherit (t.nginx) socketPath; }
+          // {
+            locations."/" = nixos.nginx.proxy {
+              pass = "http://${name}";
+              viaSocket = t.nginx.socketPath != "";
+            };
+          }
+        ) (lib.filterAttrs (_: t: t.nginx.enable) cfg.targets);
+      }
+    );
   };
 }

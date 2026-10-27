@@ -389,6 +389,73 @@ let
       ) nixos.nginx.journalJsonFields;
       message = "journalJsonFields names every field of journalJsonFormat";
     };
+    nginx-service-defaults = {
+      expected = {
+        enable = true;
+        recommendedProxySettings = true;
+        recommendedGzipSettings = true;
+        upstream = [ "unix:/run/stub-nix/maria/web.sock" ];
+        proxyPass = "http://maria";
+        recommendedProxySettingsAtSocket = false;
+      };
+      actual = {
+        inherit (config.services.nginx) enable recommendedProxySettings recommendedGzipSettings;
+        upstream = lib.attrNames config.services.nginx.upstreams.maria.servers;
+        inherit (config.services.nginx.virtualHosts.maria.locations."/") proxyPass;
+        recommendedProxySettingsAtSocket =
+          config.services.nginx.virtualHosts.maria.locations."/".recommendedProxySettings;
+      };
+    };
+    nginx-proxy-tcp = {
+      # On TCP the recommended settings stand and nothing is added in front
+      # of the location's own lines.
+      expected = {
+        proxyPass = "http://app";
+        proxyWebsockets = true;
+        recommendedProxySettings = true;
+        extraConfig = "proxy_read_timeout 1h;\n";
+      };
+      actual = nixos.nginx.proxy {
+        pass = "http://app";
+        viaSocket = false;
+        websockets = true;
+        extraConfig = "proxy_read_timeout 1h;\n";
+      };
+    };
+    nginx-proxy-socket = {
+      # The socket headers first, then the location's own lines.
+      expected = nixos.nginx.socketProxyHeaders + "proxy_redirect off;\n";
+      actual =
+        (nixos.nginx.proxy {
+          pass = "http://app";
+          viaSocket = true;
+          extraConfig = "proxy_redirect off;\n";
+        }).extraConfig;
+    };
+    nginx-vhost-tcp = {
+      expected = {
+        listen = [ ];
+        extraConfig = "client_max_body_size 64m;\n";
+      };
+      actual = nixos.nginx.vhost { extraConfig = "client_max_body_size 64m;\n"; };
+    };
+    nginx-internal = {
+      expected = {
+        alias = "/var/lib/app/files/";
+        extraConfig = "internal;\ntry_files $uri =404;\n";
+      };
+      actual = nixos.nginx.internal {
+        alias = "/var/lib/app/files/";
+        extraConfig = "try_files $uri =404;\n";
+      };
+    };
+    nginx-upstream-tcp = {
+      expected.servers."127.0.0.1:8069" = { };
+      actual = nixos.nginx.upstream {
+        socketPath = "";
+        port = 8069;
+      };
+    };
     nginx-error-log-is-a-default = {
       expected = "stderr";
       actual =
