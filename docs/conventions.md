@@ -404,6 +404,21 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 -   **Status:** decided.
 -   **Check:** the base's `lib-nixos` (the configuration text) and `lib-nixos-migrate` (the client address from the header in the access log, and an upstream error at priority err).
 
+### nginx configuration
+
+-   **Convention:** a product builds its nginx configuration from `lib.nixos.nginx`, so the TCP and unix-socket shapes are the same in both:
+
+    -   `services.nginx = lib.nixos.nginx.serviceDefaults { accessLog = cfg.logging.accessLog; } // { upstreams = …; virtualHosts = …; };` turns nginx on with the recommended proxy and gzip settings and the two logs above;
+    -   an upstream is `lib.nixos.nginx.upstream { socketPath, port, address ? "127.0.0.1" }`: the unix socket when the application listens on one, `address:port` otherwise;
+    -   a virtual host starts from `lib.nixos.nginx.vhost { socketPath, extraConfig ? "" }`, which listens on the socket and adds `cloudflareRealIp` when `socketPath` is set and keeps nginx's default listeners otherwise;
+    -   a location that proxies to the application is `lib.nixos.nginx.proxy { pass, viaSocket, websockets ? false, extraConfig ? "" }`. Behind a socket listener it sets `socketProxyHeaders` in place of the recommended settings, ahead of its own lines; `websockets` is NixOS's `proxyWebsockets`;
+    -   the location an `X-Accel-Redirect` lands on is `lib.nixos.nginx.internal { alias | extraConfig }`, so a client's own request for that path is a 404 (Frappe's `/protected/`, Odoo's `/web/filestore/` under `x_sendfile`).
+
+    The whole chain can be unix sockets: a tunnel connector to nginx's listen socket, nginx to the application's. Each socket follows [unix sockets](#unix-sockets).
+-   **Adopted:** frappe-nix and odoo-nix (pending). odoo-nix's application side needs its `odoo_socket` graft, since Odoo binds TCP only.
+-   **Status:** decided.
+-   **Check:** the base's `lib-nixos` (each helper's output, and the stub product built from them) and `lib-nixos-migrate` (the stub served through them, on sockets end to end).
+
 ### NixOS module path
 
 -   **Convention:** `services.frappe-nix` and `services.odoo-nix`. These match the devenv and flake-parts roots (`frappe-nix.*`, `odoo-nix.*`) and cannot collide with a future nixpkgs module.

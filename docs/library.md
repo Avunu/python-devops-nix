@@ -73,10 +73,11 @@ Conventions: [Development shell](conventions.md#development-shell), [The develop
 | `lib.nixos.migrate.script { pkgs, label, target, cfg, migrate, snapshotDir, extension, dump, verify, restore, … }` | A migrate unit's command: check, a private snapshot and its verification, the migration, rollback and the product's failure step, then retention (python/migrate.py). `.verifiers.{mysqldump,pgRestoreList}` verify the dumps; `.module` and `.modules` are the Python for in-process use; `.check` is the tests. |
 | `lib.nixos.unixSocket { user, group, sockets }` | `{ assertions, tmpfiles, directories }` for sockets that each live in a directory of their own (`.assertion` for one path). |
 | `lib.nixos.nginx.{accessLog, journalJsonFormat, journalJsonFields, errorLog, errorLogAt, cloudflareRealIp, socketProxyHeaders}` | nginx's access log as JSON and its error log over syslog, both to the journal, and a unix-socket listener behind a Cloudflare tunnel. |
+| `lib.nixos.nginx.{serviceDefaults, upstream, vhost, proxy, internal}` | The configuration itself: `services.nginx`'s defaults with both logs, an upstream on TCP or a unix socket, a virtual host and its proxying locations (websockets included) in either shape, and the `internal` location an `X-Accel-Redirect` lands on. |
 | `lib.journald.fields { prefix, role, site ? null, identifier ? … }`, `lib.journald.roles`, `lib.journald.upstreamRoles` | A unit's `APP_SERVICE` and `APP_SITE` journal fields and its `<p>-<role>` identifier, from one list of roles. |
 | `lib.journald.mkGraft { pkgs, name, src }`, `lib.journald.module`, `lib.journald.check` | The product's journald graft with the formatter core (python/journald.py) and the post-import hook beside it. |
 
-Conventions: [Production](conventions.md#production), [Logging](conventions.md#logging).
+Conventions: [Production](conventions.md#production), [Logging](conventions.md#logging), [nginx configuration](conventions.md#nginx-configuration).
 
 ## Repository
 
