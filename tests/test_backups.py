@@ -1,7 +1,8 @@
 """python/backups.py without a network: discovery, selection, caching and the
 fail-safe download, for both layouts in use (tests/fixtures/backup-layouts/), against a directory
-laid out like the bucket and against a stub mc serving the same tree over the
-S3 code path.
+laid out like the bucket and against a stub rclone serving the same tree over
+the S3 code path (tests/backups.sh drives the real rclone against a real S3
+endpoint).
 
 Run: python3 -I tests/test_backups.py <python/> <tests/fixtures/backup-layouts/>
 
@@ -46,48 +47,62 @@ CREDENTIALS = {
     "BACKUPS_PREFIX": "/odoo/",
 }
 
-# A stand-in for minio-client: `ls --json [--recursive]`, `cp` and `mirror`,
-# over a directory tree in which <bucket>/<key> is the object <key>. It accepts
-# only the alias in $MC_CONFIG_DIR/config.json with the expected credentials,
-# and logs its argv, so a test can assert the secret never reached it.
-STUB_MC = r"""
+# A stand-in for rclone: `lsjson [--recursive --files-only]`, `copyto` and
+# `copy`, over a directory tree in which <bucket>/<key> is the object <key>.
+# It accepts only the remote its environment defines, with the expected
+# credentials, refuses to read a config file, and logs its argv, so a test can
+# assert the secret never reached it.
+STUB_RCLONE = r"""
 import json, os, shutil, sys
 from pathlib import Path
 
-root = Path(os.environ["STUB_MC_ROOT"])
-with open(os.environ["STUB_MC_LOG"], "a") as log:
+root = Path(os.environ["STUB_RCLONE_ROOT"])
+with open(os.environ["STUB_RCLONE_LOG"], "a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\n")
-config = json.loads(Path(os.environ["MC_CONFIG_DIR"], "config.json").read_text())
-want = json.loads(os.environ["STUB_MC_WANT"])
-args = [a for a in sys.argv[1:] if a not in ("--json", "--quiet", "--overwrite")]
+want = json.loads(os.environ["STUB_RCLONE_WANT"])
+flags = {"--quiet", "--no-modtime", "--no-mimetype", "--recursive", "--files-only", "--fast-list"}
+recursive = "--recursive" in sys.argv
+args = [a for a in sys.argv[1:] if a not in flags]
 mode, args = args[0], args[1:]
 
 def local(target):
-    alias, _, rest = target.partition("/")
-    entry = config["aliases"].get(alias)
-    if entry is None or entry["accessKey"] != want["accessKey"] or entry["secretKey"] != want["secretKey"]:
-        print(json.dumps({"status": "error", "error": {"message": "Signature validation failed"}}))
+    remote, _, rest = target.partition(":")
+    conf = f"RCLONE_CONFIG_{remote.upper()}_"
+    if Path(os.environ.get("RCLONE_CONFIG", "/nonexistent")).exists():
+        sys.exit("stub rclone: read a config file")
+    if (
+        os.environ.get(conf + "TYPE") != "s3"
+        or os.environ.get(conf + "ACCESS_KEY_ID") != want["key"]
+        or os.environ.get(conf + "SECRET_ACCESS_KEY") != want["secret"]
+        or os.environ.get(conf + "REGION") != want["region"]
+    ):
+        print("ERROR : SignatureDoesNotMatch: The request signature we calculated does not match", file=sys.stderr)
         sys.exit(1)
     return root / rest.rstrip("/")
 
-if mode == "ls":
-    recursive = "--recursive" in args
-    base = local([a for a in args if a != "--recursive"][0])
-    if base.is_dir():
-        found = base.rglob("*") if recursive else base.iterdir()
-        for p in sorted(found):
-            if recursive and p.is_dir():
-                continue
-            key = p.relative_to(base).as_posix() + ("/" if p.is_dir() else "")
-            kind = "folder" if p.is_dir() else "file"
-            size = p.stat().st_size if p.is_file() else 0
-            print(json.dumps({"status": "success", "type": kind, "key": key, "size": size}))
-elif mode == "cp":
+if mode == "lsjson":
+    base = local(args[0])
+    if not base.is_dir():
+        print("ERROR : error listing: directory not found", file=sys.stderr)
+        sys.exit(3)
+    found = base.rglob("*") if recursive else base.iterdir()
+    out = []
+    for p in sorted(found):
+        if recursive and p.is_dir():
+            continue
+        out.append({
+            "Path": p.relative_to(base).as_posix(),
+            "Name": p.name,
+            "Size": p.stat().st_size if p.is_file() else -1,
+            "IsDir": p.is_dir(),
+        })
+    print(json.dumps(out))
+elif mode == "copyto":
     shutil.copyfile(local(args[0]), args[1])
-elif mode == "mirror":
+elif mode == "copy":
     shutil.copytree(local(args[0]), args[1], dirs_exist_ok=True)
 else:
-    sys.exit(f"stub mc: unsupported {mode}")
+    sys.exit(f"stub rclone: unsupported {mode}")
 """
 
 
@@ -269,27 +284,72 @@ class Credentials(Case):
         ):
             self.assertIn(word, text)
 
-    def test_mc_config_is_private_and_removed(self):
+    def test_the_remote_lives_in_rclones_environment_only(self):
         os.environ.update(CREDENTIALS)
         self.assertTrue(self.b.has_credentials())
         with self.b.store() as store:
-            self.assertEqual(store.location, "stubnix/b/odoo")
+            self.assertEqual(store.location, "stubnix:b/odoo")
             self.assertFalse(store.local)
-            config = Path(store.env["MC_CONFIG_DIR"], "config.json")
-            self.assertEqual(oct(config.stat().st_mode & 0o777), "0o600")
-            alias = json.loads(config.read_text())["aliases"]["stubnix"]
-            self.assertEqual(alias["secretKey"], CREDENTIALS["BACKUPS_SECRET_KEY"])
-            directory = config.parent
-        self.assertFalse(directory.exists())
-        # The process environment is left alone: the config reaches mc only.
-        self.assertNotIn("MC_CONFIG_DIR", os.environ)
+            self.assertEqual(store.env["RCLONE_CONFIG_STUBNIX_TYPE"], "s3")
+            self.assertEqual(
+                store.env["RCLONE_CONFIG_STUBNIX_SECRET_ACCESS_KEY"],
+                CREDENTIALS["BACKUPS_SECRET_KEY"],
+            )
+            self.assertEqual(store.env["RCLONE_CONFIG_STUBNIX_REGION"], "us-east-1")
+            # A config file rclone would look for, never created, in a
+            # directory gone afterwards: no user remote adds to this one.
+            config = Path(store.env["RCLONE_CONFIG"])
+            self.assertFalse(config.exists())
+            self.assertEqual(oct(config.parent.stat().st_mode & 0o777), "0o700")
+        self.assertFalse(config.parent.exists())
+        # The process environment is left alone: the remote reaches rclone only.
+        self.assertFalse(any(k.startswith("RCLONE_") for k in os.environ))
 
-    def test_an_mc_target_as_the_source(self):
-        os.environ["STUB_NIX_BACKUP_SOURCE"] = "myalias/bucket/prefix/"
+    def test_region(self):
+        for url, want in {
+            "https://s3.us-west-004.backblazeb2.com": "us-west-004",
+            "https://s3.eu-west-1.amazonaws.com/": "eu-west-1",
+            "https://s3-eu-west-2.amazonaws.com": "eu-west-2",
+            "https://s3.eu-central-1.wasabisys.com": "eu-central-1",
+            "https://acct.r2.cloudflarestorage.com": "us-east-1",
+            "http://127.0.0.1:9000": "us-east-1",
+            "https://s3.example.invalid": "us-east-1",
+        }.items():
+            self.assertEqual(backups.region(url), want, url)
+        os.environ["BACKUPS_REGION"] = "auto"
+        self.assertEqual(backups.region("https://s3.eu-west-1.amazonaws.com"), "auto")
+
+    def test_an_rclone_target_as_the_source(self):
+        os.environ["STUB_NIX_BACKUP_SOURCE"] = "myremote:bucket/prefix/"
         with self.b.store() as store:
             self.assertFalse(store.local)
-            self.assertEqual(store.location, "myalias/bucket/prefix")
+            self.assertEqual(store.location, "myremote:bucket/prefix")
             self.assertIsNone(store.env)
+
+    def test_an_mc_target_is_refused_with_its_rclone_form(self):
+        os.environ["STUB_NIX_BACKUP_SOURCE"] = "myalias/bucket/prefix"
+        with self.assertRaises(backups.BackupError) as ctx, self.b.store():
+            pass
+        text = ctx.exception.render("stub-nix")
+        self.assertIn("minio-client target", text)
+        self.assertIn("STUB_NIX_BACKUP_SOURCE=myremote:bucket/prefix", text)
+
+    def test_the_mc_variables_are_refused(self):
+        b = backups.Backups(
+            label="stub-nix",
+            env_prefix="STUB",
+            layout=dumps,
+            legacy_env={"MC": "STUB_BACKUP_MC"},
+        )
+        os.environ.update(CREDENTIALS)
+        for name in ("STUB_NIX_MC", "STUB_BACKUP_MC"):
+            with unittest.mock.patch.dict(os.environ, {name: "/usr/bin/mc"}):
+                with self.assertRaises(backups.BackupError) as ctx, b.store():
+                    pass
+                self.assertIn(
+                    f"{name} names a minio-client binary", ctx.exception.message
+                )
+                self.assertIn("STUB_NIX_RCLONE", ctx.exception.render("stub-nix"))
 
     def test_a_missing_directory_is_still_a_directory(self):
         os.environ["STUB_NIX_BACKUP_SOURCE"] = str(self.tmp / "nowhere")
@@ -315,25 +375,26 @@ class Credentials(Case):
 
 
 class ObjectStore(Case):
-    """Both layouts over the S3 path, through a stub mc."""
+    """Both layouts over the S3 path, through a stub rclone."""
 
     def setUp(self):
         super().setUp()
         self.bucket = self.tmp / "s3"
-        stub = self.tmp / "mc"
-        stub.write_text(f"#!{sys.executable}\n{STUB_MC}")
+        stub = self.tmp / "rclone"
+        stub.write_text(f"#!{sys.executable}\n{STUB_RCLONE}")
         stub.chmod(0o755)
-        self.log = self.tmp / "mc.log"
+        self.log = self.tmp / "rclone.log"
         os.environ.update(
             {
                 **CREDENTIALS,
-                "STUB_NIX_MC": str(stub),
-                "STUB_MC_ROOT": str(self.bucket),
-                "STUB_MC_LOG": str(self.log),
-                "STUB_MC_WANT": json.dumps(
+                "STUB_NIX_RCLONE": str(stub),
+                "STUB_RCLONE_ROOT": str(self.bucket),
+                "STUB_RCLONE_LOG": str(self.log),
+                "STUB_RCLONE_WANT": json.dumps(
                     {
-                        "accessKey": CREDENTIALS["BACKUPS_ACCESS_KEY"],
-                        "secretKey": CREDENTIALS["BACKUPS_SECRET_KEY"],
+                        "key": CREDENTIALS["BACKUPS_ACCESS_KEY"],
+                        "secret": CREDENTIALS["BACKUPS_SECRET_KEY"],
+                        "region": "us-east-1",
                     }
                 ),
             }
@@ -350,7 +411,7 @@ class ObjectStore(Case):
             self.assertEqual([s.name for s in b.sets(store, "prod")], NAMES)
             fetched = b.fetch(store, "prod", dest=self.cache, at="2026-10-03")
         self.assertEqual(fetched.paths["dump"].read_text(), NAMES[2])
-        self.assertEqual(fetched.source, "stubnix/b/odoo/prod")
+        self.assertEqual(fetched.source, "stubnix:b/odoo/prod")
         self.assertNotIn("s/e+c", self.argv_log())
 
     def test_folders(self):
@@ -376,13 +437,20 @@ class ObjectStore(Case):
         self.assertFalse(list(self.cache.rglob("*partial-database*")))
         self.assertNotIn("s/e+c", self.argv_log())
 
-    def test_wrong_credentials_fail_with_mc_message(self):
+    def test_wrong_credentials_fail_with_rclones_message(self):
         self.fixture_dumps(self.bucket / "b" / "odoo")
         os.environ["BACKUPS_SECRET_KEY"] = "wrong"
         b = backups.Backups(label="stub-nix", env_prefix="STUB", layout=dumps)
         with b.store() as store, self.assertRaises(backups.BackupError) as ctx:
             b.folders(store)
-        self.assertIn("Signature validation failed", ctx.exception.render("stub-nix"))
+        self.assertIn("SignatureDoesNotMatch", ctx.exception.render("stub-nix"))
+
+    def test_an_empty_prefix_is_no_backups(self):
+        # rclone's exit status 3: nothing under the prefix, so no backups.
+        self.fixture_dumps(self.bucket / "b" / "odoo")
+        b = backups.Backups(label="stub-nix", env_prefix="STUB", layout=dumps)
+        with b.store() as store:
+            self.assertEqual(store.ls("nowhere", recursive=True), [])
 
     def test_mirror(self):
         make(self.bucket / "b" / "attachments" / "ab" / "abcdef", "blob")
@@ -392,12 +460,12 @@ class ObjectStore(Case):
             store.mirror("b/attachments", self.tmp / "filestore")
         self.assertEqual((self.tmp / "filestore" / "ab" / "abcdef").read_text(), "blob")
 
-    def test_no_mc(self):
-        os.environ["STUB_NIX_MC"] = str(self.tmp / "absent")
+    def test_no_rclone(self):
+        os.environ["STUB_NIX_RCLONE"] = str(self.tmp / "absent")
         b = backups.Backups(label="stub-nix", env_prefix="STUB", layout=dumps)
         with b.store() as store, self.assertRaises(backups.BackupError) as ctx:
             b.folders(store)
-        self.assertIn("minio-client", ctx.exception.message)
+        self.assertIn("rclone", ctx.exception.message)
 
 
 class At(unittest.TestCase):

@@ -15,8 +15,8 @@ rec {
 
   # The command: `<label>-backup-fetch {list,folders,fetch}`.
   #
-  #   label      the product's name: message prefix, mc alias, command name
-  #   envPrefix  <P>: the overrides are <P>_NIX_BACKUP_SOURCE, <P>_NIX_MC and
+  #   label      the product's name: message prefix, rclone remote, command name
+  #   envPrefix  <P>: the overrides are <P>_NIX_BACKUP_SOURCE, <P>_NIX_RCLONE and
   #              <P>_NIX_BACKUP_CACHE
   #   layout     a Python file implementing `Layout` (ROLES, parse, and
   #              optionally OPTIONAL_ROLES and HINT). It is copied next to the
@@ -24,9 +24,11 @@ rec {
   #              standard library and nothing of the product's.
   #   legacyEnv  { <suffix> = "<old name>"; }: an old variable read, with a
   #              warning, while a rename is in its deprecation window, e.g.
-  #              { BACKUP_SOURCE = "OLD_BACKUP_SOURCE"; }
+  #              { BACKUP_SOURCE = "OLD_BACKUP_SOURCE"; }. An old name for
+  #              <P>_NIX_MC (`MC`) is refused with what replaced it, as
+  #              <P>_NIX_MC is: minio-client is gone (python/backups.py).
   #   python     the interpreter it runs on
-  #   mc         minio-client; <P>_NIX_MC overrides it at run time
+  #   rclone     the S3 client; <P>_NIX_RCLONE overrides it at run time
   fetch =
     {
       pkgs,
@@ -35,7 +37,7 @@ rec {
       layout,
       legacyEnv ? { },
       python ? pkgs.python3,
-      mc ? pkgs.minio-client,
+      rclone ? pkgs.rclone,
       name ? "${label}-backup-fetch",
     }:
     let
@@ -44,8 +46,7 @@ rec {
         cp ${module} "$out/backups.py"
         cp ${layout} "$out/backup_layout.py"
       '';
-      mcVar = "${envPrefix}_NIX_MC";
-      legacyMc = legacyEnv.MC or null;
+      rcloneVar = "${envPrefix}_NIX_RCLONE";
     in
     pythonLib.command {
       inherit
@@ -60,10 +61,8 @@ rec {
         import backup_layout
         import backups
 
-        if not os.environ.get(${builtins.toJSON mcVar})${
-          lib.optionalString (legacyMc != null) " and not os.environ.get(${builtins.toJSON legacyMc})"
-        }:
-            os.environ[${builtins.toJSON mcVar}] = ${builtins.toJSON (lib.getExe' mc "mc")}
+        if not os.environ.get(${builtins.toJSON rcloneVar}):
+            os.environ[${builtins.toJSON rcloneVar}] = ${builtins.toJSON (lib.getExe rclone)}
       '';
       main = ''
         backups.main(
@@ -115,6 +114,8 @@ rec {
       tools = [
         pkgs.jq
         pkgs.findutils
+        # backups.sh's real S3 endpoint (`rclone serve s3`).
+        pkgs.rclone
       ];
     } "{ ${lib.concatMapStrings run interpreters} } | tee \"$out\"";
 }

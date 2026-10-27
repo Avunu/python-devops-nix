@@ -1,12 +1,12 @@
 """Backup store: list, fetch and cache backup sets, from an S3-protocol object
-store (through minio-client) or a plain directory.
+store (through rclone) or a plain directory.
 
 Product-independent and standard library only. A product either imports this
 module in-process, on whatever interpreter its own command line runs on (3.11
 and up), or runs it as a command (`lib.backups.fetch` builds one). It supplies:
 
     label       its name: the prefix of every message ("<label>: ...") and of
-                the throwaway mc alias
+                the throwaway rclone remote
     env_prefix  its environment prefix <P>; the overrides below are <P>_NIX_*
     layout      the parser from an object listing to backup sets (see Layout)
 
@@ -14,14 +14,23 @@ The connection comes from the backup-access secret, a shell env-file:
 
     BACKUPS_URL  BACKUPS_ACCESS_KEY  BACKUPS_SECRET_KEY  BACKUPS_BUCKET
     BACKUPS_PREFIX (optional)
+    BACKUPS_REGION (optional; by default read from BACKUPS_URL's host name,
+                   s3.<region>.<provider>, as AWS, Backblaze and Wasabi name
+                   theirs, and us-east-1 otherwise, which MinIO and R2 accept)
 
 Overrides:
 
-    <P>_NIX_BACKUP_SOURCE  a directory laid out like the bucket, or any mc
-                           target (<alias>/<bucket>[/prefix]), used instead of
-                           BACKUPS_*: a restic mount, a fixture
-    <P>_NIX_MC             the minio-client binary (default: mc on PATH)
+    <P>_NIX_BACKUP_SOURCE  a directory laid out like the bucket, or any rclone
+                           target (<remote>:<bucket>[/prefix], a remote of the
+                           user's rclone.conf), used instead of BACKUPS_*: a
+                           restic mount, a fixture
+    <P>_NIX_RCLONE         the rclone binary (default: rclone on PATH)
     <P>_NIX_BACKUP_CACHE   the download cache, when the caller names none
+
+minio-client was the client until nixpkgs marked it insecure (abandoned
+upstream). Its two names are refused with what replaced them:
+<P>_NIX_MC (and a product's legacy name for it), and an mc target
+(<alias>/<bucket>[/prefix]) as <P>_NIX_BACKUP_SOURCE.
 
 The cache key is the backup set's name. A backup is immutable once written, so
 the name is the version: there is no staleness window and nothing to hash.
@@ -235,20 +244,20 @@ def _as_set(item: BackupSet | Mapping[str, Any]) -> BackupSet:
 
 
 class Store:
-    """One backup location: a directory, or an mc target."""
+    """One backup location: a directory, or an rclone target."""
 
     def __init__(
         self,
         location: str,
         *,
         local: bool,
-        mc: str,
+        rclone: str,
         label: str,
         env: Mapping[str, str] | None = None,
     ):
         self.location = location.rstrip("/") if location != "/" else location
         self.local = local
-        self.mc = mc
+        self.rclone = rclone
         self.label = label
         self.env = dict(env) if env is not None else None
 
@@ -257,10 +266,14 @@ class Store:
             p.strip("/") if i else p for i, p in enumerate((self.location, *parts)) if p
         )
 
-    def _run_mc(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, *args: str, missing_ok: bool = False
+    ) -> subprocess.CompletedProcess[str] | None:
+        """rclone ARGS. With `missing_ok`, None for exit status 3, rclone's
+        "directory not found": an S3 prefix with nothing under it."""
         try:
             proc = subprocess.run(
-                [self.mc, *args],
+                [self.rclone, *args],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -268,11 +281,13 @@ class Store:
             )
         except FileNotFoundError as exc:
             raise BackupError(
-                f"minio-client ({self.mc!r}) not found; run this from the {self.label} dev shell."
+                f"rclone ({self.rclone!r}) not found; run this from the {self.label} dev shell."
             ) from exc
+        if missing_ok and proc.returncode == 3:
+            return None
         if proc.returncode != 0:
             raise BackupError(
-                f"mc {' '.join(args[:2])} failed",
+                f"rclone {args[0]} failed",
                 *(proc.stderr or proc.stdout).strip().splitlines(),
             )
         return proc
@@ -294,22 +309,28 @@ class Store:
                 for p in found
                 if p.is_dir() or p.is_file()
             )
-        args = ["ls", "--json", *(["--recursive"] if recursive else []), where + "/"]
-        entries = []
-        for line in self._run_mc(*args).stdout.splitlines():
-            if not line.strip():
-                continue
-            item = json.loads(line)
-            if item.get("status") == "error":
-                raise BackupError(str(item.get("error", {}).get("message", item)))
-            entries.append(
-                Entry(
-                    item["key"].rstrip("/"),
-                    int(item.get("size", 0)),
-                    item.get("type") == "folder",
-                )
+        # --files-only when recursive: an object store has no directories,
+        # only the prefixes of the objects, which the keys already carry.
+        # No modification times or MIME types: neither is used, and reading
+        # them can cost a request per object.
+        args = [
+            "lsjson",
+            "--no-modtime",
+            "--no-mimetype",
+            *(["--recursive", "--files-only", "--fast-list"] if recursive else []),
+            where,
+        ]
+        proc = self._run(*args, missing_ok=True)
+        if proc is None:
+            return []
+        return sorted(
+            Entry(
+                item["Path"].rstrip("/"),
+                max(int(item.get("Size", 0)), 0),
+                bool(item.get("IsDir")),
             )
-        return sorted(entries)
+            for item in json.loads(proc.stdout or "[]")
+        )
 
     def copy(self, sub: str, dest: Path) -> None:
         """Download the object SUB (relative to the store) to DEST."""
@@ -317,24 +338,40 @@ class Store:
         if self.local:
             shutil.copyfile(src, dest)
         else:
-            self._run_mc("cp", "--quiet", src, str(dest))
+            self._run("copyto", "--quiet", src, str(dest))
 
     def mirror(self, source: str, dest: Path) -> None:
         """Mirror a bucket path (`bucket/prefix`, reached through this store's
-        credentials) into DEST; a repeat run copies only what changed."""
+        credentials) into DEST; a repeat run copies only what changed, and
+        nothing in DEST is deleted."""
         if self.local:
             raise BackupError(
                 "nothing to mirror from: the backup source is a directory"
             )
-        alias = self.location.split("/", 1)[0]
+        remote = self.location.split(":", 1)[0]
         dest.mkdir(parents=True, exist_ok=True)
-        self._run_mc(
-            "mirror",
-            "--overwrite",
+        self._run(
+            "copy",
             "--quiet",
-            f"{alias}/{source.strip('/')}",
+            f"{remote}:{source.strip('/')}",
             str(dest),
         )
+
+
+def region(url: str) -> str:
+    """The signing region for an S3 endpoint: BACKUPS_REGION, else the one
+    the host name carries (s3.<region>.amazonaws.com, s3-<region>..., as AWS,
+    Backblaze and Wasabi name their endpoints), else us-east-1, which MinIO
+    and Cloudflare R2 accept. minio-client asked the bucket; rclone needs it
+    up front."""
+    explicit = os.environ.get("BACKUPS_REGION", "").strip()
+    if explicit:
+        return explicit
+    host = re.sub(r"^[a-z]+://", "", url.strip().lower()).split("/", 1)[0]
+    found = re.search(
+        r"(?:^|\.)s3[.-]([a-z]{2}(?:-[a-z0-9]+)+)\.", host.split(":", 1)[0]
+    )
+    return found.group(1) if found else "us-east-1"
 
 
 class Backups:
@@ -357,7 +394,7 @@ class Backups:
         # A suffix such as BACKUP_SOURCE -> the name the product used before
         # <P>_NIX_BACKUP_SOURCE, read with a warning while it is an alias.
         self.legacy_env = dict(legacy_env or {})
-        self.alias = re.sub(r"[^a-z0-9]", "", label.lower()) or "backups"
+        self.remote = re.sub(r"[^a-z0-9]", "", label.lower()) or "backups"
         self._warned: set[str] = set()
         unknown = set(self.optional) - set(self.roles)
         if unknown:
@@ -395,22 +432,46 @@ class Backups:
 
     @staticmethod
     def _looks_local(source: str) -> bool:
-        # An mc alias never starts with a path character, so a path that does
-        # not exist yet is still a (missing, so empty) directory, not an alias.
+        # An rclone target is <remote>:<path>, and a remote's name never
+        # starts with a path character, so a path that does not exist yet is
+        # still a (missing, so empty) directory, not a remote.
         return source.startswith(("/", "./", "../", "~")) or os.path.isdir(source)
+
+    def _refuse_mc(self, source: str | None) -> None:
+        """minio-client's names, gone with it, refused with what replaced them."""
+        for name in (self.var("MC"), self.legacy_env.get("MC")):
+            if name and os.environ.get(name):
+                raise BackupError(
+                    f"{name} names a minio-client binary, which is no longer used.",
+                    "",
+                    "Backups are read with rclone now (nixpkgs dropped minio-client as",
+                    "abandoned and insecure). Unset it; to name another rclone binary, set",
+                    f"{self.var('RCLONE')}.",
+                )
+        remote = (source or "").split("/", 1)[0]
+        if source and not self._looks_local(source) and ":" not in remote:
+            raise BackupError(
+                f"{self.var('BACKUP_SOURCE')}={source} looks like a minio-client target"
+                " (<alias>/<bucket>/...).",
+                "",
+                "Backups are read with rclone now: name a remote from your rclone.conf",
+                f"as <remote>:<bucket>[/prefix], e.g. {self.var('BACKUP_SOURCE')}=myremote:{source.split('/', 1)[-1]}",
+                "(`rclone config` creates one), or point it at a directory.",
+            )
 
     @contextlib.contextmanager
     def store(self) -> Iterator[Store]:
-        """The store backups are read from, with a throwaway mc configuration
-        for the duration when the credentials come from BACKUPS_*."""
-        mc = self.env("MC") or "mc"
+        """The store backups are read from, with a throwaway rclone remote for
+        the duration when the credentials come from BACKUPS_*."""
         source = self.env("BACKUP_SOURCE")
+        self._refuse_mc(source)
+        rclone = self.env("RCLONE") or "rclone"
         if source:
             local = self._looks_local(source)
             yield Store(
                 os.path.expanduser(source) if local else source,
                 local=local,
-                mc=mc,
+                rclone=rclone,
                 label=self.label,
             )
             return
@@ -421,48 +482,45 @@ class Backups:
                 "",
                 "These come from the 'backup-access' agenix secret, a shell env-file defining",
                 "BACKUPS_URL, BACKUPS_ACCESS_KEY, BACKUPS_SECRET_KEY, BACKUPS_BUCKET and",
-                "optionally BACKUPS_PREFIX.",
+                "optionally BACKUPS_PREFIX and BACKUPS_REGION.",
                 "",
                 "  setup-backup-access          write it",
                 "  check-secrets                is your key a recipient?",
                 "",
                 f"Or point at a directory instead:  {self.var('BACKUP_SOURCE')}=/path/to/backups",
             )
-        # The alias is written into a private MC_CONFIG_DIR rather than set
-        # with `mc alias set` (the secret would be in argv, readable in
-        # /proc) or MC_HOST_<alias> (mc does not percent-decode its userinfo,
-        # so a secret holding '/' or '+', routine on S3 and universal on
-        # Backblaze, signs wrongly and every request fails). The directory
-        # also keeps the credentials out of the user's ~/.mc/config.json.
-        with tempfile.TemporaryDirectory(prefix=f"{self.alias}-mc-") as tmp:
-            config = Path(tmp, "config.json")
-            config.touch(mode=0o600)
-            config.write_text(
-                json.dumps(
-                    {
-                        "version": "10",
-                        "aliases": {
-                            self.alias: {
-                                "url": os.environ["BACKUPS_URL"],
-                                "accessKey": os.environ["BACKUPS_ACCESS_KEY"],
-                                "secretKey": os.environ["BACKUPS_SECRET_KEY"],
-                                "api": "S3v4",
-                                "path": "auto",
-                            }
-                        },
-                    }
-                )
-            )
+        # The remote is defined in rclone's own environment, which only rclone
+        # sees: not in argv (readable in /proc), not in a URL (no percent-
+        # encoding, so a secret holding '/' or '+', routine on S3 and
+        # universal on Backblaze, signs as written), and not in the user's
+        # rclone.conf. RCLONE_CONFIG names a file in a private directory that
+        # is never created, so no remote of the user's, even one of the same
+        # name, adds settings to this one.
+        name = f"RCLONE_CONFIG_{self.remote.upper()}_"
+        with tempfile.TemporaryDirectory(prefix=f"{self.remote}-rclone-") as tmp:
+            env = {
+                **os.environ,
+                "RCLONE_CONFIG": str(Path(tmp, "rclone.conf")),
+                name + "TYPE": "s3",
+                name + "PROVIDER": "Other",
+                name + "ENV_AUTH": "false",
+                name + "ENDPOINT": os.environ["BACKUPS_URL"],
+                name + "REGION": region(os.environ["BACKUPS_URL"]),
+                name + "ACCESS_KEY_ID": os.environ["BACKUPS_ACCESS_KEY"],
+                name + "SECRET_ACCESS_KEY": os.environ["BACKUPS_SECRET_KEY"],
+                # Read-only here: never try to create the bucket.
+                name + "NO_CHECK_BUCKET": "true",
+            }
             prefix = os.environ.get("BACKUPS_PREFIX", "").strip("/")
-            location = "/".join(
-                p for p in (self.alias, os.environ["BACKUPS_BUCKET"], prefix) if p
+            location = f"{self.remote}:" + "/".join(
+                p for p in (os.environ["BACKUPS_BUCKET"], prefix) if p
             )
             yield Store(
                 location,
                 local=False,
-                mc=mc,
+                rclone=rclone,
                 label=self.label,
-                env={**os.environ, "MC_CONFIG_DIR": tmp},
+                env=env,
             )
 
     # ── discovery ────────────────────────────────────────────────────────
@@ -619,8 +677,8 @@ class Backups:
             description="List and download backups from the backup store.",
             epilog=(
                 f"Source: BACKUPS_URL, BACKUPS_ACCESS_KEY, BACKUPS_SECRET_KEY, BACKUPS_BUCKET and optionally "
-                f"BACKUPS_PREFIX (the backup-access secret), or {self.var('BACKUP_SOURCE')}: a directory or an "
-                f"mc target. {self.var('MC')} names the mc binary."
+                f"BACKUPS_PREFIX and BACKUPS_REGION (the backup-access secret), or {self.var('BACKUP_SOURCE')}: "
+                f"a directory or an rclone target. {self.var('RCLONE')} names the rclone binary."
             ),
         )
         sub = p.add_subparsers(

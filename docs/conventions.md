@@ -45,12 +45,14 @@ nixpkgs is not consistent about the option for an app's public hostname (nextclo
 
 -   **Convention:** every environment variable a product's own tools read or export is `<P>_NIX_*`: `FRAPPE_NIX_*` and `ODOO_NIX_*`. Both export `<P>_NIX_DEVGUARD`. devguard's settings are `<P>_DEVGUARD_*` (see [The core and the product's package](#the-core-and-the-products-package)).
 -   **Adopted:**
-    -   frappe-nix (frappe-nix#123) exports `FRAPPE_NIX_DEVGUARD` and reads `FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_NIX_BACKUP_SOURCE`, `FRAPPE_NIX_MC` and `FRAPPE_NIX_BACKUP_CACHE`. The old names (`FRAPPE_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_BACKUP_SOURCE`, `FRAPPE_BACKUP_MC`, `FRAPPE_BACKUP_CACHE`, `FRAPPE_OFFLINE_MIGRATE*`, `FRAPPE_BENCH_UPDATE_FORCE` and others) are read with a warning until 2.0.0. `FRAPPE_UNIXSOCK_ENABLED` is still outside the pattern, and frappe-runtime reads its own `FRAPPE_SERVE_ASSETS` and `FRAPPE_WEB_THREADS`.
+    -   frappe-nix (frappe-nix#123) exports `FRAPPE_NIX_DEVGUARD` and reads `FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_NIX_BACKUP_SOURCE`, `FRAPPE_NIX_RCLONE` (`FRAPPE_NIX_MC` until minio-client went) and `FRAPPE_NIX_BACKUP_CACHE`. The old names (`FRAPPE_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_BACKUP_SOURCE`, `FRAPPE_BACKUP_MC`, `FRAPPE_BACKUP_CACHE`, `FRAPPE_OFFLINE_MIGRATE*`, `FRAPPE_BENCH_UPDATE_FORCE` and others) are read with a warning until 2.0.0. `FRAPPE_UNIXSOCK_ENABLED` is still outside the pattern, and frappe-runtime reads its own `FRAPPE_SERVE_ASSETS` and `FRAPPE_WEB_THREADS`.
     -   odoo-nix (odoo-nix#57) reads `ODOO_NIX_*` and exports `ODOO_NIX_DEVGUARD`. `ODOO_DB`, `ODOO_TEST_ALLOW_SKIP`, `ODOO_HTTP_PORT` and `ODOO_GEVENT_PORT` stay, with a warning, until 2.0.0. `ODOO_NIX_JOURNALD` is no longer read, and setting it warns.
 -   **Status:** partial: frappe-nix's `FRAPPE_UNIXSOCK_ENABLED`.
 -   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Such a check needs an allow-list for a framework's own variables and the aliases.
 
-The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_MC` and `<P>_NIX_BACKUP_CACHE`. Its `legacyEnv` argument reads an old name, with a warning, for the deprecation window. The connection itself keeps the names the `backup-access` secret already uses in both products, which belong to the secret's format rather than to a product: `BACKUPS_URL`, `BACKUPS_ACCESS_KEY`, `BACKUPS_SECRET_KEY`, `BACKUPS_BUCKET` and `BACKUPS_PREFIX`.
+The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_RCLONE` and `<P>_NIX_BACKUP_CACHE`. Its `legacyEnv` argument reads an old name, with a warning, for the deprecation window. The connection itself keeps the names the `backup-access` secret already uses in both products, which belong to the secret's format rather than to a product: `BACKUPS_URL`, `BACKUPS_ACCESS_KEY`, `BACKUPS_SECRET_KEY`, `BACKUPS_BUCKET`, `BACKUPS_PREFIX`, and the optional `BACKUPS_REGION`, which the layer otherwise reads from `BACKUPS_URL`'s host name.
+
+The client was minio-client until nixpkgs marked it insecure, as abandoned upstream; it is rclone now. `<P>_NIX_MC`, its `legacyEnv` name, and an mc target (`<alias>/<bucket>/…`) as `<P>_NIX_BACKUP_SOURCE` are refused with what replaced them: `<P>_NIX_RCLONE`, and an rclone target (`<remote>:<bucket>/…`).
 
 ## Secrets
 
