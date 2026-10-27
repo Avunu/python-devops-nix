@@ -21,7 +21,7 @@ Every function takes `pkgs` and the product's names (label, prefix, option path)
 | `lib.secrets.mkModule { optionPath, label, varPrefix, projectRoles ? …, groups ? { }, agenix-shell, libName ? "secrets", libAliases ? [ ] }` | The flake-parts module: the option tree at the product's path, agenix-shell (the product's input) wired to it, and `flake.lib.secrets`. |
 | `lib.secrets.tools { pkgs, cfg, label, optionPath ? …, restoreCommand, bucketExample, verifyListing }` | agecheck (the recipient-drift check), the rules file, and `edit-secret`, `rekey-secrets`, `check-secrets` and `setup-backup-access` as devenv scripts (`.scripts { fetch ? null }`). python/secret_tools.py. |
 | `lib.secrets.roles`, `lib.secrets.rulesJSONOf` | The role definitions (`backupAccess`), and the recipients map agecheck compares against. |
-| `lib.backups.fetch { pkgs, label, envPrefix, layout, legacyEnv ? { } }` | `<label>-backup-fetch {list,folders,fetch}`: list, download and cache backups over S3 (minio-client) or from a directory. `layout` parses an object listing into backup sets. |
+| `lib.backups.fetch { pkgs, label, envPrefix, layout, legacyEnv ? { } }` | `<label>-backup-fetch {list,folders,fetch}`: list, download and cache backups over S3 (rclone, `<P>_NIX_RCLONE`) or from a directory. `layout` parses an object listing into backup sets. |
 | `lib.backups.module`, `lib.backups.check` | python/backups.py, for a product that imports the fetch layer in-process, and its tests. |
 
 Conventions: [Secrets](conventions.md#secrets), [Restore](conventions.md#restore).

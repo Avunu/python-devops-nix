@@ -6,7 +6,9 @@
 # The fixture is a plain directory tree standing in for a bucket, read as a
 # directory store: the whole discovery, selection, download, cache and
 # retention path is exercised with no server, no credentials and no network.
-# The S3 path, through mc, is test_backups.py's, against a stub mc.
+# The S3 path is exercised twice: in test_backups.py against a stub rclone, and
+# here (17) with the rclone the command was built with against a real S3
+# endpoint, `rclone serve s3` over a copy of the same tree, on loopback.
 #
 # Ported from frappe-nix's tests/backup-fetch.sh. Deliberate changes: the
 # variables are <P>_NIX_*, the messages for an unknown --at and an empty source
@@ -273,6 +275,58 @@ if [ "$RC" -eq 2 ]; then
   ok "no subcommand is a usage error"
 else
   no "no subcommand is a usage error" "rc=$RC"
+fi
+
+# ── 17. a real S3 endpoint ───────────────────────────────────────────────
+# `rclone serve s3` over a directory in which each top-level directory is a
+# bucket. The secret holds '/' and '+', which minio-client's MC_HOST_ form
+# signed wrongly; the remote rclone is given must sign it as written.
+S3="$WORK/s3"
+mkdir -p "$S3/b"
+cp -r "$SRC" "$S3/b/Backups-s3"
+# A realistic key id: rclone serve s3 does not find one as short as "AK".
+KEY=AKIAEXAMPLE SECRET='s/e+c' PORT=$((20000 + RANDOM % 20000))
+rclone serve s3 "$S3" --addr "127.0.0.1:$PORT" --auth-key "$KEY,$SECRET" >"$WORK/.s3log" 2>&1 &
+S3PID=$!
+trap 'kill "$S3PID" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+for _ in $(seq 100); do
+  (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break
+  sleep 0.1
+done
+s3() {
+  env -u STUB_NIX_BACKUP_SOURCE BACKUPS_URL="http://127.0.0.1:$PORT" BACKUPS_ACCESS_KEY="$KEY" \
+    BACKUPS_SECRET_KEY="$SECRET" BACKUPS_BUCKET=b BACKUPS_PREFIX=/Backups-s3/ "$@"
+}
+OUT="$(s3 "$BF" list 2>"$WORK/.err")" && RC=0 || RC=$?
+if [ "$RC" -eq 0 ] && [ "$(printf '%s' "$OUT" | head -n1)" = "20260101_010101" ]; then
+  ok "S3: a real endpoint lists the backups"
+else
+  no "S3: a real endpoint lists the backups" "rc=$RC $(head -3 "$WORK/.err")"
+fi
+OUT="$(s3 "$BF" fetch --at 20260101_010101 --private-files 2>"$WORK/.err")" && RC=0 || RC=$?
+if [ "$RC" -eq 0 ] && [ "$(cat "$(printf '%s' "$OUT" | jq -r .database)")" = "jan-db" ] &&
+  [ "$(cat "$(printf '%s' "$OUT" | jq -r .private_files)")" = "private-archive" ]; then
+  ok "S3: a real endpoint serves the download, byte for byte"
+else
+  no "S3: a real endpoint serves the download" "rc=$RC $(head -3 "$WORK/.err")"
+fi
+OUT="$(s3 env BACKUPS_SECRET_KEY=wrong "$BF" list 2>"$WORK/.err")" && RC=0 || RC=$?
+if [ "$RC" -ne 0 ] && grep -qi "rclone lsjson failed" "$WORK/.err"; then
+  ok "S3: wrong credentials fail with rclone's own message"
+else
+  no "S3: wrong credentials fail" "rc=$RC $(head -3 "$WORK/.err")"
+fi
+OUT="$(s3 env BACKUPS_PREFIX=nowhere "$BF" list 2>"$WORK/.err")" && RC=0 || RC=$?
+if [ "$RC" -ne 0 ] && grep -q "no backups under" "$WORK/.err"; then
+  ok "S3: an empty prefix is no backups, not an rclone failure"
+else
+  no "S3: an empty prefix is no backups" "rc=$RC $(head -3 "$WORK/.err")"
+fi
+OUT="$(s3 env STUB_NIX_MC=/usr/bin/mc "$BF" list 2>"$WORK/.err")" && RC=0 || RC=$?
+if [ "$RC" -ne 0 ] && grep -q "STUB_NIX_MC names a minio-client binary" "$WORK/.err"; then
+  ok "S3: minio-client's variable is refused with its replacement"
+else
+  no "S3: minio-client's variable is refused" "rc=$RC $(head -3 "$WORK/.err")"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
