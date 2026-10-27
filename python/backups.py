@@ -400,6 +400,12 @@ class Backups:
         if unknown:
             raise ValueError(f"layout OPTIONAL_ROLES not in ROLES: {sorted(unknown)}")
 
+    @property
+    def alias(self) -> str:
+        """`remote`'s name from when the client was minio-client and this was
+        its alias, kept for a product that still reads it."""
+        return self.remote
+
     # ── environment ──────────────────────────────────────────────────────
     def var(self, suffix: str) -> str:
         return f"{self.env_prefix}_NIX_{suffix}"

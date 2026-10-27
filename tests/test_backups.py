@@ -305,6 +305,11 @@ class Credentials(Case):
         # The process environment is left alone: the remote reaches rclone only.
         self.assertFalse(any(k.startswith("RCLONE_") for k in os.environ))
 
+    def test_alias_is_the_remote(self):
+        # A product's tests from before rclone read `alias`.
+        self.assertEqual(self.b.alias, self.b.remote)
+        self.assertEqual(self.b.remote, "stubnix")
+
     def test_region(self):
         for url, want in {
             "https://s3.us-west-004.backblazeb2.com": "us-west-004",
