@@ -12,6 +12,9 @@ let
     "statix.toml" = ../../statix.toml;
   };
 
+  # Python with PyYAML, for the scripts that read the repository's files.
+  python = pkgs: pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
+
   # Shell that compares `files` under the current directory with the base's
   # copies, by the rule in shared_config.py.
   compareShared =
@@ -21,7 +24,6 @@ let
       exceptions ? { },
     }:
     let
-      python = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
       unknown = lib.subtractLists (lib.attrNames baseFiles) files;
       base = pkgs.linkFarm "python-devops-nix-shared-config" (lib.getAttrs files baseFiles);
       spec = builtins.toJSON { inherit files exceptions; };
@@ -29,7 +31,7 @@ let
     assert lib.assertMsg (unknown == [ ])
       "lib.checks: the base has no copy of ${lib.concatStringsSep ", " unknown}; it shares ${lib.concatStringsSep ", " (lib.attrNames baseFiles)}";
     ''
-      ${lib.getExe python} ${./shared_config.py} ${base} . ${lib.escapeShellArg spec}
+      ${lib.getExe (python pkgs)} ${./shared_config.py} ${base} . ${lib.escapeShellArg spec}
     '';
 
   mk =
@@ -137,9 +139,117 @@ let
           name = "${product}-${name}";
         };
     };
+
+  # The checks of the conventions over a product's repository: its .github and
+  # its check names. Each is exported on its own, and `conventions` registers
+  # them all.
+  repository = {
+    # docs/conventions.md, CI: every `uses:` in .github/workflows and
+    # .github/actions is pinned by a full commit SHA, or a `docker://` image by
+    # its sha256 digest, with a trailing comment. A local `./` path is exempt.
+    ciPins =
+      {
+        pkgs,
+        src,
+        product,
+      }:
+      (mk { inherit pkgs product; }).script "ci-pins" { } ''
+        ${lib.getExe (python pkgs)} ${./repository.py} pins ${src}
+      '';
+
+    # docs/conventions.md, Dependabot: every ecosystem in .github/dependabot.yml
+    # has the commit prefix `prefix`, `cooldown.default-days: 7` and a group of
+    # every dependency (`patterns: ["*"]`). `development` lists the entries for
+    # development-only tooling, as { ecosystem, directory ? "/" }, which take
+    # `developmentPrefix` instead. An entry listed there that the file does not
+    # have fails the check.
+    dependabot =
+      {
+        pkgs,
+        src,
+        product,
+        prefix ? "fix(deps)",
+        developmentPrefix ? "chore(deps)",
+        development ? [ ],
+      }:
+      let
+        spec = builtins.toJSON {
+          inherit prefix developmentPrefix;
+          development = map (d: { directory = "/"; } // d) development;
+        };
+      in
+      (mk { inherit pkgs product; }).script "dependabot" { } ''
+        ${lib.getExe (python pkgs)} ${./repository.py} dependabot ${src} ${lib.escapeShellArg spec}
+      '';
+
+    # docs/conventions.md, Tests: each of `checks`' attribute names is kebab-case
+    # and has no kind prefix. Only the names are read, so a product passes its
+    # own checks.<system>, this check among them. `exceptions` lists names that
+    # may break the rule; one that no longer needs to fails the check.
+    checkNames =
+      {
+        pkgs,
+        product,
+        checks,
+        exceptions ? [ ],
+      }:
+      let
+        names = lib.attrNames checks;
+        kinds = [
+          "eval-"
+          "module-"
+          "vm-"
+        ];
+        problem =
+          name:
+          let
+            kind = lib.findFirst (k: lib.hasPrefix k name) null kinds;
+          in
+          if builtins.match "[a-z0-9]+(-[a-z0-9]+)*" name == null then
+            "not kebab-case"
+          else if kind != null then
+            "starts with the kind prefix ${kind}"
+          else
+            null;
+        broken = lib.filter (name: !(lib.elem name exceptions) && problem name != null) names;
+        stale = lib.filter (name: !(lib.elem name names) || problem name == null) exceptions;
+        lines =
+          map (name: "${name}: ${problem name}") broken
+          ++ map (name: "${name}: listed as an exception, but it is not a check that breaks the rule") stale;
+      in
+      (mk { inherit pkgs product; }).eval "check-names" {
+        assertion = lines == [ ];
+        message =
+          lib.concatStringsSep "; " lines
+          + " (docs/conventions.md, Tests: <x> or <x>-<major>, kebab-case, no eval-, module- or vm- prefix)";
+      };
+  };
+
+  # Every conformance check a product registers, by check name, from one set of
+  # arguments. A later family adds its checks here. The names depend on which
+  # arguments are given and never on their values, so `checks` can be the set
+  # this one is merged into.
+  conventions =
+    {
+      pkgs,
+      src,
+      product,
+      checks,
+      checkNames ? { },
+      dependabot ? { },
+    }:
+    let
+      tree = { inherit pkgs src product; };
+    in
+    {
+      ci-pins = repository.ciPins tree;
+      dependabot = repository.dependabot (tree // dependabot);
+      check-names = repository.checkNames ({ inherit pkgs product checks; } // checkNames);
+    };
 in
 {
-  inherit mk;
+  inherit mk conventions;
+  inherit (repository) ciPins dependabot checkNames;
 
   # nixfmt (nixfmt-rs), statix and deadnix over every .nix file in `src`, and
   # statix.toml at its root compared with the base's copy (`sharedConfig`'s
