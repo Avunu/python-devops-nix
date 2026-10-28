@@ -554,7 +554,9 @@ let
     # scanned (fixtures, vendored trees). `exceptions` lists the names that may
     # break the rule: the framework's own, the old names read until 2.0.0, and
     # names that are not variables, such as a template's keys. One that is not
-    # found, or that follows the rule, fails the check.
+    # found, or that follows the rule, fails the check. The Nix list that
+    # declares them, if `src` holds it, is not scanned: a list of just those
+    # strings, in order.
     envVars =
       {
         pkgs,

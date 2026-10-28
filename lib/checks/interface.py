@@ -27,7 +27,11 @@ variable (`<P>_SHA="$(git rev-parse HEAD)"`). A script writes its own in lower
 case. `required` names variables the source must use, and `exceptions` names
 that may break the rule (the framework's own, old names read until 2.0.0, and
 names that are not variables, such as a template's keys). An exception that is
-not found, or that follows the rule, fails the check.
+not found, or that follows the rule, fails the check. The list that declares
+the exceptions is not a use of them, when the product keeps it in the tree: a
+Nix list of string literals and comments only, whose strings are `exceptions`
+in the same order, is not scanned. A list built another way (`a ++ b`) is
+scanned, and its names count.
 
 `flags` (docs/conventions.md, Restore and Scaffolder): each command, run with
 `--help`, lists the flags the conventions name for its role. SPEC_JSON is
@@ -67,6 +71,12 @@ TERM_WORDS = re.compile(r"(?:\[[^\]]*\]|\{[^}]*\}|<[^>]*>|[^\s\[{<])+")
 # `--files/--no-files`), the `/` between a flag and its negation, or a metavar
 # (`<when>`, `TEXT`, `[a|b]`, `{a,b}`, `[FILES ...]`).
 TERM_WORD = re.compile(r"(-\S*|/|<[^>]*>|\[[^\]]*\]|\{[^}]*\}|[A-Z][A-Z0-9_.-]*),?")
+# A Nix list of string literals and comments only, such as the one that
+# declares the exceptions, and the strings in it. Each alternative starts with
+# its own character and ends where it must, so a list that does not close is
+# given up on in one pass.
+STRING_LIST = re.compile(r'\[(?:\s|#[^\n]*\n|"[^"\\$]*")*\]')
+LIST_STRING = re.compile(r'#[^\n]*\n|"([^"\\$]*)"')
 FLAG = re.compile(r"--?[A-Za-z0-9][\w-]*")
 # `--[no-]force`, which is `--force` and `--no-force`.
 NEGATABLE = re.compile(r"--\[no-\]([A-Za-z0-9][\w-]*)")
@@ -103,8 +113,23 @@ def patterns(prefix: str, lang: str) -> re.Pattern[str]:
     return re.compile("|".join(forms))
 
 
-def scan(product_dir: Path, prefix: str, ignore: list[str]) -> dict[str, list[str]]:
-    """{name: ["file:line", ...]} for each variable the source uses."""
+def declarations(text: str, exceptions: list[str]) -> list[tuple[int, int]]:
+    """The spans of `text` that are a Nix list of just `exceptions`."""
+    if not exceptions:
+        return []
+    spans = []
+    for match in STRING_LIST.finditer(text):
+        names = [m[1] for m in LIST_STRING.finditer(match[0]) if m[1] is not None]
+        if names == exceptions:
+            spans.append(match.span())
+    return spans
+
+
+def scan(
+    product_dir: Path, prefix: str, ignore: list[str], exceptions: list[str]
+) -> dict[str, list[str]]:
+    """{name: ["file:line", ...]} for each variable the source uses, outside
+    the Nix list that declares `exceptions`."""
     skip = {product_dir / ".git", *(product_dir / d for d in ignore)}
     found: dict[str, list[str]] = {}
     compiled: dict[str, re.Pattern[str]] = {}
@@ -123,17 +148,24 @@ def scan(product_dir: Path, prefix: str, ignore: list[str]) -> dict[str, list[st
             except UnicodeDecodeError:
                 continue
             rel = path.relative_to(product_dir)
-            for lineno, line in enumerate(text.splitlines(), 1):
+            skipped = declarations(text, exceptions) if lang == "nix" else []
+            start = 0
+            for lineno, raw in enumerate(text.splitlines(keepends=True), 1):
+                offset, start = start, start + len(raw)
+                line = raw.splitlines()[0]
                 if COMMENT.match(line):
                     continue
                 for match in compiled[lang].finditer(line):
+                    at = offset + match.start()
+                    if any(a <= at < b for a, b in skipped):
+                        continue
                     var = next(match[g] for g in GROUPS if match.groupdict().get(g))
                     found.setdefault(var, []).append(f"{rel}:{lineno}")
     return found
 
 
 def env(product_dir: Path, spec: dict) -> int:
-    found = scan(product_dir, spec["prefix"], spec["ignore"])
+    found = scan(product_dir, spec["prefix"], spec["ignore"], spec["exceptions"])
     allowed = tuple(spec["allowed"])
     exceptions = set(spec["exceptions"])
 

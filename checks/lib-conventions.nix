@@ -243,6 +243,25 @@ let
     message = "commandFlags took commands other than restore and scaffolder";
   };
 
+  # The stub, with its flake listing `exceptions` for env-vars, one name to a
+  # line, as odoo-nix and frappe-nix do: the list holds every name, so only
+  # the scan's skipping it lets a stale one fail.
+  listing =
+    name: exceptions:
+    stub.variant name ''
+      cat > flake.nix <<'EOF'
+      {
+        outputs = _: {
+          envVars.exceptions = [
+            # The framework's "own" names, and one that may be gone.
+            ${lib.concatMapStringsSep "\n      " (name: ''"${name}" # why'') exceptions}
+          ];
+        };
+      }
+      EOF
+    '';
+  stale = stub.envVars.exceptions ++ [ "STUB_GONE" ];
+
   mk = checks.mk {
     inherit pkgs;
     product = "python-devops-nix";
@@ -581,7 +600,8 @@ mk.script "lib-conventions" { } ''
   # Environment variables: each way a source reads or sets a name outside
   # STUB_NIX_*, in Python, shell and Nix; the exceptions and the ignored
   # fixtures, without which their names fail; the required names; and stale
-  # exceptions. A product named stub-nix has the same prefix.
+  # exceptions, also when the tree declares them. A product named stub-nix has
+  # the same prefix.
   echo "the prefix drops -nix: ${envs stub.tree { product = "stub-nix"; }}"
   ${stub.expectFailure
     (envs (stub.variant "env-forms" ''
@@ -643,6 +663,11 @@ mk.script "lib-conventions" { } ''
       "STUB_NIX_CI: listed as an exception, but nothing is wrong with it"
     ]
   }
+  echo "exceptions declared in the tree: ${envs (listing "env-declared" stub.envVars.exceptions) { }}"
+  ${stub.expectFailure (envs (listing "env-declared-stale" stale) { exceptions = stale; }) [
+    "STUB_GONE: listed as an exception, but nothing is wrong with it"
+    "1 variable(s) outside the conventions"
+  ]}
 
   # Command flags: restore and the scaffolder each without the flags of a
   # section, a flag left only in prose or renamed, exceptions, needed and
