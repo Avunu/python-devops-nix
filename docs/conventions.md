@@ -77,28 +77,28 @@ The client was minio-client until nixpkgs marked it insecure, as abandoned upstr
 -   **Convention:** restore runs the framework's migration afterwards, on by default. `--no-migrate` and `restore.migrate` turn it off.
 -   **Adopted:** frappe-nix always had both. odoo-nix since odoo-nix#53 (`--migrate/--no-migrate`, `restore.migrate`).
 -   **Status:** decided.
--   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `restore.migrate`. The flag is not yet checked in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Neutralise
 
 -   **Convention:** `--neutralize`, `--no-neutralize` and `restore.neutralize` in both. In frappe-nix, neutralising pauses the scheduler and mutes mail in the restored database, as defence in depth below devguard.
 -   **Adopted:** odoo-nix had both; its `restore.neutralize` is on in the development shell and off on a server. frappe-nix since frappe-nix#98 and #123, with `restore.neutralize` on by default; a restore from an explicit file is neutralised only with `--neutralize`.
 -   **Status:** decided.
--   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `restore.neutralize`. The flags are not yet checked in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Files
 
 -   **Convention:** `--files` and `restore.files`. frappe-nix keeps `--private-files` as its own extra.
 -   **Adopted:** frappe-nix#123: `restore.files` is a bool or `"none" | "private" | "all"` (default `"none"`), since Frappe has private and public files; `restore.withFiles` is its alias. odoo-nix#57: `--files/--no-files` and `restore.files`, with `--attachments` and `restore.attachments` as aliases until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `restore.files`. The flag is not yet checked in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
 ### Unguarded restore
 
 -   **Convention:** restore refuses to run without devguard, unless `<P>_NIX_RESTORE_ALLOW_UNGUARDED` is set. `restore.requireDevguard` (default true) in both.
 -   **Adopted:** frappe-nix#98 and #123; odoo-nix#53, whose command line also reads `ODOO_NIX_RESTORE_REQUIRE_DEVGUARD`.
 -   **Status:** decided.
--   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). The refusal is in each product's restore tests.
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `restore.requireDevguard`. The refusal is in each product's restore tests.
 
 ### Point in time (`--at`)
 
@@ -114,21 +114,21 @@ The client was minio-client until nixpkgs marked it insecure, as abandoned upstr
 -   **Convention:** the option is named `port`, matching both Python settings schemas. Where it lives is in [the development shell option tree](#the-development-shell-option-tree): `mailpit.port`.
 -   **Adopted:** frappe-nix#124 and odoo-nix#58. frappe-nix's `devguard.mail.smtpPort` and `devguard.mail.port`, and odoo-nix's `devguard.mail.port`, are aliases until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `mailpit.port`.
 
 ### Job denylist
 
 -   **Convention:** `devguard.jobs.{enable,extraBlocked}`, and `blocked_jobs` in the Python settings. Log lines keep the framework's words (scheduler, crons). frappe-nix's `blockServerScripts` is `devguard.jobs.blockServerScripts`. In the Python settings, `guards.jobs.blocked_jobs` is the product's built-in list (its default), `guards.jobs.extra_blocked` the consumer's additions (`extraBlocked`, baked), and the guard reads their union, in order, as `settings().blocked_jobs`, which the core provides.
 -   **Adopted:** frappe-nix#112 and #124; odoo-nix#56 and #58. `scheduler` (frappe-nix) and `crons` (odoo-nix) are aliases until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base for the option paths ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). `lib-devguard` tests the union.
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `devguard.jobs.enable` and `devguard.jobs.extraBlocked`. `lib-devguard` tests the union.
 
 ### Shared guard names
 
 -   **Convention:** the guards both products have keep their names, `egress`, `mail`, `mail_stdlib`, `objectstore`, `backups`, `jobs` and `webhooks`, with the same option shape under each (`enable` and the same settings). Product guards sit beside them (frappe-nix's `integrations`, `google` and `plaid`; odoo-nix's `iap`).
 -   **Adopted:** both (frappe-nix#124, odoo-nix#58).
 -   **Status:** decided.
--   **Check:** not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)): `devguard.<guard>.enable` for each shared guard with an option of its own (`mail_stdlib` has none), and the settings [the development shell option tree](#the-development-shell-option-tree) names. It does not compare a guard's other settings between the products.
 
 ### The core and the product's package
 
@@ -433,7 +433,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 -   **Convention:** `services.frappe-nix` and `services.odoo-nix`. These match the devenv and flake-parts roots (`frappe-nix.*`, `odoo-nix.*`) and cannot collide with a future nixpkgs module.
 -   **Adopted:** frappe-nix#123, with `services.frappe` as an alias until 2.0.0. odoo-nix always used `services.odoo-nix`.
 -   **Status:** decided.
--   **Check:** not yet in the base.
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)): `services.<p>-nix.enable` and `services.<p>-nix.package`.
 
 ### Framework config blocks
 
@@ -446,14 +446,20 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   The development shell's odoo-nix `settings` is the exception: a typed camelCase tree (`settings.dbName`) that predates this rule and keeps its shape through 1.x.
 -   **Adopted:** frappe-nix#123 (`extraConfig` and `extraConfigFiles` aliased), frappe-nix#177 (`sites.<fqdn>.settings` freeform JSON; `db_name` and `db_type` warn when they differ from `database.name` through 1.x, and become module-owned in 2.0.0); odoo-nix#57 and #58 (`odooConf.*` aliased to `settings`, and its port keys to `ports.*`), odoo-nix#91 (`settings` freeform INI by section; the flat `settings.<key>` form is an alias for `settings.options.<key>`, with a warning, until 2.0.0).
 -   **Status:** decided.
--   **Check:** not yet in the base. A check that each product's `settings` option has a `pkgs.formats` freeform type would be cheap ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `config-blocks` (`lib.checks.configBlocks`, through [`lib.checks.conventions`](#tests)): each block the product lists is named `settings` and is a submodule whose `freeformType` is the format's type. Types cannot be compared, so it compares their names and descriptions. A block names its module (`shell` or `nixos`), its path under the product's root there, and the format with the arguments its description shows. odoo-nix's INI writes a list as one value:
+
+    ```nix
+    settings = [
+      { module = "nixos"; path = [ "settings" ]; format = "ini"; args.listToValue = odooIni.toIniValue; }
+    ];
+    ```
 
 ### Identity options
 
 -   **Convention:** the project identity is `name` in both (`frappe-nix.name`, `odoo-nix.name`). It is a slug: it seeds the port hash and names container images, systemd scopes and log messages. Each devenv module sets devenv's own top-level `name` with `mkDefault cfg.name`. The default tenant keeps the framework's word: frappe-nix's `defaultSite` (Frappe's `default_site`), and odoo-nix's `dbName` (Odoo's `db_name`). The scaffolder's `--name` sets the identity in both, and frappe-nix's `--default-site` the default site. Production keeps nixpkgs' shapes: frappe-nix's `sites.<fqdn>` (as `services.wordpress.sites`), odoo-nix's `domain` (as `services.odoo.domain`). In frappe-nix, the word site means only what Frappe means by it: a tenant of the bench.
 -   **Adopted:** frappe-nix#123 (`benchName` and `siteName` aliased) and odoo-nix#57 (`projectName` aliased), until 2.0.0.
 -   **Status:** decided.
--   **Check:** not yet in the base. Each product's rename tests assert the aliases (frappe-nix's `tests/renames.nix`).
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `name`, and for the default tenant in the development shell and in production, which a product names, as `tenant = { shell = "defaultSite"; nixos = "sites"; }`. Each product's rename tests assert the aliases (frappe-nix's `tests/renames.nix`).
 
 ## Logging
 
@@ -674,11 +680,20 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
         product = "frappe-nix";
         checks = self.checks.${pkgs.stdenv.hostPlatform.system};
         dependabot.development = [ { ecosystem = "uv"; directory = "/dev"; } ];
+        options = {
+          # The perSystem options, from a flake built with the product's
+          # flakeModule and `debug = true`: .allSystems.${system}.options.
+          shell = benchFlake.allSystems.${pkgs.stdenv.hostPlatform.system}.options;
+          # The NixOS options, from nixos/lib/eval-config.nix with nixosModules.default.
+          nixos = nixosEval.options;
+        };
+        tenant = { shell = "defaultSite"; nixos = "sites"; };
+        settings = [ { module = "nixos"; path = [ "sites" "<name>" "settings" ]; format = "json"; } ];
       }
     );
     ```
 
-    It returns `ci-pins` ([CI](#ci)), `dependabot` ([Dependabot](#dependabot)) and `check-names`, which fails on a name that is not kebab-case or has a kind prefix. `checkNames.exceptions` lists names allowed to break the rule; one that no longer does fails the check. Each check is also exported on its own (`lib.checks.ciPins`, `lib.checks.dependabot`, `lib.checks.checkNames`). The checks of the other conventions join it as they land ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Neither product registers it yet.
+    It returns `ci-pins` ([CI](#ci)), `dependabot` ([Dependabot](#dependabot)), `check-names`, `option-paths` and `config-blocks`. `check-names` fails on a name that is not kebab-case or has a kind prefix. `option-paths` finds the options of [Restore](#restore), [devguard](#devguard), [the development shell option tree](#the-development-shell-option-tree), [NixOS module path](#nixos-module-path) and [Identity options](#identity-options) under `<p>-nix.*` in `options.shell` and `services.<p>-nix.*` in `options.nixos`; `config-blocks` checks the [Framework config blocks](#framework-config-blocks) in `settings`. Both read the options and build nothing. A path writes `<name>` for an attribute set's names, as the manual does. `checkNames.exceptions` and `optionPaths.exceptions` list the names and option paths allowed to break the rule; one that no longer does fails the check. Each check is also exported on its own (`lib.checks.ciPins`, `lib.checks.dependabot`, `lib.checks.checkNames`, `lib.checks.optionPaths`, `lib.checks.configBlocks`). The checks of the other conventions join it as they land ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Neither product registers it yet.
 -   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through `lib.checks.mk` (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
 -   **Status:** decided.
 -   **Check:** the base's `lib-mk` tests the helper, and `check-names` (`lib.checks.checkNames`, through `lib.checks.conventions`) the names. The base runs `check-names` on itself, and `lib-conventions` tests the entry point and its checks against a stub product.
@@ -711,4 +726,4 @@ Left alone, since neither product is clearly better: frappe-nix's `appsReconcile
 
 Both products also have `ide.enable`, which links `./.venv` to the development environment for editors: frappe-nix's (frappe-nix#156, default true) also generates a `pyrightconfig.json`; odoo-nix's, the original, seeds `.vscode/settings.json` and runs odoo-ls under `ide.languageServer`.
 
-**Check:** not yet in the base: the option paths exist in both devenv modules, and the `dev` tree does not ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+**Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)): every option the table names is declared in the development shell, not only as an alias, `mailpit.pop3.*` and `devguard.mail.{sender,unmute}` among them. `ports.{base,offset,worktreeSalt,http,db,smtp,mailUi}` are not read-only, and nothing visible is left in the `dev` tree. A hidden removed option there is allowed.

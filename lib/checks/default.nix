@@ -225,6 +225,305 @@ let
       };
   };
 
+  # The checks of the conventions over a product's modules. They read the
+  # option sets the modules evaluate to, as `options`: `shell`, the flake-parts
+  # perSystem options, which hold `<product>.*`, and `nixos`, the NixOS
+  # options, which hold `services.<product>.*`. Nothing is built.
+  modules =
+    let
+      roots = product: {
+        shell = [ product ];
+        nixos = [
+          "services"
+          product
+        ];
+      };
+
+      # The option, or tree of options, at `path` under `node`, through
+      # submodules; null if there is none. `<name>` stands for the names of an
+      # attribute set of submodules and `*` for the items of a list of them, as
+      # the manual writes them.
+      find =
+        node: path:
+        if path == [ ] then
+          node
+        else if lib.isOption node then
+          let
+            placeholder =
+              {
+                attrsOf = "<name>";
+                lazyAttrsOf = "<name>";
+                listOf = "*";
+              }
+              .${node.type.name} or null;
+          in
+          if placeholder == null then
+            find (node.type.getSubOptions node.loc) path
+          else if lib.head path == placeholder then
+            find (node.type.getSubOptions node.loc) (lib.tail path)
+          else
+            null
+        else if builtins.isAttrs node && node ? ${lib.head path} then
+          find node.${lib.head path} (lib.tail path)
+        else
+          null;
+
+      # An alias or a removed option is declared too, but hidden.
+      shown = opt: (opt.visible or true) != false && !(opt.internal or false);
+
+      # "missing" or why the option at `path` is not the convention's, or null.
+      declared =
+        options: path:
+        let
+          opt = find options path;
+        in
+        if opt == null || !lib.isOption opt then
+          "missing"
+        else if !shown opt then
+          "only an alias or a removed option, which is hidden"
+        else
+          null;
+
+      # The lines of an eval check, from { <option path> = { problem, section } }
+      # less `exceptions`, which fail once they are no longer needed.
+      report =
+        found: exceptions:
+        let
+          broken = lib.filterAttrs (path: _: !(lib.elem path exceptions)) found;
+          stale = lib.filter (path: !(found ? ${path})) exceptions;
+        in
+        lib.mapAttrsToList (path: p: "${path}: ${p.problem} (${p.section})") broken
+        ++ map (path: "${path}: listed as an exception, but nothing is wrong with it") stale;
+    in
+    {
+      # docs/conventions.md, Restore, devguard, The development shell option
+      # tree, NixOS module path and Identity options: each option they name is
+      # declared and visible (an alias or a removed option does not count), the
+      # `ports` options are not read-only, and nothing visible is left in the
+      # shell's `dev` tree. `tenant` names the default tenant's option, which
+      # keeps the framework's word, in each: { shell = "defaultSite"; nixos =
+      # "sites"; }. `exceptions` lists option paths, as the message shows them,
+      # that may break the rule; one that no longer does fails the check.
+      optionPaths =
+        {
+          pkgs,
+          product,
+          options,
+          tenant,
+          exceptions ? [ ],
+        }:
+        let
+          sharedGuards = [
+            "egress"
+            "mail"
+            "jobs"
+            "backups"
+            "objectstore"
+            "webhooks"
+          ];
+          tree = "The development shell option tree";
+          required = [
+            {
+              section = "Migrate after restore";
+              paths = [ "restore.migrate" ];
+            }
+            {
+              section = "Neutralise";
+              paths = [ "restore.neutralize" ];
+            }
+            {
+              section = "Files";
+              paths = [ "restore.files" ];
+            }
+            {
+              section = "Unguarded restore";
+              paths = [ "restore.requireDevguard" ];
+            }
+            {
+              section = "SMTP port";
+              paths = [ "mailpit.port" ];
+            }
+            {
+              section = "Job denylist";
+              paths = [
+                "devguard.jobs.enable"
+                "devguard.jobs.extraBlocked"
+              ];
+            }
+            {
+              section = "Shared guard names";
+              paths = map (guard: "devguard.${guard}.enable") sharedGuards;
+            }
+            {
+              section = tree;
+              paths = [
+                "watch.python"
+                "devguard.enable"
+                "devguard.egress.allowHosts"
+                "devguard.mail.sender"
+                "devguard.mail.unmute"
+                "mailpit.enable"
+                "mailpit.host"
+                "mailpit.httpPort"
+                "mailpit.pop3.enable"
+                "mailpit.pop3.port"
+                "mailpit.pop3.user"
+                "mailpit.pop3.password"
+              ];
+            }
+            {
+              section = tree;
+              writable = true;
+              paths = map (port: "ports.${port}") [
+                "base"
+                "offset"
+                "worktreeSalt"
+                "http"
+                "db"
+                "smtp"
+                "mailUi"
+              ];
+            }
+            {
+              section = "Identity options";
+              paths = [
+                "name"
+                tenant.shell
+              ];
+            }
+            {
+              section = "Identity options";
+              module = "nixos";
+              paths = [ tenant.nixos ];
+            }
+            {
+              section = "NixOS module path";
+              module = "nixos";
+              paths = [
+                "enable"
+                "package"
+              ];
+            }
+          ];
+
+          # { <option path> = { problem, section } } for the required options.
+          problems = lib.listToAttrs (
+            lib.concatMap (
+              entry:
+              let
+                module = entry.module or "shell";
+              in
+              lib.concatMap (
+                relative:
+                let
+                  path = (roots product).${module} ++ lib.splitString "." relative;
+                  missing = declared options.${module} path;
+                  problem =
+                    if missing != null then
+                      missing
+                    else if entry.writable or false && (find options.${module} path).readOnly or false then
+                      "read-only, so lib.mkForce cannot set it"
+                    else
+                      null;
+                in
+                lib.optional (problem != null) (
+                  lib.nameValuePair (lib.showOption path) {
+                    inherit problem;
+                    inherit (entry) section;
+                  }
+                )
+              ) entry.paths
+            ) required
+          );
+
+          # Whatever is still visible in the removed `dev` tree.
+          dev =
+            let
+              node = find options.shell ((roots product).shell ++ [ "dev" ]);
+            in
+            if node == null then
+              [ ]
+            else
+              lib.filter shown (if lib.isOption node then [ node ] else lib.collect lib.isOption node);
+          lines = report (
+            problems
+            // lib.listToAttrs (
+              map (
+                opt:
+                lib.nameValuePair (lib.showOption opt.loc) {
+                  problem = "declared in the dev tree, which the conventions removed";
+                  section = tree;
+                }
+              ) dev
+            )
+          ) exceptions;
+        in
+        assert lib.assertMsg (options ? shell && options ? nixos)
+          "lib.checks.optionPaths: pass options = { shell = <perSystem options>; nixos = <NixOS options>; }";
+        (mk { inherit pkgs product; }).eval "option-paths" {
+          assertion = lines == [ ];
+          message = lib.concatStringsSep "; " lines + " (docs/conventions.md)";
+        };
+
+      # docs/conventions.md, Framework config blocks: each option `settings`
+      # lists is named `settings` and is a submodule whose freeformType is
+      # `pkgs.formats.<format> args`'s type. Each entry is { module, path,
+      # format, args ? { } }: `module` is "shell" or "nixos", and `path` is
+      # under the product's root in it, e.g. { module = "nixos"; path = [
+      # "sites" "<name>" "settings" ]; format = "json"; }. Types cannot be
+      # compared, so the freeformType is compared with the format's type by
+      # name and description, and `args` are the ones the description shows
+      # (ini's `listToValue`, say).
+      configBlocks =
+        {
+          pkgs,
+          product,
+          options,
+          settings,
+        }:
+        let
+          problem =
+            block:
+            let
+              path = (roots product).${block.module} ++ block.path;
+              opt = find options.${block.module} path;
+              missing = declared options.${block.module} path;
+              want = (pkgs.formats.${block.format} (block.args or { })).type;
+              freeform = (opt.type.getSubOptions opt.loc)._module.freeformType.value;
+            in
+            assert lib.assertMsg (lib.elem block.module [
+              "shell"
+              "nixos"
+            ]) "lib.checks.configBlocks: module is ${block.module}, not shell or nixos";
+            assert lib.assertMsg (
+              pkgs.formats ? ${block.format}
+            ) "lib.checks.configBlocks: pkgs.formats has no ${block.format}";
+            {
+              name = lib.showOption path;
+              value =
+                if lib.last block.path != "settings" then
+                  "named ${lib.last block.path}, not settings"
+                else if missing != null then
+                  missing
+                else if opt.type.name != "submodule" then
+                  "its type is ${opt.type.description}, not a submodule"
+                else if freeform == null then
+                  "a submodule with no freeformType"
+                else if freeform.name != want.name || freeform.description != want.description then
+                  "its freeformType is ${freeform.description}, not pkgs.formats.${block.format}'s ${want.description}"
+                else
+                  null;
+            };
+          lines =
+            lib.optional (settings == [ ]) "no settings option is listed"
+            ++ map (p: "${p.name}: ${p.value}") (lib.filter (p: p.value != null) (map problem settings));
+        in
+        (mk { inherit pkgs product; }).eval "config-blocks" {
+          assertion = lines == [ ];
+          message = lib.concatStringsSep "; " lines + " (docs/conventions.md, Framework config blocks)";
+        };
+    };
+
   # Every conformance check a product registers, by check name, from one set of
   # arguments. A later family adds its checks here. The names depend on which
   # arguments are given and never on their values, so `checks` can be the set
@@ -235,8 +534,12 @@ let
       src,
       product,
       checks,
+      options,
+      tenant,
+      settings,
       checkNames ? { },
       dependabot ? { },
+      optionPaths ? { },
     }:
     let
       tree = { inherit pkgs src product; };
@@ -245,11 +548,31 @@ let
       ci-pins = repository.ciPins tree;
       dependabot = repository.dependabot (tree // dependabot);
       check-names = repository.checkNames ({ inherit pkgs product checks; } // checkNames);
+      option-paths = modules.optionPaths (
+        {
+          inherit
+            pkgs
+            product
+            options
+            tenant
+            ;
+        }
+        // optionPaths
+      );
+      config-blocks = modules.configBlocks {
+        inherit
+          pkgs
+          product
+          options
+          settings
+          ;
+      };
     };
 in
 {
   inherit mk conventions;
   inherit (repository) ciPins dependabot checkNames;
+  inherit (modules) optionPaths configBlocks;
 
   # nixfmt (nixfmt-rs), statix and deadnix over every .nix file in `src`, and
   # statix.toml at its root compared with the base's copy (`sharedConfig`'s
