@@ -3,7 +3,7 @@ title: Conventions
 description: How frappe-nix and odoo-nix name and do the jobs they both do, and where each product stands on each decision.
 order: 1
 tags: [conventions, frappe-nix, odoo-nix]
-updated: 2026-10-23
+updated: 2026-10-28
 ---
 
 # Conventions
@@ -303,15 +303,15 @@ The leaf pieces inside both devenv modules ([library](library.md#development-she
 
 ### Command layout
 
--   **Convention:** every command lives under the product's umbrella command, named for the framework: `odoo`, `frappe`. frappe-nix's `frappe` takes everything `bench` does (it hands it to the `bench` dispatcher), and `bench` stays, undeprecated: it is what Frappe's own documentation types. frappe-nix's `provision-site` is `bench provision`, and `provision-site` stays as an alias until 2.0.0.
--   **Adopted:** odoo-nix has everything under `odoo` (`db`, `module`, `project`, `ui`). frappe-nix has `bench provision` under `bench` (frappe-nix#166), with `provision-site` kept as a deprecated alias until 2.0.0, and `frappe` as the umbrella over `bench` (_pending_).
+-   **Convention:** every command lives under the product's umbrella command, `bench` or `odoo`. frappe-nix's `bench` mirrors Frappe's: what it does not handle itself it passes through to the bench's own, so the commands Frappe's documentation types, and those the bench's apps add, work unchanged. frappe-nix's `provision-site` is `bench provision`, and `provision-site` stays as an alias until 2.0.0.
+-   **Adopted:** odoo-nix has everything under `odoo` (`db`, `module`, `project`, `ui`). frappe-nix has `bench provision` under `bench` (frappe-nix#166), with `provision-site` kept as a deprecated alias until 2.0.0.
 -   **Status:** decided.
 -   **Check:** not yet in the base.
 
 ### Menu
 
--   **Convention:** `<p> ui`, and a bare `<p>` typed at a terminal in the dev shell, opens the shell's TUI, `lib.tui` (python/devtui), on its own interpreter (`lib.python.textual`), never the application's. Its tabs: Home (the banner's spec, with the stack's state and the site's link), Stack (process-compose's processes and logs; start, stop and restart one; start the stack detached; rebuild, which stops it and starts it again from a re-evaluated shell), Commands (the product's command tree as forms) and Store (what the product can add: OCA modules and stacks, Frappe apps). The TUI is a front end: every change is a command line of the product's own, shown before it runs and streamed while it does, so the command line stays the one implementation. Without a terminal it says so and exits 2.
--   **Adopted:** odoo-nix (`odoo ui`; the store over data/oca-modules.json and data/oca-bundles.json) and frappe-nix (`frappe ui`; in a bench, the store over frappe-nix-tools' frappe-apps.json, refreshed weekly from the marketplace registry and the frappe organisation), both _pending_.
+-   **Convention:** the umbrella's `ui` (`bench ui`, `odoo ui`) opens the dev shell's TUI, `lib.tui` (python/devtui), on its own interpreter (`lib.python.textual`), never the application's. Its tabs: Home (the banner's spec, with the stack's state and the site's link), Stack (process-compose's processes and logs; start, stop and restart one; start the stack detached; rebuild, which stops it and starts it again from a re-evaluated shell), Commands (the product's command tree as forms) and Store (what the product can add: OCA modules and stacks, Frappe apps). The TUI is a front end: every change is a command line of the product's own, shown before it runs and streamed while it does, so the command line stays the one implementation. Without a terminal it says so and exits 2. In odoo-nix a bare `odoo` at a terminal opens it too; a bare `bench` stays bench's help.
+-   **Adopted:** odoo-nix (`odoo ui`; the store over data/oca-modules.json and data/oca-bundles.json) and frappe-nix (`bench ui`; in a bench, the store over frappe-nix-tools' frappe-apps.json, refreshed weekly from the marketplace registry and the frappe organisation), both _pending_.
 -   **Status:** decided.
 -   **Check:** the base's `lib-tui` (the app driven headless against a fake process-compose); each product's `tui` drives its own spec and plugin.
 
