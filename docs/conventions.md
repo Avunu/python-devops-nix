@@ -631,7 +631,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     dependabot.development = [ { ecosystem = "uv"; directory = "/dev"; } ];
     ```
 
-    An entry listed there that the file does not have fails the check. The base runs it on itself with `prefix = "chore"`.
+    An entry listed there that the file does not have fails the check. The base runs it on itself with the default prefixes, listing its flake inputs (`nix`) and prek hook revs (`pre-commit`) as development tooling.
 
 ### Docs pipeline
 
