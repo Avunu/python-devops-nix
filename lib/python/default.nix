@@ -18,6 +18,10 @@ rec {
   # tooling: rich { python, extraPackages ? ps: [ ] }. lib/python/rich.nix.
   rich = import ./rich.nix;
 
+  # The same for interactive tooling, with textual: textual { python,
+  # extraPackages ? ps: [ ] }. lib/python/textual.nix.
+  textual = import ./textual.nix;
+
   # The stale-lock audit: { missing, message, assertCurrent } for a workspace
   # and the package set uv2nix resolved from its lock. lib/python/lock-audit.nix.
   lockAudit = import ./lock-audit.nix { inherit lib; };
