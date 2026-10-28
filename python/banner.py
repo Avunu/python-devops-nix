@@ -265,29 +265,38 @@ def lines(spec: Spec) -> list[tuple[str, str]]:
     return out
 
 
-def render(spec: Spec, console: Any = None) -> None:
-    from rich.console import Console
+def renderable(spec: Spec) -> Any:
+    """The banner as one rich renderable: the panel and the lines under it.
+    What `render` prints, and what the TUI's home tab shows (python/devtui)."""
+    from rich.console import Group
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
 
-    console = console or Console()
-    console.print()
+    parts: list[Any] = []
     if spec.commands:
         table = Table.grid(padding=(0, 2))
         table.add_column(style="bold cyan")
         table.add_column()
         for row in spec.commands:
             table.add_row(Text(row.command), Text(row.description))
-        console.print(
+        parts.append(
             Panel(
                 table, title=Text(spec.title), title_align="left", border_style="cyan"
             )
         )
     else:
-        console.print(Text(spec.title, style="bold cyan"))
-    for text, style in lines(spec):
-        console.print(Text(text, style=style or ""))
+        parts.append(Text(spec.title, style="bold cyan"))
+    parts.extend(Text(text, style=style or "") for text, style in lines(spec))
+    return Group(*parts)
+
+
+def render(spec: Spec, console: Any = None) -> None:
+    from rich.console import Console
+
+    console = console or Console()
+    console.print()
+    console.print(renderable(spec))
     console.print()
 
 

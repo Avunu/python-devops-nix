@@ -41,6 +41,7 @@ Conventions: [devguard](conventions.md#devguard).
 | --- | --- |
 | `lib.python.overrides { pkgs }`, `lib.python.packageOverrides { pkgs }` | One pyproject-nix overlay with the fixes for packages that need a system library (psycopg2, python-ldap, lxml, pycups, python-magic, pyvips, cairocffi), composed after uv2nix's; and the same fixes one by one. |
 | `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. |
+| `lib.python.textual { python, extraPackages ? ps: [ ] }` | The same with textual, for the TUI: rich.nix's fixes made once in the package set, so textual, rich, markdown-it-py and mdit-py-plugins are one copy each. |
 | `lib.python.lockAudit { workspaceRoot, hasPackage, label, … }` | `{ missing, message, assertCurrent }`: a stale `uv.lock` reported as a sentence that names the member and the requirement. |
 | `lib.python.buildDeps { pkgs, label, always ? { }, python ? … }`, `lib.python.buildDepsModule` | `<label>-build-deps {update,check}`: `[tool.uv.extra-build-dependencies]` derived from `uv.lock` (python/uv_build_deps.py). |
 | `lib.python.threadCaps` | The BLAS and OpenMP thread caps (one thread each) for the application's environment. |
@@ -61,6 +62,7 @@ Conventions: [Python environment](conventions.md#python-environment).
 | `lib.sources.command { pkgs, label, … }`, `lib.sources.module`, `lib.sources.check` | `<label>-sources enter [ROOT]`, shell entry's submodule checkout, and `<label>-sources clone`, a scaffolder's first clone (python/sources.py). |
 | `lib.dbNocow { pkgs, label, strategy, server, pidFile ? … }` | `<label>-db-nocow {prepare,migrate}`: btrfs NOCOW for the database datadir (`strategy` `"datadir"` or `"parent"`, `server` `"cmdline"` or `"pidfile"`). |
 | `lib.banner.command { pkgs, name, python ? … }`, `lib.banner.script { pkgs, banner, spec, vars ? { } }`, `lib.banner.module`, `lib.banner.check` | The shell banner, rendered with rich from a JSON spec with `@name@` placeholders filled at run time (python/banner.py). |
+| `lib.tui.command { pkgs, name, python ? …, plugins ? [ ], extraPackages ? … }`, `lib.tui.script { pkgs, tui, spec, vars ? { } }`, `lib.tui.commands { pkgs, name, python, target, cli, … }`, `lib.tui.probe { interpreter, target, cli, … }`, `lib.tui.module`, `lib.tui.check` | The shell's TUI (python/devtui), from a JSON spec as the banner is: Home (the banner, live), Stack (devenv's processes through process-compose's socket: start, stop, restart, rebuild), Commands (the product's click tree, built with the shell or probed in the application's environment, as forms) and Store (the product's plugin: its catalog and the command lines that add to the workspace). Every change it makes is a command line of the product's own, shown before it runs. `vars` are re-read whenever the stack starts. |
 
 Conventions: [Development shell](conventions.md#development-shell), [The development shell option tree](conventions.md#the-development-shell-option-tree).
 
@@ -111,4 +113,4 @@ Everything in this repository follows these rules.
 ### Python versions
 
 - **In-process code** (the devguard core, the journald core, `_hook.py`) loads into the application's own interpreter. It is stdlib-only, written to 3.11 (ruff's `target-version = "py311"` enforces the floor), and tested on every interpreter a preset names (`lib.python.interpreters`). The floor rises when the oldest preset is retired.
-- **Out-of-process tools** (agecheck, the secret scripts, the backup fetch layer, the banner, the command lines) run on one interpreter the product picks, usually its nixpkgs' `python3`, and may use rich and click from nixpkgs. In a production closure a tool runs on the application's interpreter unless there is a reason not to, to avoid a second Python.
+- **Out-of-process tools** (agecheck, the secret scripts, the backup fetch layer, the banner, the TUI, the command lines) run on one interpreter the product picks, usually its nixpkgs' `python3`, and may use rich, textual and click from nixpkgs. In a production closure a tool runs on the application's interpreter unless there is a reason not to, to avoid a second Python.
