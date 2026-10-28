@@ -4,7 +4,7 @@ description: What python-devops-nix exports, from the secrets toolkit to the Nix
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-10-23
+updated: 2026-10-28
 ---
 
 # Library reference
@@ -40,7 +40,7 @@ Conventions: [devguard](conventions.md#devguard).
 | Export | What it does |
 | --- | --- |
 | `lib.python.overrides { pkgs }`, `lib.python.packageOverrides { pkgs }` | One pyproject-nix overlay with the fixes for packages that need a system library (psycopg2, python-ldap, lxml, pycups, python-magic, pyvips, cairocffi), composed after uv2nix's; and the same fixes one by one. |
-| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. |
+| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. Its `.rich` is that rich, for a tool package to depend on. |
 | `lib.python.textual { python, extraPackages ? ps: [ ] }` | The same with textual, for the TUI: rich.nix's fixes made once in the package set, so textual, rich, markdown-it-py and mdit-py-plugins are one copy each. |
 | `lib.python.lockAudit { workspaceRoot, hasPackage, label, … }` | `{ missing, message, assertCurrent }`: a stale `uv.lock` reported as a sentence that names the member and the requirement. |
 | `lib.python.buildDeps { pkgs, label, always ? { }, python ? … }`, `lib.python.buildDepsModule` | `<label>-build-deps {update,check}`: `[tool.uv.extra-build-dependencies]` derived from `uv.lock` (python/uv_build_deps.py). |
@@ -81,6 +81,15 @@ Conventions: [Development shell](conventions.md#development-shell), [The develop
 
 Conventions: [Production](conventions.md#production), [Logging](conventions.md#logging), [nginx configuration](conventions.md#nginx-configuration).
 
+## Containers
+
+| Export | What it does |
+| --- | --- |
+| `lib.containers.mk { pkgs, label, name, user, home, nonRoot, source, version, licenses, registry ? "", revision ? null, labelOverrides ? { }, uid ? 1000, gid ? 1000 }` | The parts of an image both products write: `imageName <role>` (`[<registry>/]<name>/<role>`), `labels <role>` (the `org.opencontainers.image.*` labels), `user` (`<uid>:<gid>` with `nonRoot`, else `0:0`) and `homeEnv`, `users` (`/etc/passwd` and `/etc/group` for root, the user and nobody, named `<label>-container-users`), `writable <dirs>` and `fakeRootCommands { writable ? [ ], dirs ? [ ] }` (a world-writable `/tmp`, `dirs` created, and `writable` created and, with `nonRoot`, owned by the user), `healthcheck` and `buildImage` (`dockerTools.buildLayeredImage` with the config added to `passthru` as `imageConfig`). `label` is the product (`odoo-nix`), `name` the project the images are named after. |
+| `lib.containers.healthcheck <command>`, `lib.containers.second` | An image's `Healthcheck`: the command every 30 seconds, 10 seconds to answer, 3 retries, and failures in the first 120 seconds not counted. Durations are nanoseconds, and `second` is one. |
+
+Conventions: [Images](conventions.md#images).
+
 ## Repository
 
 | Export | What it does |
@@ -88,6 +97,14 @@ Conventions: [Production](conventions.md#production), [Logging](conventions.md#l
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval`, `nixosTest` and `checkName`, each named `<product>-<x>-check`. |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy. |
 | `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | Checks that the product's `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml` and `ruff.toml` carry this repository's settings. |
+| `lib.checks.conventions { pkgs, src, product, checks, options ? null, tenant ? null, settings ? null, commands ? null, dependabot ? { }, checkNames ? { }, envVars ? { }, optionPaths ? { }, commandFlags ? { } }` | The conformance checks, by check name, for a product to merge into its checks: `ci-pins`, `dependabot`, `check-names` and `env-vars`; with `options`, `option-paths` and `config-blocks`; and with `commands`, `command-flags`. `checks` is the set they are merged into; only its names are read. `options` is `{ shell, nixos }`, the option sets of the product's modules, and needs `tenant` and `settings`. `commands` is `{ restore, scaffolder }`, each a command's words. |
+| `lib.checks.ciPins { pkgs, src, product }` | Every `uses:` in `.github/workflows` and `.github/actions` pinned by a full commit SHA (a `docker://` image by its sha256 digest) with a trailing comment, except a local `./` path. |
+| `lib.checks.dependabot { pkgs, src, product, prefix ? "fix(deps)", developmentPrefix ? "chore(deps)", development ? [ ] }` | Every ecosystem in `.github/dependabot.yml` with the prefix, `cooldown.default-days: 7` and a `patterns: ["*"]` group. `development` lists `{ ecosystem, directory ? "/" }` entries that take `developmentPrefix`. |
+| `lib.checks.checkNames { pkgs, product, checks, exceptions ? [ ] }` | An eval check that each name in `checks` is kebab-case with no `eval-`, `module-` or `vm-` prefix. |
+| `lib.checks.envVars { pkgs, src, product, prefix ? <P>, ignore ? [ ], exceptions ? [ ] }` | Every `<P>_*` name the tree's Python, shell and Nix use as a variable is `<P>_NIX_*` or `<P>_DEVGUARD_*`, and `<P>_NIX_DEVGUARD` and `<P>_NIX_RESTORE_ALLOW_UNGUARDED` are among them. `prefix` is `product` without `-nix`, in upper case. A quoted template key and a shell script's own upper-case variable count too. The Nix list that declares `exceptions`, if `src` holds it, does not. |
+| `lib.checks.commandFlags { pkgs, product, commands, exceptions ? [ ] }` | Each of `commands`, `{ restore, scaffolder }`, run with `--help`, lists the flags the conventions name for it, at the head of an option line. Two spaces or a tab end the flags, and a metavar is in upper case or in brackets. |
+| `lib.checks.optionPaths { pkgs, product, options, tenant, exceptions ? [ ] }` | An eval check that the options the conventions name are declared and visible under `<product>.*` in `options.shell` and `services.<product>.*` in `options.nixos`, that `ports.*` are not read-only, and that nothing visible is left in `dev`. `tenant` is `{ shell, nixos }`, the default tenant's option in each. |
+| `lib.checks.configBlocks { pkgs, product, options, settings }` | An eval check that each `{ module, path, format, args ? { } }` in `settings` is a `settings` submodule whose `freeformType` is `pkgs.formats.<format> args`'s type. |
 | `.github/workflows/dependabot-auto-merge.yml` | A reusable workflow that auto-merges Dependabot pull requests by a policy the caller passes. A caller pins it by SHA. |
 | `.github/actions/pre-commit-autofix` | Runs the caller's fixers (`nix fmt`) and prek hooks over a pull request's branch, pushes what they rewrote, dispatches the workflows the push cannot start, and comments what it did. |
 | `.github/actions/nix-failures` | Markdown from the log of a failed `nix build` or `nix flake check`: each failed derivation with the end of its log, or the evaluation error. |

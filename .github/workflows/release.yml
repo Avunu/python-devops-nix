@@ -1,0 +1,133 @@
+name: release
+
+# This repository's releases (docs/releases.md), as frappe-nix and odoo-nix cut theirs, on
+# GITHUB_TOKEN alone:
+#
+#   release-please  opens or updates the release pull request on main, and on its merge
+#                   tags vX.Y.Z (version.txt, CHANGELOG.md, release-please-config.json).
+#                   `fix:` is a patch, `feat:` a minor, and a breaking change (`!` and a
+#                   BREAKING CHANGE footer) a major.
+#   dispatch-ci     a GITHUB_TOKEN push raises no event, so this dispatches check.yml on the
+#                   release pull request's branch while its `checks` check is absent on the
+#                   head. Its jobs are the checks main requires, `downstream` included, so a
+#                   release merges only once frappe-nix and odoo-nix build against it.
+#   fast-forward    moves release-<major> (release-1 for v1.* tags) to the new tag: a PATCH
+#                   with force=false, so it only ever fast-forwards, or a POST on a major's
+#                   first release, which leaves the previous major's branch where its last
+#                   release put it. It then fails unless the branch and the tag are the
+#                   same commit.
+#
+# The daily cron catches merges that raise no push (an auto-merge enabled with
+# GITHUB_TOKEN) and retries a dispatch that failed. It never runs on a pull request, so
+# every job takes the self-hosted runner.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 10
+    permissions:
+      contents: write # tags and releases
+      pull-requests: write # the release PR
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+      sha: ${{ steps.rp.outputs.sha }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        continue-on-error: true
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: main
+
+      - if: steps.rp.outcome == 'failure'
+        run: |
+          echo "::error::release-please failed. If the log says GitHub Actions is not permitted to create pull requests, allow it under Settings > Actions > General > Workflow permissions."
+          exit 1
+
+  dispatch-ci:
+    needs: release-please
+    if: always() && needs.release-please.result == 'success'
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 10
+    permissions:
+      actions: write # gh workflow run
+      checks: read # which checks already ran on the release PR's head
+      pull-requests: read # the open release PR
+    steps:
+      - name: Run check.yml on the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list -R "$REPO" --state open --json headRefName,headRefOid \
+            -q '[.[] | select(.headRefName | startswith("release-please--branches--main"))][0] // empty | "\(.headRefName) \(.headRefOid)"')
+          if [ -z "$pr" ]; then
+            echo "no open release PR"
+            exit 0
+          fi
+          read -r branch sha <<<"$pr"
+          runs=$(gh api "repos/$REPO/commits/$sha/check-runs?check_name=checks" -q .total_count)
+          if [ "$runs" = 0 ]; then
+            echo "dispatching check.yml on $branch ($sha)"
+            gh workflow run check.yml -R "$REPO" --ref "$branch"
+          else
+            echo "checks already ran on $sha"
+          fi
+
+  fast-forward:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 10
+    permissions:
+      contents: write # move release-<major>
+    steps:
+      - name: Fast-forward release-<major> to the new tag, and check it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.release-please.outputs.sha }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release-please's tag ${TAG@Q} is not vX.Y.Z"
+            exit 1
+          fi
+          major="${TAG#v}"
+          major="${major%%.*}"
+          branch="release-$major"
+          tagged=$(gh api "repos/$REPO/commits/$TAG" -q .sha)
+          if [ "$tagged" != "$SHA" ]; then
+            echo "::error::$TAG is $tagged, not release-please's $SHA"
+            exit 1
+          fi
+          if gh api "repos/$REPO/git/ref/heads/$branch" --silent 2>/dev/null; then
+            echo "fast-forwarding $branch to $TAG ($SHA)"
+            gh api -X PATCH "repos/$REPO/git/refs/heads/$branch" -f sha="$SHA" -F force=false --silent
+          else
+            echo "creating $branch at $TAG ($SHA)"
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$branch" -f sha="$SHA" --silent
+          fi
+          now=$(gh api "repos/$REPO/git/ref/heads/$branch" -q .object.sha)
+          if [ "$now" != "$SHA" ]; then
+            echo "::error::$branch is $now after the update, not $TAG ($SHA)"
+            exit 1
+          fi
