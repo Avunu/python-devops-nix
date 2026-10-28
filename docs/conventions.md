@@ -529,7 +529,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 
 ### CI
 
--   **Convention:** every action is pinned by full commit SHA, with the version in a trailing comment. A `lint` job runs prek over the whole tree. A `flake` job runs `nix flake check` and builds the checks; VM tests may run in a job of their own. The docs are checked by `Avunu/site-docs`'s `check-docs.yml` ([Docs pipeline](#docs-pipeline)). Dependabot pull requests auto-merge through this repository's reusable workflow, called pinned the same way. This repository has no release yet, so the pin is a commit of `main`, and Dependabot's github-actions entry moves it:
+-   **Convention:** every action is pinned by full commit SHA, with the version in a trailing comment. A `lint` job runs prek over the whole tree. A `flake` job runs `nix flake check` and builds the checks; VM tests may run in a job of their own. The docs are checked by `Avunu/site-docs`'s `check-docs.yml` ([Docs pipeline](#docs-pipeline)). Dependabot pull requests auto-merge through this repository's reusable workflow, called pinned the same way. Until this repository's first release, the pin is a commit of `main`; after it, a release's commit with its version in the comment ([Releases](releases.md#following-a-release)). Dependabot's github-actions entry moves it:
 
     ```yaml
     on: pull_request
@@ -621,7 +621,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 -   **Adopted:**
     -   frappe-nix#159: nix, pre-commit and github-actions with `fix(deps)`, and uv in `/dev` (its own lint and type-check tools, the `dev-tools` group) with `chore(deps)`. Every ecosystem has the cooldown.
     -   odoo-nix#78: nix (with the `ocb` and `odoo-ls` groups), pre-commit and github-actions, all `fix(deps)`, all with the cooldown. It has no uv entry, because its template's lock cannot be resolved without a project.
-    -   This repository, which has no releases, uses `chore`.
+    -   This repository, which releases from v1.0.0 ([Releases](releases.md)): github-actions with `fix(deps)`, because the reusable workflow runs those actions in the products; nix and pre-commit with `chore(deps)`, because both products `follows` its nixpkgs and flake-parts and compare `.pre-commit-config.yaml` without `rev`, so those bumps ship nothing.
 -   **Status:** decided.
 -   **Check:** not yet in the base: a check over `.github/dependabot.yml` for the prefix and the cooldown ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 

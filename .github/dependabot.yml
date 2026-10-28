@@ -5,9 +5,14 @@ version: 2
 # .github/workflows/auto-merge.yml, which calls the reusable dependabot-auto-merge.yml).
 #
 # The shape both products follow (docs/conventions.md, Dependabot): a seven-day cooldown
-# and one group per ecosystem, so each ecosystem is one pull request. The products use
-# the `fix(deps)` prefix, so a bump cuts a patch release; this repository has no
-# releases, so its bumps are `chore`.
+# and one group per ecosystem, so each ecosystem is one pull request.
+#
+# Commit prefixes (docs/releases.md): `fix(deps)` for what ships to the products, so a
+# bump cuts a patch release; `chore(deps)` for what only this repository runs, which
+# releases nothing. The products' flake inputs `follows` this flake's nixpkgs and
+# flake-parts, so its own flake.lock reaches no product, and their copies of
+# .pre-commit-config.yaml are compared without `rev`. The action pins do ship: the
+# reusable dependabot-auto-merge.yml runs them in the products.
 updates:
   # Nix flake inputs: nixpkgs and flake-parts. Dependabot reads flake.lock directly.
   # Weekly, not daily: nixpkgs tracks nixos-unstable and moves constantly. Grouped so
@@ -19,7 +24,7 @@ updates:
     cooldown:
       default-days: 7
     commit-message:
-      prefix: chore
+      prefix: "chore(deps)"
     groups:
       nix:
         patterns: ["*"]
@@ -32,7 +37,7 @@ updates:
     cooldown:
       default-days: 7
     commit-message:
-      prefix: chore
+      prefix: "chore(deps)"
     groups:
       pre-commit-hooks:
         patterns: ["*"]
@@ -46,7 +51,7 @@ updates:
     cooldown:
       default-days: 7
     commit-message:
-      prefix: chore
+      prefix: "fix(deps)"
     groups:
       github-actions:
         patterns: ["*"]

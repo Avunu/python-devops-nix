@@ -5,6 +5,7 @@ Shared building blocks and conventions for Avunu's Nix packaging of Python appli
 -   [Documentation](docs/README.md)
 -   [Conventions](docs/conventions.md): how both products name and do the jobs they share.
 -   [Library reference](docs/library.md): what the flake exports.
+-   [Releases](docs/releases.md): versions, breaking changes, and how the products follow a release.
 
 ## Development
 
