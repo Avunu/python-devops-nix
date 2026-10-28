@@ -587,10 +587,10 @@ let
     # `--help` in the build sandbox, lists the flags the conventions name for
     # it. `commands` is { restore, scaffolder }, each the command's words, e.g.
     # { restore = [ (lib.getExe' cli "odoo") "db" "restore" ]; scaffolder =
-    # lib.getExe odoo-init; }. A command that needs its shell's environment to
-    # print its help is a wrapper that sets it. `exceptions` lists flags, as
-    # "<command> <flag>" ("restore --no-force"), that may be missing; one that
-    # is not fails the check.
+    # lib.getExe odoo-init; }. The sandbox has no dev shell, so each command
+    # prints its help before it reads its configuration. `exceptions` lists
+    # flags, as "<command> <flag>" ("restore --no-force"), that may be missing;
+    # one that is not fails the check.
     commandFlags =
       {
         pkgs,
