@@ -178,10 +178,10 @@ Both products build their environment the same way: pyproject-nix, uv2nix and py
 
 ### Tool interpreter with rich
 
--   **Convention:** a product's own tooling (a banner, a command line) runs on `lib.python.rich { python, extraPackages ? ps: [ ] }`: nixpkgs' rich, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped. It is never added to the application's environment.
--   **Adopted:** odoo-nix#59 (its command line, scaffolder and banner). frappe-nix's banner runs on it through `lib.banner`, but frappe-nix-tools, its command-line package, is still built on nixpkgs' plain rich (`lib/standards/package.nix`).
--   **Status:** partial: frappe-nix's tooling ([frappe-nix#179](https://github.com/Avunu/frappe-nix/issues/179)).
--   **Check:** the base's `lib-python-rich` builds it on every preset interpreter, with rich's suite.
+-   **Convention:** a product's own tooling (a banner, a command line) runs on `lib.python.rich { python, extraPackages ? ps: [ ] }`: nixpkgs' rich, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped. Tooling built as a Python package of its own depends on that rich (`(lib.python.rich { python }).rich`), so every interpreter that holds the package gets it. This rich is never added to the application's environment.
+-   **Adopted:** odoo-nix#59 (its command line, scaffolder and banner) and frappe-nix#205 (frappe-nix-tools, its command-line package). frappe-nix's banner already ran on it through `lib.banner`.
+-   **Status:** decided.
+-   **Check:** the base's `lib-python-rich` builds it on every preset interpreter, with rich's suite. frappe-nix's `standards-cli` fails evaluation when frappe-nix-tools' rich is not this one.
 
 ### Stale lock
 
