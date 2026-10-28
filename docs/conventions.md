@@ -593,7 +593,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     | File | A setting is | Not compared |
     | --- | --- | --- |
     | `statix.toml`, `ruff.toml` | each key, by its path through the TOML tables | — |
-| `committed.toml` | each key, as in `ruff.toml`; and each scope in `allowed_scopes`, which the product's list must have, in any order, beside its own | — |
+    | `committed.toml` | each key, as in `ruff.toml`; and each scope in `allowed_scopes`, which the product's list must have, in any order, beside its own | — |
     | `.editorconfig` | each key under a section (`[*.py] indent_style`), and the preamble's `root` | — |
     | `.pre-commit-config.yaml` | each hook, by repository URL and hook `id` (with its `name` where the base gives one), and each key the base sets on it (`args`) | `rev`, which each repository's Dependabot moves on its own schedule; the top-level `exclude` and other keys, which name the repository's own paths |
 
