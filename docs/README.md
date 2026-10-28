@@ -15,5 +15,6 @@ It is for the maintainers of those products. If you deploy or develop with frapp
 
 -   [Conventions](conventions.md): how both products name and do the jobs they share, and where each stands. Read it before adding an option, flag, environment variable or command that the other product also has.
 -   [Library reference](library.md): what the flake exports, and the design rules it follows.
+-   [Releases](releases.md): how this repository is versioned, what a breaking change is, and how a product follows a release.
 
 Open work is tracked in the [issues](https://github.com/Avunu/python-devops-nix/issues).

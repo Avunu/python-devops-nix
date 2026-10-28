@@ -14,7 +14,7 @@ name: Dependabot auto-merge
 #     pull-requests: write
 #   jobs:
 #     auto-merge:
-#       uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # v0.x.y
+#       uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # vX.Y.Z
 #       # with:
 #       #   update-types: major minor patch other
 #       #   exclude-ecosystems: github_actions
