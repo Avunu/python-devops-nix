@@ -240,27 +240,29 @@ let
       };
 
       # The option, or tree of options, at `path` under `node`, through
-      # submodules; null if there is none. `<name>` stands for the names of an
-      # attribute set of submodules and `*` for the items of a list of them, as
-      # the manual writes them.
+      # submodules; null if there is none. A path writes the names of an
+      # attribute set and the items of a list as the manual does: `<name>` (or
+      # the type's own placeholder) and `*`. The walk reads them from the
+      # sub-options' `loc`, so it skips none and accepts no other.
       find =
         node: path:
         if path == [ ] then
           node
         else if lib.isOption node then
           let
-            placeholder =
-              {
-                attrsOf = "<name>";
-                lazyAttrsOf = "<name>";
-                listOf = "*";
-              }
-              .${node.type.name} or null;
+            sub = node.type.getSubOptions node.loc;
+            # Each submodule declares `_module.args`, whose loc is the
+            # submodule's own followed by "_module" "args".
+            within =
+              if sub ? _module.args then
+                lib.sublist (lib.length node.loc) (
+                  lib.length sub._module.args.loc - 2 - lib.length node.loc
+                ) sub._module.args.loc
+              else
+                [ ];
           in
-          if placeholder == null then
-            find (node.type.getSubOptions node.loc) path
-          else if lib.head path == placeholder then
-            find (node.type.getSubOptions node.loc) (lib.tail path)
+          if lib.take (lib.length within) path == within then
+            find sub (lib.drop (lib.length within) path)
           else
             null
         else if builtins.isAttrs node && node ? ${lib.head path} then
@@ -268,8 +270,21 @@ let
         else
           null;
 
-      # An alias or a removed option is declared too, but hidden.
+      # Whether the manual shows the option. A removed option is hidden, and so
+      # is an alias made by mkRenamedOptionModule.
       shown = opt: (opt.visible or true) != false && !(opt.internal or false);
+      # The target of an alias, hidden or not (mkAliasOptionModule's is
+      # visible), or null: lib.doRename describes each as "Alias of" it.
+      aliasOf =
+        opt:
+        let
+          target =
+            if builtins.isString (opt.description or null) then
+              builtins.match "Alias of \\{option}`(.*)`\\." opt.description
+            else
+              null;
+        in
+        if target == null then null else lib.head target;
 
       # "missing" or why the option at `path` is not the convention's, or null.
       declared =
@@ -279,16 +294,23 @@ let
         in
         if opt == null || !lib.isOption opt then
           "missing"
+        else if aliasOf opt != null then
+          "only an alias of ${aliasOf opt}"
         else if !shown opt then
-          "only an alias or a removed option, which is hidden"
+          "hidden (a removed option, or visible = false or internal)"
         else
           null;
 
-      # The lines of an eval check, from { <option path> = { problem, section } }
-      # less `exceptions`, which fail once they are no longer needed.
+      # The lines of an eval check, from a list of { <option path> = { problem,
+      # section }; } less `exceptions`, which fail once they are no longer
+      # needed. A path two sections name is one line that names both.
       report =
-        found: exceptions:
+        problems: exceptions:
         let
+          found = lib.zipAttrsWith (_: ps: {
+            inherit (lib.head ps) problem;
+            section = lib.concatStringsSep ", " (lib.unique (map (p: p.section) ps));
+          }) problems;
           broken = lib.filterAttrs (path: _: !(lib.elem path exceptions)) found;
           stale = lib.filter (path: !(found ? ${path})) exceptions;
         in
@@ -406,35 +428,34 @@ let
             }
           ];
 
-          # { <option path> = { problem, section } } for the required options.
-          problems = lib.listToAttrs (
+          # { <option path> = { problem, section }; } for each required option
+          # that is not as the conventions have it.
+          problems = lib.concatMap (
+            entry:
+            let
+              module = entry.module or "shell";
+            in
             lib.concatMap (
-              entry:
+              relative:
               let
-                module = entry.module or "shell";
+                path = (roots product).${module} ++ lib.splitString "." relative;
+                missing = declared options.${module} path;
+                problem =
+                  if missing != null then
+                    missing
+                  else if entry.writable or false && (find options.${module} path).readOnly or false then
+                    "read-only, so lib.mkForce cannot set it"
+                  else
+                    null;
               in
-              lib.concatMap (
-                relative:
-                let
-                  path = (roots product).${module} ++ lib.splitString "." relative;
-                  missing = declared options.${module} path;
-                  problem =
-                    if missing != null then
-                      missing
-                    else if entry.writable or false && (find options.${module} path).readOnly or false then
-                      "read-only, so lib.mkForce cannot set it"
-                    else
-                      null;
-                in
-                lib.optional (problem != null) (
-                  lib.nameValuePair (lib.showOption path) {
-                    inherit problem;
-                    inherit (entry) section;
-                  }
-                )
-              ) entry.paths
-            ) required
-          );
+              lib.optional (problem != null) {
+                ${lib.showOption path} = {
+                  inherit problem;
+                  inherit (entry) section;
+                };
+              }
+            ) entry.paths
+          ) required;
 
           # Whatever is still visible in the removed `dev` tree.
           dev =
@@ -447,15 +468,12 @@ let
               lib.filter shown (if lib.isOption node then [ node ] else lib.collect lib.isOption node);
           lines = report (
             problems
-            // lib.listToAttrs (
-              map (
-                opt:
-                lib.nameValuePair (lib.showOption opt.loc) {
-                  problem = "declared in the dev tree, which the conventions removed";
-                  section = tree;
-                }
-              ) dev
-            )
+            ++ map (opt: {
+              ${lib.showOption opt.loc} = {
+                problem = "declared in the dev tree, which the conventions removed";
+                section = tree;
+              };
+            }) dev
           ) exceptions;
         in
         assert lib.assertMsg (options ? shell && options ? nixos)
@@ -527,46 +545,36 @@ let
   # Every conformance check a product registers, by check name, from one set of
   # arguments. A later family adds its checks here. The names depend on which
   # arguments are given and never on their values, so `checks` can be the set
-  # this one is merged into.
+  # this one is merged into: `option-paths` and `config-blocks` come with
+  # `options`, which needs `tenant` and `settings` too.
   conventions =
-    {
+    args@{
       pkgs,
       src,
       product,
       checks,
-      options,
-      tenant,
-      settings,
       checkNames ? { },
       dependabot ? { },
       optionPaths ? { },
+      options ? null,
+      tenant ? null,
+      settings ? null,
     }:
     let
       tree = { inherit pkgs src product; };
+      modular = { inherit pkgs product options; };
     in
+    assert lib.assertMsg (
+      args ? options -> args ? tenant && args ? settings
+    ) "lib.checks.conventions: options needs tenant and settings too";
     {
       ci-pins = repository.ciPins tree;
       dependabot = repository.dependabot (tree // dependabot);
       check-names = repository.checkNames ({ inherit pkgs product checks; } // checkNames);
-      option-paths = modules.optionPaths (
-        {
-          inherit
-            pkgs
-            product
-            options
-            tenant
-            ;
-        }
-        // optionPaths
-      );
-      config-blocks = modules.configBlocks {
-        inherit
-          pkgs
-          product
-          options
-          settings
-          ;
-      };
+    }
+    // lib.optionalAttrs (args ? options) {
+      option-paths = modules.optionPaths (modular // { inherit tenant; } // optionPaths);
+      config-blocks = modules.configBlocks (modular // { inherit settings; });
     };
 in
 {

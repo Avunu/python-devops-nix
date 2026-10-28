@@ -73,8 +73,8 @@ let
       inherit (stub) product;
     };
 
-  # The stub's declarations with the option at `path` removed, or with
-  # `value` set at it.
+  # The stub's declarations with the option at `path` removed, with `value`
+  # set at it, or with `value` in its place.
   without =
     path:
     lib.updateManyAttrsByPath [
@@ -84,6 +84,14 @@ let
       }
     ] stub.declarations;
   declaring = path: value: lib.recursiveUpdate stub.declarations (lib.setAttrByPath path value);
+  replacing =
+    path: value:
+    lib.updateManyAttrsByPath [
+      {
+        inherit path;
+        update = _: value;
+      }
+    ] stub.declarations;
   withOptions = declared: stub.optionsOf declared stub.hidden;
   # A settings option of `type`, where the stub's shell has its own.
   settingsOf =
@@ -103,6 +111,61 @@ let
         )
     );
   shellSettings = lib.last stub.settings;
+  # The stub's NixOS `sites`, its per-site submodule in `wrap`'s type, and its
+  # settings block at `path` under it.
+  sitesAs =
+    wrap: path:
+    blocks
+      (withOptions (
+        replacing
+          [
+            "nixos"
+            "services"
+            "stub"
+            "sites"
+          ]
+          (
+            lib.mkOption {
+              type = wrap stub.declarations.nixos.services.stub.sites.type.nestedTypes.elemType;
+              default = { };
+            }
+          )
+      ))
+      [
+        ((lib.head stub.settings) // { path = [ "sites" ] ++ path ++ [ "settings" ]; })
+      ];
+  # The stub's shell with `watch.python` only as an alias of `legacy.dev`.
+  aliased =
+    alias:
+    paths (stub.optionsOf
+      (lib.recursiveUpdate
+        (without [
+          "shell"
+          "stub"
+          "watch"
+          "python"
+        ])
+        {
+          shell.stub.legacy.dev = lib.mkOption { type = lib.types.bool; };
+        }
+      )
+      {
+        shell = [
+          (alias
+            [
+              "stub"
+              "watch"
+              "python"
+            ]
+            [
+              "stub"
+              "legacy"
+              "dev"
+            ]
+          )
+        ];
+      }
+    ) { };
 
   meta = stub.checks.eval "conventions-names" {
     expected = {
@@ -120,6 +183,23 @@ let
     );
   };
 
+  # Without `options`, the checks of the repository alone.
+  alone = stub.checks.eval "conventions-names-alone" {
+    expected = [
+      "check-names"
+      "ci-pins"
+      "dependabot"
+    ];
+    actual = lib.attrNames (
+      checks.conventions {
+        inherit pkgs;
+        inherit (stub) product;
+        src = stub.tree;
+        checks = { };
+      }
+    );
+  };
+
   mk = checks.mk {
     inherit pkgs;
     product = "python-devops-nix";
@@ -127,6 +207,7 @@ let
 in
 mk.script "lib-conventions" { } ''
   echo "the entry point names its checks: ${meta}"
+  echo "and only the repository's without options: ${alone}"
   echo "a conforming product passes: ${registered.ci-pins} ${registered.dependabot} ${registered.check-names}"
   echo "and its modules: ${registered.option-paths} ${registered.config-blocks}"
 
@@ -263,9 +344,10 @@ mk.script "lib-conventions" { } ''
     ]
   }
 
-  # Option paths: a missing option and a missing tree, the new name kept only
-  # as an alias of the old, a read-only port, a visible option in the dev tree,
-  # the NixOS module's own and a tenant under another word.
+  # Option paths: a missing option and a missing tree, which two sections
+  # name, the new name kept only as an alias of the old, hidden or not, an
+  # internal option, a read-only port, a visible option in the dev tree, the
+  # NixOS module's own and tenants under other words.
   ${stub.expectFailure
     (paths (withOptions (without [
       "shell"
@@ -285,45 +367,20 @@ mk.script "lib-conventions" { } ''
       "jobs"
     ])) { })
     [
-      "stub.devguard.jobs.enable: missing (Job denylist)"
+      "stub.devguard.jobs.enable: missing (Job denylist, Shared guard names)"
       "stub.devguard.jobs.extraBlocked: missing (Job denylist)"
     ]
   }
+  ${stub.expectFailure (aliased lib.mkRenamedOptionModule) [
+    "stub.watch.python: only an alias of stub.legacy.dev (The development shell option tree)"
+  ]}
+  ${stub.expectFailure (aliased lib.mkAliasOptionModule) [
+    "stub.watch.python: only an alias of stub.legacy.dev (The development shell option tree)"
+  ]}
   ${stub.expectFailure
-    (paths (stub.optionsOf
-      (lib.recursiveUpdate
-        (without [
-          "shell"
-          "stub"
-          "watch"
-          "python"
-        ])
-        {
-          shell.stub.legacy.dev = lib.mkOption { type = lib.types.bool; };
-        }
-      )
-      {
-        shell = [
-          (lib.doRename {
-            from = [
-              "stub"
-              "watch"
-              "python"
-            ];
-            to = [
-              "stub"
-              "legacy"
-              "dev"
-            ];
-            visible = false;
-            warn = false;
-            use = lib.id;
-          })
-        ];
-      }
-    ) { })
+    (paths (withOptions (declaring [ "shell" "stub" "mailpit" "host" ] { internal = true; })) { })
     [
-      "stub.watch.python: only an alias or a removed option, which is hidden (The development shell option tree)"
+      "stub.mailpit.host: hidden (a removed option, or visible = false or internal) (The development shell option tree)"
     ]
   }
   ${stub.expectFailure
@@ -349,13 +406,15 @@ mk.script "lib-conventions" { } ''
         "package"
       ]))
       {
-        tenant = stub.tenant // {
+        tenant = {
+          shell = "dbName";
           nixos = "domain";
         };
       }
     )
     [
       "services.stub.package: missing (NixOS module path)"
+      "stub.dbName: missing (Identity options)"
       "services.stub.domain: missing (Identity options)"
     ]
   }
@@ -438,6 +497,37 @@ mk.script "lib-conventions" { } ''
     ])
     [
       "services.stub.sites.settings: missing"
+    ]
+  }
+  # A path names a list's items `*` and an attribute set's names as its type
+  # does, through nullOr too, and no other way.
+  echo "the placeholders pass: ${sitesAs lib.types.listOf [ "*" ]} ${
+    sitesAs lib.types.lazyAttrsOf [ "<name>" ]
+  } ${sitesAs (t: lib.types.nullOr (lib.types.attrsOf t)) [ "<name>" ]} ${
+    sitesAs (
+      elemType:
+      lib.types.attrsWith {
+        inherit elemType;
+        placeholder = "fqdn";
+      }
+    ) [ "<fqdn>" ]
+  }"
+  ${stub.expectFailure (sitesAs lib.types.listOf [ "<name>" ]) [
+    "services.stub.sites.<name>.settings: missing"
+  ]}
+  ${stub.expectFailure (sitesAs (t: lib.types.nullOr (lib.types.attrsOf t)) [ ]) [
+    "services.stub.sites.settings: missing"
+  ]}
+  ${stub.expectFailure
+    (sitesAs (
+      elemType:
+      lib.types.attrsWith {
+        inherit elemType;
+        placeholder = "fqdn";
+      }
+    ) [ "<name>" ])
+    [
+      "services.stub.sites.<name>.settings: missing"
     ]
   }
   ${stub.expectFailure (blocks stub.options [ ]) [
