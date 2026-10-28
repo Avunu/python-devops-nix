@@ -51,6 +51,21 @@ checks.script "lib-shared-config" { } ''
     ]
   }
 
+  # A shared scope dropped, a commit rule changed, and a commit type added:
+  # only the scope list is a set the product may extend.
+  ${stub.expectFailure
+    (shared (stub.variant "committed" ''
+      sed -i -e '/^\t"tui",$/d' -e 's/^subject_length = 100$/subject_length = 72/' \
+        -e 's/^allowed_types = \[$/&\n\t"wip",/' committed.toml
+    '') { })
+    [
+      "committed.toml: allowed_scopes: missing \"tui\""
+      "committed.toml: subject_length: 72 (base: 100)"
+      "committed.toml: allowed_types: [\"wip\", \"build\""
+      "3 difference(s) from the base's copies"
+    ]
+  }
+
   ${stub.expectFailure (shared (stub.variant "no-ruff" "rm ruff.toml") { }) [
     "ruff.toml: missing from the product"
   ]}

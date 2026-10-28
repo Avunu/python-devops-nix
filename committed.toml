@@ -1,0 +1,107 @@
+# The commit rules frappe-nix and odoo-nix share, checked by `committed` in each
+# product's pr-policy job (docs/conventions.md, Commits). Each product keeps its own
+# copy at its root, where committed reads it, and lib.checks.sharedConfig compares
+# that copy with this one (docs/conventions.md, Repository files).
+#
+# Conventional commits: `fix:` makes a patch release, `feat:` a minor one. The
+# products' pr-policy refuses `!` and BREAKING CHANGE: a major release is a
+# deliberate `Release-As: <N>.0.0` footer. This repository releases with
+# release-please from v1.0.0 (docs/releases.md) and has no pr-policy job; its own
+# commits use these types and scopes, and mark a breaking change with `!`.
+style = "conventional"
+allowed_types = [
+  "build",
+  "chore",
+  "ci",
+  "docs",
+  "feat",
+  "fix",
+  "perf",
+  "refactor",
+  "revert",
+  "style",
+  "test",
+  "deprecate",
+]
+# A scope is optional; when there is one it names a part of the product. This is the
+# one list for both products: every scope frappe-nix and odoo-nix have used, and the
+# ones this repository's commits use, so a scope one repository coins is not refused
+# in the other. A product's copy lists every scope here and may add its own: the
+# check compares this list as a set, not whole. `deps` is Dependabot's and `main` is
+# release-please's (`chore(main): release X.Y.Z`). committed compares the text
+# between the parentheses whole, so a commit that names two areas
+# (`fix(nixos,runtime): ...`) needs that pair listed as written.
+allowed_scopes = [
+  "addons",
+  "app-mode",
+  "app-standards",
+  "app-tools",
+  "apps",
+  "apps-report",
+  "assets",
+  "backup-fetch",
+  "backups",
+  "banner",
+  "bench",
+  "bench-get-app",
+  "bench-update",
+  "build",
+  "ci",
+  "cli",
+  "containers",
+  "conventions",
+  "deps",
+  "dev",
+  "dev_mailcatch",
+  "devenv",
+  "devguard",
+  "docs",
+  "flake",
+  "frappe-test",
+  "gate",
+  "init",
+  "journald",
+  "lock",
+  "mailpit",
+  "main",
+  "migrate",
+  "module",
+  "nixos",
+  "nixos,runtime",
+  "node",
+  "node-locks",
+  "node-verify",
+  "oca_sources",
+  "odoo-ls",
+  "overrides",
+  "policy",
+  "ports",
+  "presets",
+  "provision",
+  "python",
+  "ratchet",
+  "release",
+  "relock",
+  "restore",
+  "runtime",
+  "scaffold",
+  "scripts",
+  "secrets",
+  "shell",
+  "sources",
+  "standards",
+  "submodules",
+  "sync",
+  "tests",
+  "tooling",
+  "tui",
+  "update",
+]
+subject_length = 100
+line_length = 0
+subject_capitalized = false
+subject_not_punctuated = true
+imperative_subject = false
+no_wip = true
+no_fixup = true
+merge_commit = false
