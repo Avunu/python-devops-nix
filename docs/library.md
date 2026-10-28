@@ -40,7 +40,7 @@ Conventions: [devguard](conventions.md#devguard).
 | Export | What it does |
 | --- | --- |
 | `lib.python.overrides { pkgs }`, `lib.python.packageOverrides { pkgs }` | One pyproject-nix overlay with the fixes for packages that need a system library (psycopg2, python-ldap, lxml, pycups, python-magic, pyvips, cairocffi), composed after uv2nix's; and the same fixes one by one. |
-| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. |
+| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. Its `.rich` is that rich, for a tool package to depend on. |
 | `lib.python.textual { python, extraPackages ? ps: [ ] }` | The same with textual, for the TUI: rich.nix's fixes made once in the package set, so textual, rich, markdown-it-py and mdit-py-plugins are one copy each. |
 | `lib.python.lockAudit { workspaceRoot, hasPackage, label, … }` | `{ missing, message, assertCurrent }`: a stale `uv.lock` reported as a sentence that names the member and the requirement. |
 | `lib.python.buildDeps { pkgs, label, always ? { }, python ? … }`, `lib.python.buildDepsModule` | `<label>-build-deps {update,check}`: `[tool.uv.extra-build-dependencies]` derived from `uv.lock` (python/uv_build_deps.py). |
