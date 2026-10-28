@@ -3,8 +3,11 @@
 # the user it runs as with /etc/passwd and /etc/group for it, the healthcheck,
 # and the directories it writes. frappe-nix's modules/containers.nix
 # (frappe-nix#157) and odoo-nix's (odoo-nix#81), with the product's names
-# passed in. Each piece gives what the products' own copies give, so adopting
-# it changes nothing in an image (checks/lib-containers.nix holds both copies).
+# passed in. Each piece gives what the products' own copies give. Adopting it
+# changes nothing in frappe-nix's images. In odoo-nix's it changes only the
+# fakeRootCommands text (chown -Rh for chown -R, and the directories listed),
+# not the layers. checks/lib-containers.nix holds both products' users and
+# frappe-nix's fakeRootCommands.
 #
 #   containers.mk {
 #     inherit pkgs;
@@ -37,11 +40,12 @@
 #                      Every image carries them, nonRoot or not.
 #   healthcheck test   the image's Healthcheck (below).
 #   writable dirs      fakeRootCommands lines that create `dirs` and, with
-#                      nonRoot, own them by the user.
+#                      nonRoot, own them by the user. "" for no dirs.
 #   fakeRootCommands { writable ? [ ], dirs ? [ ] }
 #                      a world-writable /tmp, `dirs` created, and `writable`.
 #   buildImage args    dockerTools.buildLayeredImage, with the image config as
-#                      passthru.imageConfig, so a test reads it without a build.
+#                      passthru.imageConfig (added to args.passthru), so a test
+#                      reads it without a build.
 { lib }:
 
 rec {
@@ -93,10 +97,12 @@ rec {
       # Created and (with nonRoot) owned at build time. A fresh named volume
       # mounted over one of them takes that ownership. -h: a link into the
       # store is re-owned itself, never followed.
-      ownWritable = dirs: ''
-        mkdir -p ${toString dirs}
-        ${lib.optionalString nonRoot "chown -Rh ${owner} ${toString dirs}"}
-      '';
+      ownWritable =
+        dirs:
+        lib.optionalString (dirs != [ ]) ''
+          mkdir -p ${toString dirs}
+          ${lib.optionalString nonRoot "chown -Rh ${owner} ${toString dirs}"}
+        '';
     in
     {
       inherit healthcheck imageName;
@@ -142,10 +148,18 @@ rec {
         ''
           mkdir -p ${toString ([ "/tmp" ] ++ dirs)}
           chmod 1777 /tmp
-          ${lib.optionalString (writable != [ ]) (ownWritable writable)}
+          ${ownWritable writable}
         '';
 
       buildImage =
-        args: pkgs.dockerTools.buildLayeredImage (args // { passthru.imageConfig = args.config; });
+        args:
+        pkgs.dockerTools.buildLayeredImage (
+          args
+          // {
+            passthru = (args.passthru or { }) // {
+              imageConfig = args.config;
+            };
+          }
+        );
     };
 }

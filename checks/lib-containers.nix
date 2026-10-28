@@ -5,7 +5,9 @@
 # before adopting this one (frappe-nix bce4bf4 and odoo-nix 4571f74,
 # modules/containers.nix): the users derivation is the same derivation, and
 # frappe-nix's fakeRootCommands the same text, so adoption changes nothing in
-# an image. Only the passwd and group files are built.
+# frappe-nix's images. odoo-nix's fakeRootCommands text differs (chown -R, and
+# its directories), so it is not held here. Only the passwd and group files
+# are built.
 { pkgs, self }:
 let
   inherit (pkgs) lib;
@@ -237,6 +239,35 @@ let
         nonRoot = libFakeRoot true;
         root = libFakeRoot false;
       };
+    };
+    # No directories, no lines: a bare `mkdir -p` would fail the script.
+    writable-empty = {
+      expected = {
+        nonRoot = "";
+        root = "";
+      };
+      actual = {
+        nonRoot = nonRoot.containers.writable [ ];
+        root = root.containers.writable [ ];
+      };
+    };
+    # The caller's passthru is kept, with imageConfig added to it.
+    build-image-passthru = {
+      expected = {
+        foo = 1;
+        imageConfig.User = "0:0";
+      };
+      actual =
+        let
+          image = root.containers.buildImage {
+            name = "acme/extra";
+            config.User = "0:0";
+            passthru.foo = 1;
+          };
+        in
+        {
+          inherit (image.passthru) foo imageConfig;
+        };
     };
     # The stub images themselves evaluate, with what they are built from.
     image-evaluates = {
