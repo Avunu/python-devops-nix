@@ -43,7 +43,9 @@ bf() {
   OUT="$("$BF" "$@" 2>"$WORK/.err")" && RC=0 || RC=$?
   ERR="$(cat "$WORK/.err")"
 }
-errsays() { printf '%s' "$ERR" | grep -q -- "$1"; }
+# No pipe here either: `printf … | grep -q` fails a match whenever grep exits
+# before printf's last write (bash flushes per line), which then dies of SIGPIPE.
+errsays() { [[ $ERR == *"$1"* ]]; }
 
 # ── fixture ───────────────────────────────────────────────────────────────
 SRC="$WORK/bucket"
