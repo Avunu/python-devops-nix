@@ -10,15 +10,15 @@ updated: 2026-10-28
 
 How frappe-nix and odoo-nix name and do the jobs they both do. Where the two products do the same job, they do it the same way and under the same names. This page records one decision per job and where each product stands on it.
 
-It is the record of what the products do on their `main` branches as of 2026-10-22. odoo-nix v1.1.0 shipped all of it; frappe-nix v1.2.0 and v1.2.1 shipped most of it, and the rest lands in frappe-nix's next release. It was first drafted on 2026-10-16, and what is left is tracked in each repository's issues. A pull request that changes a convention, or a product's adoption of one, updates this page.
+It is the record of what the products do on their `main` branches as of 2026-10-28. odoo-nix v2.0.0 shipped all of it. frappe-nix's `main` has all of it, with its 2.0.0 changes (frappe-nix#212), which ship in its next release. It was first drafted on 2026-10-16, and what is left is tracked in each repository's issues. A pull request that changes a convention, or a product's adoption of one, updates this page.
 
 ## How to read this
 
 Each section gives:
 
 -   **Convention**: what both products do.
--   **Adopted**: where each product stands, with the pull request that adopted it where that helps. `frappe-nix#N` and `odoo-nix#N` are the products' pull requests; `#N` is this repository's. A linked number is an open issue. A pull request still open on 2026-10-22 is marked _pending_.
--   **Status**: _decided_ (both products follow it, or are bound to), _partial_ (one product, or part of the convention, is not there yet; the Adopted line says what), or _deferred to 2.0.0_ (shipped opt-in through 1.x and the default from the product's 2.0.0).
+-   **Adopted**: where each product stands, with the pull request that adopted it where that helps. `frappe-nix#N` and `odoo-nix#N` are the products' pull requests; `#N` is this repository's. A linked number is an open issue. A pull request still open on 2026-10-28 is marked _pending_.
+-   **Status**: _decided_ (both products follow it, or are bound to), or _partial_ (one product, or part of the convention, is not there yet; the Adopted line says what).
 -   **Check**: what checks the convention mechanically. A check this repository ships is named; a product registers the conformance checks through [`lib.checks.conventions`](#tests). Where the base does not ship one, the line says so and names the product's own tests where they cover it.
 
 `<P>` stands for the product's environment prefix (`FRAPPE`, `ODOO`), and `<p>` for its lower-case name (`frappe`, `odoo`).
@@ -27,7 +27,7 @@ Each section gives:
 
 Both products moved to the names here, even where that was a breaking change. Every rename ships with a migration note in the product's changelog and upgrading page. Every renamed option, flag and environment variable keeps an alias that warns until the product's next major release, a deliberate `Release-As: 2.0.0`, so a consumer that follows `release-1` never loses a name it set. In flake-parts `perSystem` and in odoo-nix's devenv module, the alias goes on the product's internal `deprecations` list, folded into `lib.warn`, because `mkRenamedOptionModule` cannot warn there (odoo-nix's devenv module renames with `lib.doRename` and `warn = false` beside that list); the NixOS modules use `mkRenamedOptionModule`.
 
-A change that alters a running deployment without anyone asking for it ships opt-in through 1.x and becomes the default in 2.0.0: unit hardening, non-root containers and odoo-nix's role image name. Both products made those the defaults in their 2.0.0 (frappe-nix#212). Their 2.0.0 also removed every alias: an old name the consumer is likely to have set is refused, with a message naming its replacement.
+A change that alters a running deployment without anyone asking for it ships opt-in through 1.x and becomes the default in 2.0.0: unit hardening, non-root containers and odoo-nix's role image name. Both products made those the defaults in their 2.0.0 (odoo-nix#99, frappe-nix#212). Their 2.0.0 also removed every alias: an old name the consumer is likely to have set is refused, with a message naming its replacement.
 
 ## Naming rule
 
@@ -45,20 +45,22 @@ nixpkgs is not consistent about the option for an app's public hostname (nextclo
 
 -   **Convention:** every environment variable a product's own tools read or export is `<P>_NIX_*`: `FRAPPE_NIX_*` and `ODOO_NIX_*`. Both export `<P>_NIX_DEVGUARD`. devguard's settings are `<P>_DEVGUARD_*` (see [The core and the product's package](#the-core-and-the-products-package)).
 -   **Adopted:**
-    -   frappe-nix (frappe-nix#123) exports `FRAPPE_NIX_DEVGUARD` and reads `FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_NIX_BACKUP_SOURCE`, `FRAPPE_NIX_RCLONE` (`FRAPPE_NIX_MC` until minio-client went) and `FRAPPE_NIX_BACKUP_CACHE`. The old names (`FRAPPE_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_BACKUP_SOURCE`, `FRAPPE_BACKUP_MC`, `FRAPPE_BACKUP_CACHE`, `FRAPPE_OFFLINE_MIGRATE*`, `FRAPPE_BENCH_UPDATE_FORCE` and others) are read with a warning until 2.0.0. `FRAPPE_UNIXSOCK_ENABLED` is still outside the pattern, and frappe-runtime reads its own `FRAPPE_SERVE_ASSETS` and `FRAPPE_WEB_THREADS`.
-    -   odoo-nix (odoo-nix#57) reads `ODOO_NIX_*` and exports `ODOO_NIX_DEVGUARD`. Its 2.0.0 no longer reads `ODOO_DB`, `ODOO_TEST_ALLOW_SKIP`, `ODOO_GEVENT_PORT` or `ODOO_NIX_JOURNALD`. The container's health probe still falls back to `ODOO_HTTP_PORT`.
--   **Status:** partial. `env-vars` finds names outside the pattern in both products (see Check). Each product sorts them when it registers the check.
--   **Check:** `env-vars` (`lib.checks.envVars`, through [`lib.checks.conventions`](#tests)): every name in the product's namespace (`<P>_*`) that its Python, shell and Nix read or set is `<P>_NIX_*` or `<P>_DEVGUARD_*`, and `<P>_NIX_DEVGUARD` is among them. It finds a name where the source uses it as a variable: expanded (`$NAME`, `${NAME:-…}`), as a whole string literal (`os.environ.get("NAME")`, or a helper of the product's own), set (`NAME=`, `export`, `unset`, makeWrapper's `--set`), or as a Nix attribute (`env.NAME = …`). A name on a comment line, inside a longer string or as a Python constant does not count. `$NAME` counts anywhere, a docstring's too. No scan can tell what a name is for, so two kinds of name count that are not the environment's. One is a quoted template key (frappe-init's `"FRAPPE_VERSION": st.version`). The other is a shell script's own variable (`FRAPPE_SHA="$(git rev-parse HEAD)"` in a test). A script writes its own variables in lower case. A product lists the framework's own variables, the old names it reads until 2.0.0 and names that are not variables, such as a template's keys, in `envVars.exceptions`. It lists the directories not to scan, such as fixtures, in `envVars.ignore`:
+    -   frappe-nix (frappe-nix#123) exports `FRAPPE_NIX_DEVGUARD` and reads `FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_NIX_BACKUP_SOURCE`, `FRAPPE_NIX_RCLONE` (`FRAPPE_NIX_MC` until minio-client went) and `FRAPPE_NIX_BACKUP_CACHE`. The old names (`FRAPPE_RESTORE_ALLOW_UNGUARDED`, `FRAPPE_BACKUP_SOURCE`, `FRAPPE_BACKUP_MC`, `FRAPPE_BACKUP_CACHE`, `FRAPPE_OFFLINE_MIGRATE*`, `FRAPPE_BENCH_UPDATE_FORCE` and others) were read with a warning through 1.x, and 2.0.0 no longer reads them (frappe-nix#212). `FRAPPE_UNIXSOCK_ENABLED` is still outside the pattern, and frappe-runtime reads its own `FRAPPE_SERVE_ASSETS` and `FRAPPE_WEB_THREADS`.
+    -   odoo-nix (odoo-nix#57) reads `ODOO_NIX_*` and exports `ODOO_NIX_DEVGUARD`. Its 2.0.0 no longer reads `ODOO_DB`, `ODOO_TEST_ALLOW_SKIP`, `ODOO_GEVENT_PORT` or `ODOO_NIX_JOURNALD`. The container's health probe reads only `ODOO_NIX_HTTP_PORT`, and a test's `ODOO_PRESETS` is `ODOO_NIX_PRESETS` (odoo-nix#122). The only names outside the pattern are Odoo's own, `ODOO_RC` and `ODOO_HTTP_SOCKET_FD`.
+-   **Status:** partial: frappe-nix's own names outside the pattern, `FRAPPE_UNIXSOCK_ENABLED` among them. odoo-nix follows it, and runs `env-vars` (odoo-nix#122). frappe-nix runs it once frappe-nix#213 (_pending_) merges, which lists those names as exceptions until each is sorted.
+-   **Check:** `env-vars` (`lib.checks.envVars`, through [`lib.checks.conventions`](#tests)): every name in the product's namespace (`<P>_*`) that its Python, shell and Nix read or set is `<P>_NIX_*` or `<P>_DEVGUARD_*`, and `<P>_NIX_DEVGUARD` is among them. It finds a name where the source uses it as a variable: expanded (`$NAME`, `${NAME:-…}`), as a whole string literal (`os.environ.get("NAME")`, or a helper of the product's own), set (`NAME=`, `export`, `unset`, makeWrapper's `--set`), or as a Nix attribute (`env.NAME = …`). A name on a comment line, inside a longer string or as a Python constant does not count. `$NAME` counts anywhere, a docstring's too. No scan can tell what a name is for, so two kinds of name count that are not the environment's. One is a quoted template key (frappe-init's `"FRAPPE_VERSION": st.version`). The other is a shell script's own variable (`FRAPPE_SHA="$(git rev-parse HEAD)"` in a test). A script writes its own variables in lower case. A product lists the framework's own variables, an old name its tests set to show it is no longer read, and names that are not variables, such as a template's keys, in `envVars.exceptions`. It lists the directories not to scan, such as fixtures, in `envVars.ignore`:
 
     ```nix
     envVars.exceptions = [
-      "FRAPPE_BACKUP_SOURCE" # FRAPPE_NIX_BACKUP_SOURCE's old name, until 2.0.0
+      "FRAPPE_BACKUP_SOURCE" # FRAPPE_NIX_BACKUP_SOURCE's 1.x name, which a test shows is not read
       "FRAPPE_SERVE_ASSETS" # frappe-runtime's own
       "FRAPPE_VERSION" # frappe-init's template key
     ];
     ```
 
-    An exception that is not found, or that follows the rule, fails the check. The list is often in the scanned tree, but it is not a use of its names. The check skips a Nix list of just those strings, in that order, as above. It scans a list built another way (`a ++ b`), so a stale name there counts as found. The check does not see a name built at run time (`f"{prefix}_NIX_…"`), nor a tool-owned name outside `<P>_*`. Run against both products' `main` on 2026-10-28, it finds more names than this section lists. In odoo-nix, it finds `ODOO_HTTP_SOCKET_FD` and its tests' `ODOO_PRESETS`, beside Odoo's own `ODOO_RC` and the probe's `ODOO_HTTP_PORT`. In frappe-nix, it finds 29 names beyond the 11 above. Two are frappe-init's template keys (`FRAPPE_VERSION`, `FRAPPE_BRANCH`), and three are test scripts' own variables (`FRAPPE_INIT`, `FRAPPE_SHA`, `FRAPPE_REV`). The other 24 are variables, among them `FRAPPE_BENCH_ROOT`, `FRAPPE_SITE` and `FRAPPE_DB_SOCKET`. Each product renames them or lists them when it registers the check.
+    An exception that is not found, or that follows the rule, fails the check. The list is often in the scanned tree, but it is not a use of its names. The check skips a Nix list of just those strings, in that order, as above. It scans a list built another way (`a ++ b`), so a stale name there counts as found. The check does not see a name built at run time (`f"{prefix}_NIX_…"`), nor a tool-owned name outside `<P>_*`.
+
+    odoo-nix runs it (odoo-nix#122), with `ODOO_RC` and `ODOO_HTTP_SOCKET_FD` as its exceptions. frappe-nix runs it once frappe-nix#213 (_pending_) merges. That pull request lists Frappe's own variables (`FRAPPE_BENCH_ROOT`, `FRAPPE_SITE`, `FRAPPE_DB_SOCKET` and others), frappe-runtime's, frappe-init's template keys (`FRAPPE_VERSION`, `FRAPPE_BRANCH`) and frappe-nix's own names still to sort. It writes the test scripts' own variables in lower case (`FRAPPE_INIT`, `FRAPPE_SHA`, `FRAPPE_REV` were upper case).
 
 The backup fetch layer (`lib.backups`) reads `<P>_NIX_BACKUP_SOURCE`, `<P>_NIX_RCLONE` and `<P>_NIX_BACKUP_CACHE`. Its `legacyEnv` argument reads an old name, with a warning, for the deprecation window. The connection itself keeps the names the `backup-access` secret already uses in both products, which belong to the secret's format rather than to a product: `BACKUPS_URL`, `BACKUPS_ACCESS_KEY`, `BACKUPS_SECRET_KEY`, `BACKUPS_BUCKET`, `BACKUPS_PREFIX`, and the optional `BACKUPS_REGION`, which the layer otherwise reads from `BACKUPS_URL`'s host name.
 
@@ -67,7 +69,7 @@ The client was minio-client until nixpkgs marked it insecure, as abandoned upstr
 ## Secrets
 
 -   **Convention:** both products declare their secrets with `lib.secrets.mkModule` at `<p>-nix.secrets`, with one option tree: `enable`, `dir`, `relDir`, `recipients`, `hostRecipients`, `identityPaths`, `backupAccess.{enable,hosts}`, `extra.<name>.{format,var,hosts}`, plus frappe-nix's `sites` as a group. Shell variables are `<p>_<role>` (`odoo_backup_access`), and `<p>_<role>_<unit>` for a group's units (`frappe_db_password_erp_example_com`). The flake output is `flake.lib.secrets` in both. The dev-shell commands are `edit-secret`, `rekey-secrets`, `check-secrets` and `setup-backup-access`, from `lib.secrets.tools`. `edit-secret`, `rekey-secrets` and `setup-backup-access` are Python with rich prompts (#15), and `check-secrets` is an `exec` shim over agecheck.
--   **Adopted:** frappe-nix#97 and odoo-nix#52. `flake.lib.frappeSecrets` and `flake.lib.odooSecrets` were aliases (`libAliases`) through 1.x, and each product's 2.0.0 removed them (frappe-nix#212). `backupAccess.hosts` defaults to false in frappe-nix and true in odoo-nix, whose server reads the same secret; that stays a product's choice of its role's default.
+-   **Adopted:** frappe-nix#97 and odoo-nix#52. `flake.lib.frappeSecrets` and `flake.lib.odooSecrets` were aliases (`libAliases`) through 1.x, and each product's 2.0.0 removed them (odoo-nix#99, frappe-nix#212). `backupAccess.hosts` defaults to false in frappe-nix and true in odoo-nix, whose server reads the same secret; that stays a product's choice of its role's default.
 -   **Status:** decided.
 -   **Check:** the base's `lib-secrets-module`, `lib-secrets-schema`, `lib-secrets-cli`, `lib-secret-tools` and `lib-agecheck`. Adoption was shown by comparing each product's rules file and agenix-shell secret set before and after, as JSON.
 
@@ -78,7 +80,7 @@ The client was minio-client until nixpkgs marked it insecure, as abandoned upstr
 ### Overwrite
 
 -   **Convention:** restore overwrites an existing database by default. `--no-force` refuses instead.
--   **Adopted:** frappe-nix always did (frappe-nix#98 kept it). odoo-nix since odoo-nix#53, where `--force` is accepted as a no-op with a warning until 2.0.0.
+-   **Adopted:** frappe-nix always did (frappe-nix#98 kept it). odoo-nix since odoo-nix#53. Its old opt-in, `--force`, was a no-op with a warning through 1.x, and is a usage error since its 2.0.0 (odoo-nix#99).
 -   **Status:** decided.
 -   **Check:** `command-flags` (`lib.checks.commandFlags`, through [`lib.checks.conventions`](#tests)) for `--no-force` in restore's `--help`. Each product's restore tests assert the behaviour (frappe-nix's `tests/bench-restore.sh`).
 
@@ -99,7 +101,7 @@ The client was minio-client until nixpkgs marked it insecure, as abandoned upstr
 ### Files
 
 -   **Convention:** `--files` and `restore.files`. frappe-nix keeps `--private-files` as its own extra.
--   **Adopted:** frappe-nix#123: `restore.files` is a bool or `"none" | "private" | "all"` (default `"none"`), since Frappe has private and public files; `restore.withFiles`, its 1.x alias, is refused since 2.0.0 (frappe-nix#212). odoo-nix#57: `--files/--no-files` and `restore.files`; `--attachments` and `restore.attachments`, its 1.x aliases, are refused since its 2.0.0.
+-   **Adopted:** frappe-nix#123: `restore.files` is a bool or `"none" | "private" | "all"` (default `"none"`), since Frappe has private and public files; `restore.withFiles`, its 1.x alias, is refused since 2.0.0 (frappe-nix#212). odoo-nix#57: `--files/--no-files` and `restore.files`; `--attachments` and `restore.attachments`, its 1.x aliases, are refused since its 2.0.0 (odoo-nix#99).
 -   **Status:** decided.
 -   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `restore.files`, and `command-flags` (`lib.checks.commandFlags`) for `--files`.
 
@@ -122,14 +124,14 @@ The client was minio-client until nixpkgs marked it insecure, as abandoned upstr
 ### SMTP port
 
 -   **Convention:** the option is named `port`, matching both Python settings schemas. Where it lives is in [the development shell option tree](#the-development-shell-option-tree): `mailpit.port`.
--   **Adopted:** frappe-nix#124 and odoo-nix#58. frappe-nix's `devguard.mail.smtpPort` and `devguard.mail.port`, and odoo-nix's `devguard.mail.port`, were aliases through 1.x, and are refused since each product's 2.0.0 (frappe-nix#212).
+-   **Adopted:** frappe-nix#124 and odoo-nix#58. frappe-nix's `devguard.mail.smtpPort` and `devguard.mail.port`, and odoo-nix's `devguard.mail.port`, were aliases through 1.x, and are refused since each product's 2.0.0 (odoo-nix#99, frappe-nix#212).
 -   **Status:** decided.
 -   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `mailpit.port`.
 
 ### Job denylist
 
 -   **Convention:** `devguard.jobs.{enable,extraBlocked}`, and `blocked_jobs` in the Python settings. Log lines keep the framework's words (scheduler, crons). frappe-nix's `blockServerScripts` is `devguard.jobs.blockServerScripts`. In the Python settings, `guards.jobs.blocked_jobs` is the product's built-in list (its default), `guards.jobs.extra_blocked` the consumer's additions (`extraBlocked`, baked), and the guard reads their union, in order, as `settings().blocked_jobs`, which the core provides.
--   **Adopted:** frappe-nix#112 and #124; odoo-nix#56 and #58. `scheduler` (frappe-nix) and `crons` (odoo-nix) were aliases through 1.x, and are refused since each product's 2.0.0 (frappe-nix#212).
+-   **Adopted:** frappe-nix#112 and #124; odoo-nix#56 and #58. `scheduler` (frappe-nix) and `crons` (odoo-nix) were aliases through 1.x, and are refused since each product's 2.0.0 (odoo-nix#99, frappe-nix#212).
 -   **Status:** decided.
 -   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `devguard.jobs.enable` and `devguard.jobs.extraBlocked`. `lib-devguard` tests the union.
 
@@ -221,7 +223,7 @@ frappe-nix's `frappe-init` and odoo-nix's `odoo-init`, both Python since frappe-
 ### Version flag
 
 -   **Convention:** `--version`. The old names were aliases through 1.x, and are usage errors since each product's 2.0.0.
--   **Adopted:** frappe-nix#108 (`--frappe-version`, a usage error naming `--version` since 2.0.0: frappe-nix#212) and odoo-nix#71 (`--series`, a usage error since its 2.0.0).
+-   **Adopted:** frappe-nix#108 (`--frappe-version`, a usage error naming `--version` since 2.0.0: frappe-nix#212) and odoo-nix#71 (`--series`, a usage error since its 2.0.0: odoo-nix#99).
 -   **Status:** decided.
 -   **Check:** `command-flags` (`lib.checks.commandFlags`, through [`lib.checks.conventions`](#tests)): the scaffolder's `--help` lists `--version`. It does not check the old names.
 
@@ -321,7 +323,7 @@ The leaf pieces inside both devenv modules ([library](library.md#development-she
 ### Menu
 
 -   **Convention:** the umbrella's `ui` (`bench ui`, `odoo ui`) opens the dev shell's TUI, `lib.tui` (python/devtui), on its own interpreter (`lib.python.textual`), never the application's. Its tabs: Home (the banner's spec, with the stack's state and the site's link), Stack (process-compose's processes and logs; start, stop and restart one; start the stack detached; rebuild, which stops it and starts it again from a re-evaluated shell), Commands (the product's command tree as forms) and Store (what the product can add: OCA modules and stacks, Frappe apps). The TUI is a front end: every change is a command line of the product's own, shown before it runs and streamed while it does, so the command line stays the one implementation. Without a terminal it says so and exits 2. In odoo-nix a bare `odoo` at a terminal opens it too; a bare `bench` stays bench's help.
--   **Adopted:** odoo-nix (`odoo ui`; the store over data/oca-modules.json and data/oca-bundles.json) and frappe-nix (`bench ui`; in a bench, the store over frappe-nix-tools' frappe-apps.json, refreshed weekly from the marketplace registry and the frappe organisation), both _pending_.
+-   **Adopted:** odoo-nix#111 (`odoo ui`; the store over data/oca-modules.json and data/oca-bundles.json) and frappe-nix#203 (`bench ui`; in a bench, the store over frappe-nix-tools' frappe-apps.json, refreshed weekly from the marketplace registry and the frappe organisation).
 -   **Status:** decided.
 -   **Check:** the base's `lib-tui` (the app driven headless against a fake process-compose); each product's `tui` drives its own spec and plugin.
 
@@ -376,7 +378,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 ### Database logging
 
 -   **Convention:** `database.slowQueryMs` in both.
--   **Adopted:** frappe-nix#151; odoo-nix#73 (its `logging.slowQueryMs` is an alias until 2.0.0).
+-   **Adopted:** frappe-nix#151; odoo-nix#73. odoo-nix's `logging.slowQueryMs` was an alias through 1.x, and is refused since its 2.0.0, naming `database.slowQueryMs` (odoo-nix#99).
 -   **Status:** decided.
 -   **Check:** not yet in the base.
 
@@ -384,7 +386,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 
 -   **Convention:** every unit a product defines gets `lib.nixos.hardening { readWritePaths, profiles ? [ ], addressFamilies ? [ AF_UNIX AF_INET AF_INET6 ], capabilities ? [ ], overrides ? { } }` merged into its `serviceConfig`, behind `services.<p>-nix.hardening.enable`. The baseline (`lib.nixos.hardening.baseline`) is `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`, `ProtectSystem=strict` with the unit's `ReadWritePaths`, `ProtectHome`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `ProtectProc=invisible`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, `MemoryDenyWriteExecute`, `RemoveIPC`, an empty `CapabilityBoundingSet` and `AmbientCapabilities`, `SystemCallArchitectures=native`, and `SystemCallFilter=@system-service ~@privileged` failing with `EPERM`. Each value is a `mkDefault`, so a host can relax one key on one unit; `ReadWritePaths` is a plain list, so a host's paths add to the product's.
 
-    `hardening.enable` was off through 1.x, because the sandbox can refuse something a running deployment does today, and is on by default since each product's 2.0.0 (frappe-nix#212). Off, a unit gets none of these keys.
+    `hardening.enable` was off through 1.x, because the sandbox can refuse something a running deployment does today, and is on by default since each product's 2.0.0 (odoo-nix#99, frappe-nix#212). Off, a unit gets none of these keys.
 
     There is **no `UMask=0077`**, here or in any unit: units that write state also write files nginx serves through the service group (Frappe's Website Theme CSS, frappe-nix#83; Odoo's filestore under `xSendfile`, odoo-nix#51). Private files get their modes where they are written, as the migrate snapshots do.
 
@@ -400,7 +402,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     | Anything else | `overrides = { <key> = <value>; }`, with a comment saying why | |
 
     `ProtectSystem=strict` leaves `/run` writable, so a socket directory needs no `ReadWritePaths` (its mode is the gate: [Unix sockets](#unix-sockets)); a state directory does. A path in `ReadWritePaths` must exist when the unit starts; create it with tmpfiles.
--   **Adopted:** frappe-nix#151 and odoo-nix#73, opt-in through 1.x. On by default in odoo-nix's 2.0.0 and in frappe-nix's (frappe-nix#212).
+-   **Adopted:** frappe-nix#151 and odoo-nix#73, opt-in through 1.x. On by default in odoo-nix's 2.0.0 (odoo-nix#99) and in frappe-nix's (frappe-nix#212).
 -   **Status:** decided.
 -   **Check:** the base's `lib-nixos` evaluates the baseline, the profiles and the overrides in a stub product, and asserts no unit has a `UMask`. `lib-nixos-hardening` runs Python with a ctypes callback, Node, headless Chromium and wkhtmltopdf under it in a VM, and shows the baseline refuses a JIT and a root unit keeps only the capabilities it names. A product's VM tests run its units under the default, so with hardening on (frappe-nix#212).
 
@@ -434,7 +436,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   the location an `X-Accel-Redirect` lands on is `lib.nixos.nginx.internal { alias | extraConfig }`, so a client's own request for that path is a 404 (Frappe's `/protected/`, Odoo's `/web/filestore/` under `x_sendfile`).
 
     The whole chain can be unix sockets: a tunnel connector to nginx's listen socket, nginx to the application's. Each socket follows [unix sockets](#unix-sockets).
--   **Adopted:** frappe-nix and odoo-nix (pending). odoo-nix's application side needs its `odoo_socket` graft, since Odoo binds TCP only.
+-   **Adopted:** frappe-nix#199 and odoo-nix#104. odoo-nix's application side needs its `odoo_socket` graft, since Odoo binds TCP only.
 -   **Status:** decided.
 -   **Check:** the base's `lib-nixos` (each helper's output, and the stub product built from them) and `lib-nixos-migrate` (the stub served through them, on sockets end to end).
 
@@ -453,7 +455,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   The module sets the keys it computes in `config.…settings`, at `mkDefault` where a user may change them and at normal priority, with a comment, where the module depends on the value. Reading `settings` therefore shows the effective file (minus secrets), and a user's value wins without `mkForce`.
     -   Only a few valuable keys (RFC 42 Part 2: mandatory or commonly set) are declared as typed sub-options; the module's own typed options (ports, workers, database) set their keys rather than being declared twice.
     -   Secrets never go in `settings`: frappe-nix has `settingsFiles` and `encryptionKeyFile`, odoo-nix `adminPasswordFile` and `environmentFiles`, both read through `LoadCredential`.
--   **Adopted:** frappe-nix#123 (`extraConfig` and `extraConfigFiles` aliased), frappe-nix#177 (`sites.<fqdn>.settings` freeform JSON; `db_name` and `db_type` warn when they differ from `database.name` through 1.x, and become module-owned in 2.0.0); odoo-nix#57 and #58 (`odooConf.*` aliased to `settings`, and its port keys to `ports.*`), odoo-nix#91 (`settings` freeform INI by section; the flat `settings.<key>` form is an alias for `settings.options.<key>`, with a warning, until 2.0.0). odoo-nix 2.0.0 made the development shell's `settings` the same INI block; it was a typed camelCase tree (`settings.dbName`), and its old keys now fail with an error naming where each went.
+-   **Adopted:** frappe-nix#123 (`settings` and `settingsFiles`; the old `extraConfig` and `extraConfigFiles` were aliases through 1.x, and are refused since 2.0.0: frappe-nix#212), frappe-nix#177 (`sites.<fqdn>.settings` freeform JSON). `db_name` and `db_type` warned when they differed from `database.name` through 1.x; since 2.0.0 the module owns them, and a different value is an error naming `database.name` (frappe-nix#212). odoo-nix#57 and #58 (`odooConf.*` moved to `settings`, and its port keys to `ports.*`), odoo-nix#91 (`settings` freeform INI by section). The old `odooConf` and the flat `settings.<key>` form were aliases through 1.x, and are refused since odoo-nix's 2.0.0 (odoo-nix#99). odoo-nix 2.0.0 made the development shell's `settings` the same INI block; it was a typed camelCase tree (`settings.dbName`), and its old keys now fail with an error naming where each went.
 -   **Status:** decided.
 -   **Check:** `config-blocks` (`lib.checks.configBlocks`, through [`lib.checks.conventions`](#tests)): each block the product lists is named `settings` and is a submodule whose `freeformType` is the format's type. Types cannot be compared, so it compares their names and descriptions. A block names its module (`shell` or `nixos`), its path under the product's root there, and the format with the arguments its description shows. A product lists each of its blocks, in both modules. odoo-nix's INI writes a list as one value:
 
@@ -467,16 +469,16 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 ### Identity options
 
 -   **Convention:** the project identity is `name` in both (`frappe-nix.name`, `odoo-nix.name`). It is a slug: it seeds the port hash and names container images, systemd scopes and log messages. Each devenv module sets devenv's own top-level `name` with `mkDefault cfg.name`. The default tenant keeps the framework's word: frappe-nix's `defaultSite` (Frappe's `default_site`), and odoo-nix's `dbName` (Odoo's `db_name`). The scaffolder's `--name` sets the identity in both, and frappe-nix's `--default-site` the default site. Production keeps nixpkgs' shapes: frappe-nix's `sites.<fqdn>` (as `services.wordpress.sites`), odoo-nix's `domain` (as `services.odoo.domain`). In frappe-nix, the word site means only what Frappe means by it: a tenant of the bench.
--   **Adopted:** frappe-nix#123 (`benchName` and `siteName`) and odoo-nix#57 (`projectName`). The old names were aliases through 1.x, and are refused since each product's 2.0.0 (frappe-nix#212).
--   **Status:** decided.
--   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `name`, and for the default tenant in the development shell and in production, which a product names, as `tenant = { shell = "defaultSite"; nixos = "sites"; }`. Each product's rename tests assert the aliases (frappe-nix's `tests/renames.nix`).
+-   **Adopted:** frappe-nix#123 (`benchName` and `siteName`) and odoo-nix#57 (`projectName`). The old names were aliases through 1.x, and are refused since each product's 2.0.0 (odoo-nix#99, frappe-nix#212). odoo-nix's production host name is `services.odoo-nix.nginx.domain`, not `domain`. It lists `services.odoo-nix.domain` as an `optionPaths.exceptions` (odoo-nix#122) until [odoo-nix#121](https://github.com/Avunu/odoo-nix/issues/121) adds it or this section names `nginx.domain`.
+-   **Status:** partial: odoo-nix's `domain`.
+-   **Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)) for `name`, and for the default tenant in the development shell and in production, which a product names, as `tenant = { shell = "defaultSite"; nixos = "sites"; }`. Each product's tests assert the old names are refused (frappe-nix's `tests/removed.nix`, from frappe-nix#212; odoo-nix's `tests/removed-eval.nix`, from odoo-nix#99).
 
 ## Logging
 
 ### Journald enablement
 
 -   **Convention:** journald formatting is always on when stderr is the journal, loaded through a `.pth` graft built with `lib.journald.mkGraft { pkgs, name, src }` (`<p>_journald`), which puts the post-import hook (`_hook.py`) and the formatter core (`_journald.py`) beside the product's tree. The product's `install()` does nothing unless `_journald.journal_stream()`: `JOURNAL_STREAM` names stderr's own device and inode, which an inherited variable on a redirected stderr does not. It ships to production as well as development, inert wherever stderr is not the journal. A command line that logs to the journal itself vendors `lib.journald.module`.
--   **Adopted:** frappe-nix#151 and odoo-nix#73, which retired its sitecustomize shim; `services.odoo-nix.logging.journald` is deprecated and does nothing.
+-   **Adopted:** frappe-nix#151 and odoo-nix#73, which retired its sitecustomize shim. `services.odoo-nix.logging.journald` did nothing through 1.x, and is refused since odoo-nix's 2.0.0 (odoo-nix#99).
 -   **Status:** decided.
 -   **Check:** the base's `lib-journald` grafts a stub product and points `JOURNAL_STREAM` at a file, on every preset interpreter.
 
@@ -517,7 +519,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   images are `[<registry>/]<name>/<role>`, and flake outputs are `container-<role>`;
     -   every image carries OCI labels: `org.opencontainers.image.title`, `source`, `version`, `licenses`, and `revision` where the product knows it;
     -   every image that serves HTTP has a healthcheck;
-    -   with `containers.nonRoot`, an image runs as the product's user, uid and gid 1000, with its own `/etc/passwd` and `/etc/group`. `containers.nonRoot` was off through 1.x, because a volume a root image wrote needs a one-time `chown` first, and is on by default since each product's 2.0.0 (frappe-nix#212);
+    -   with `containers.nonRoot`, an image runs as the product's user, uid and gid 1000, with its own `/etc/passwd` and `/etc/group`. `containers.nonRoot` was off through 1.x, because a volume a root image wrote needs a one-time `chown` first, and is on by default since each product's 2.0.0 (odoo-nix#99, frappe-nix#212);
     -   an nginx image keeps port 80. Run as non-root under rootless Podman, it needs `--sysctl net.ipv4.ip_unprivileged_port_start=0`.
 
     A product builds these pieces with `lib.containers.mk { pkgs, label, name, user, home, nonRoot, source, version, licenses, … }`: `imageName <role>`, `labels <role>` (with `revision` when it is not null, and `labelOverrides` over them), `user` and `homeEnv`, `users` (the `/etc/passwd` and `/etc/group`, in every image), `healthcheck <command>` (every 30 seconds, 10 seconds to answer, 3 retries, and no failure counted in the first 120 seconds), and `fakeRootCommands { writable ? [ ], dirs ? [ ] }`, which makes `/tmp` world-writable, creates the directories, and with `nonRoot` gives the user the `writable` ones. The probe a healthcheck runs stays the product's, since it asks the product's own readiness endpoint.
@@ -618,7 +620,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     Where a product has to set a shared setting differently, it lists the setting as an exception in its check and says why in a comment next to it: frappe-nix's Python is written in Frappe's style, so its `[*.py] indent_style` is `tab`. An exception for a setting this repository no longer makes fails the check, so exceptions do not outlive their reason.
 
     ruff's `extend` was the obvious alternative for `ruff.toml`, and it was rejected: it takes a path, and this repository's copy is in the Nix store, which an editor or a prek run outside the development shell does not have. The base's ruff settings are few (the `target-version` floor), so copying them in is cheaper than any mechanism that resolves a store path.
--   **Adopted:** frappe-nix has every file, with the `[*.py] indent_style` exception. odoo-nix has every file since odoo-nix#76 (`.envrc`, `ty.toml`), with no exceptions. Both have `version.txt`. Neither `committed.toml` carries the shared scope list yet ([Commits](#commits)).
+-   **Adopted:** frappe-nix has every file, with the `[*.py] indent_style` exception. odoo-nix has every file since odoo-nix#76 (`.envrc`, `ty.toml`), with no exceptions. Both have `version.txt`. Both `committed.toml` files carry the shared scope list (odoo-nix#114, frappe-nix#206; [Commits](#commits)).
 -   **Status:** decided.
 -   **Check:** `lib.checks.nixLint` compares `statix.toml`, and `lib.checks.sharedConfig` the rest:
 
@@ -711,8 +713,8 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     );
     ```
 
-    It returns `ci-pins` ([CI](#ci)), `dependabot` ([Dependabot](#dependabot)), `check-names`, `env-vars` ([Tool-owned variables](#tool-owned-variables)), `option-paths`, `config-blocks` and `command-flags`. `check-names` fails on a name that is not kebab-case or has a kind prefix. `option-paths` finds the options of [Restore](#restore), [devguard](#devguard), [the development shell option tree](#the-development-shell-option-tree), [NixOS module path](#nixos-module-path) and [Identity options](#identity-options) under `<p>-nix.*` in `options.shell` and `services.<p>-nix.*` in `options.nixos`; `config-blocks` checks the [Framework config blocks](#framework-config-blocks) in `settings`. Both read the options and build nothing, and come only with `options`, which needs `tenant` and `settings` too. A path writes an attribute set's names and a list's items as the manual does: `<name>` (or the type's own placeholder, such as `<fqdn>`) and `*`. An alias does not count as the option, visible or not. `command-flags` runs each of `commands`, `restore` and `scaffolder`, with `--help` in the build sandbox, and finds the flags [Restore](#restore) and the [Scaffolder](#scaffolder) name at the head of its option lines; it comes only with `commands`. Two spaces or a tab end a line's flags, and a metavar is in upper case or in brackets (`--at TEXT`, `--at <when>`, `--files FILES [FILES ...]`). It reads `--files / --no-files`, `--files/--no-files` and `--[no-]files` as both flags. A help in another shape fails the check, and never passes it wrongly. The sandbox has no dev shell, so a command prints its help before it reads its configuration or environment. frappe-nix's restore does since frappe-nix#213. `checkNames.exceptions`, `optionPaths.exceptions`, `envVars.exceptions` and `commandFlags.exceptions` list the names, option paths, variables and flags (`"restore --no-force"`) allowed to break the rule; one that no longer does fails the check. A product that is not ready for one check yet leaves it out with `removeAttrs`, as it might `env-vars` until its names are sorted. Each check is also exported on its own (`lib.checks.ciPins`, `lib.checks.dependabot`, `lib.checks.checkNames`, `lib.checks.envVars`, `lib.checks.optionPaths`, `lib.checks.configBlocks`, `lib.checks.commandFlags`). Neither product registers it yet.
--   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through `lib.checks.mk` (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
+    It returns `ci-pins` ([CI](#ci)), `dependabot` ([Dependabot](#dependabot)), `check-names`, `env-vars` ([Tool-owned variables](#tool-owned-variables)), `option-paths`, `config-blocks` and `command-flags`. `check-names` fails on a name that is not kebab-case or has a kind prefix. `option-paths` finds the options of [Restore](#restore), [devguard](#devguard), [the development shell option tree](#the-development-shell-option-tree), [NixOS module path](#nixos-module-path) and [Identity options](#identity-options) under `<p>-nix.*` in `options.shell` and `services.<p>-nix.*` in `options.nixos`; `config-blocks` checks the [Framework config blocks](#framework-config-blocks) in `settings`. Both read the options and build nothing, and come only with `options`, which needs `tenant` and `settings` too. A path writes an attribute set's names and a list's items as the manual does: `<name>` (or the type's own placeholder, such as `<fqdn>`) and `*`. An alias does not count as the option, visible or not. `command-flags` runs each of `commands`, `restore` and `scaffolder`, with `--help` in the build sandbox, and finds the flags [Restore](#restore) and the [Scaffolder](#scaffolder) name at the head of its option lines; it comes only with `commands`. Two spaces or a tab end a line's flags, and a metavar is in upper case or in brackets (`--at TEXT`, `--at <when>`, `--files FILES [FILES ...]`). It reads `--files / --no-files`, `--files/--no-files` and `--[no-]files` as both flags. A help in another shape fails the check, and never passes it wrongly. The sandbox has no dev shell, so a command prints its help before it reads its configuration or environment. frappe-nix's restore does with frappe-nix#213 (_pending_). `checkNames.exceptions`, `optionPaths.exceptions`, `envVars.exceptions` and `commandFlags.exceptions` list the names, option paths, variables and flags (`"restore --no-force"`) allowed to break the rule; one that no longer does fails the check. A product that is not ready for one check yet leaves it out with `removeAttrs`, as it might `env-vars` until its names are sorted. Each check is also exported on its own (`lib.checks.ciPins`, `lib.checks.dependabot`, `lib.checks.checkNames`, `lib.checks.envVars`, `lib.checks.optionPaths`, `lib.checks.configBlocks`, `lib.checks.commandFlags`).
+-   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through `lib.checks.mk` (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself. odoo-nix registers `lib.checks.conventions`, with all seven checks (odoo-nix#122). frappe-nix registers it with frappe-nix#213 (_pending_).
 -   **Status:** decided.
 -   **Check:** the base's `lib-mk` tests the helper, and `check-names` (`lib.checks.checkNames`, through `lib.checks.conventions`) the names. The base runs `check-names` on itself, and `lib-conventions` tests the entry point and its checks against a stub product.
 
@@ -742,10 +744,10 @@ For both products:
 | `mailpit` | The catcher as a service: `mailpit.{enable,host,port,httpPort}` and `mailpit.pop3.{enable,port,user,password}`, with ports defaulting from `ports`. On by default in both products, whether or not the mail guard is on. | `devguard.mail.{host,smtpPort/port,httpPort}` from both, and frappe-nix's `devguard.mail.pop3.*`. |
 | `ports` | `ports.{base,offset,worktreeSalt}` and one derived attribute per service port (`ports.http`, `ports.smtp`, `ports.mailUi`, `ports.db`, …) that the rest of the module reads, all from `lib.ports.options`. Each can still be forced with `lib.mkForce`, which is why they are not `readOnly`: a read-only option refuses that override too. A product that leases its ports at run time (see [Ports](#ports)) adds `ports.strict` (refuse a taken preferred port rather than move past it; null for the product's default) and `ports.span` (how many ports past the preferred one to try) beside them; frappe-nix declares both itself, outside `lib.ports.options`, and odoo-nix takes the same names if it leases. | odoo-nix `odooConf.httpPort`, `odooConf.geventPort` and `odooConf.dbPort`, and the Mailpit ports. |
 
-This keeps the decided name `port`: the SMTP port is `mailpit.port`, which defaults to `ports.smtp`, and the mail guard redirects to it. Mailpit starts before the server from the `mailpit` tree, so a server with the mail guard on never starts before its catcher. Every old option path was an alias through 1.x, and is refused since each product's 2.0.0 (frappe-nix#212).
+This keeps the decided name `port`: the SMTP port is `mailpit.port`, which defaults to `ports.smtp`, and the mail guard redirects to it. Mailpit starts before the server from the `mailpit` tree, so a server with the mail guard on never starts before its catcher. Every old option path was an alias through 1.x, and is refused since each product's 2.0.0 (odoo-nix#99, frappe-nix#212).
 
 Left alone, since neither product is clearly better: frappe-nix's `appsReconcile`, `renamedApps` and `replacedApps`, and odoo-nix's `layout.*`.
 
 Both products also have `ide.enable`, which links `./.venv` to the development environment for editors: frappe-nix's (frappe-nix#156, default true) also generates a `pyrightconfig.json`; odoo-nix's, the original, seeds `.vscode/settings.json` and runs odoo-ls under `ide.languageServer`.
 
-**Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)): every option the table names is declared in the development shell, not only as an alias, `mailpit.pop3.*` and `devguard.mail.{sender,unmute}` among them. `ports.{base,offset,worktreeSalt,http,db,smtp,mailUi}` are not read-only, and nothing visible is left in the `dev` tree. A hidden removed option there is allowed.
+**Check:** `option-paths` (`lib.checks.optionPaths`, through [`lib.checks.conventions`](#tests)): every option the table names is declared in the development shell, not only as an alias, `mailpit.pop3.*` and `devguard.mail.{sender,unmute}` among them. `ports.{base,offset,worktreeSalt,http,db,smtp,mailUi}` are not read-only, and nothing visible is left in the `dev` tree. A hidden removed option there is allowed. odoo-nix has no `mailpit.pop3.*` or `devguard.mail.{sender,unmute}` yet, and lists them as `optionPaths.exceptions` (odoo-nix#122) until [odoo-nix#120](https://github.com/Avunu/odoo-nix/issues/120) adds them or drops them from this table.
