@@ -20,9 +20,11 @@ let
         inherit (stub)
           product
           dependabot
+          envVars
           options
           tenant
           settings
+          commands
           ;
         src = stub.tree;
         checks = all;
@@ -55,6 +57,36 @@ let
         checks = lib.genAttrs list (_: null);
       }
       // extra
+    );
+
+  envs =
+    src: extra:
+    checks.envVars (
+      {
+        inherit pkgs src;
+        inherit (stub) product;
+      }
+      // stub.envVars
+      // extra
+    );
+  flags =
+    commands: extra:
+    checks.commandFlags (
+      {
+        inherit pkgs commands;
+        inherit (stub) product;
+      }
+      // extra
+    );
+  # The stub's commands, with each [ from to ] of `pairs` replaced in `role`'s
+  # help.
+  helpWith =
+    role: pairs:
+    stub.commandsOf (
+      stub.help
+      // {
+        ${role} = builtins.replaceStrings (map lib.head pairs) (map lib.last pairs) stub.help.${role};
+      }
     );
 
   paths =
@@ -172,8 +204,10 @@ let
       ci-pins = "stub-ci-pins-check";
       dependabot = "stub-dependabot-check";
       check-names = "stub-check-names-check";
+      env-vars = "stub-env-vars-check";
       option-paths = "stub-option-paths-check";
       config-blocks = "stub-config-blocks-check";
+      command-flags = "stub-command-flags-check";
     };
     actual = lib.mapAttrs (_: drv: drv.name) (
       removeAttrs registered [
@@ -183,12 +217,13 @@ let
     );
   };
 
-  # Without `options`, the checks of the repository alone.
+  # Without `options` and `commands`, the checks that read only the tree.
   alone = stub.checks.eval "conventions-names-alone" {
     expected = [
       "check-names"
       "ci-pins"
       "dependabot"
+      "env-vars"
     ];
     actual = lib.attrNames (
       checks.conventions {
@@ -200,6 +235,33 @@ let
     );
   };
 
+  # commandFlags takes both commands, and no other.
+  roles = stub.checks.eval "command-flags-roles" {
+    assertion =
+      !(builtins.tryEval (flags { inherit (stub.commands) restore; } { }).drvPath).success
+      && !(builtins.tryEval (flags (stub.commands // { relock = [ "relock" ]; }) { }).drvPath).success;
+    message = "commandFlags took commands other than restore and scaffolder";
+  };
+
+  # The stub, with its flake listing `exceptions` for env-vars, one name to a
+  # line, as odoo-nix and frappe-nix do: the list holds every name, so only
+  # the scan's skipping it lets a stale one fail.
+  listing =
+    name: exceptions:
+    stub.variant name ''
+      cat > flake.nix <<'EOF'
+      {
+        outputs = _: {
+          envVars.exceptions = [
+            # The framework's "own" names, and one that may be gone.
+            ${lib.concatMapStringsSep "\n      " (name: ''"${name}" # why'') exceptions}
+          ];
+        };
+      }
+      EOF
+    '';
+  stale = stub.envVars.exceptions ++ [ "STUB_GONE" ];
+
   mk = checks.mk {
     inherit pkgs;
     product = "python-devops-nix";
@@ -207,9 +269,10 @@ let
 in
 mk.script "lib-conventions" { } ''
   echo "the entry point names its checks: ${meta}"
-  echo "and only the repository's without options: ${alone}"
+  echo "and only the tree's without options and commands: ${alone}"
   echo "a conforming product passes: ${registered.ci-pins} ${registered.dependabot} ${registered.check-names}"
   echo "and its modules: ${registered.option-paths} ${registered.config-blocks}"
+  echo "and its interface: ${registered.env-vars} ${registered.command-flags} ${roles}"
 
   # CI: a tag, a short SHA in a composite action, a docker image by its tag,
   # and pins with no comment: after a plain scalar, after a flow mapping and
@@ -533,4 +596,185 @@ mk.script "lib-conventions" { } ''
   ${stub.expectFailure (blocks stub.options [ ]) [
     "no settings option is listed (docs/conventions.md, Framework config blocks)"
   ]}
+
+  # Environment variables: each way a source reads or sets a name outside
+  # STUB_NIX_*, in Python, shell and Nix; the exceptions and the ignored
+  # fixtures, without which their names fail; the required names; and stale
+  # exceptions, also when the tree declares them. A product named stub-nix has
+  # the same prefix.
+  echo "the prefix drops -nix: ${envs stub.tree { product = "stub-nix"; }}"
+  ${stub.expectFailure
+    (envs (stub.variant "env-forms" ''
+      echo 'PORT = os.environ.get("STUB_PORT")' > lib/port.py
+      cat >> bin/stub-ci <<'EOF'
+      echo "$STUB_HOST $STUB_HOST"
+      echo "$STUB_HOST"
+      : "''${STUB_USER:-x}"
+      STUB_MODE=dev stub
+      unset STUB_TOKEN
+      STUB_SHA="$(git rev-parse HEAD)"
+      EOF
+      echo '{ wrap = "--set STUB_FLAG 1"; env.STUB_LEVEL = "debug"; }' > modules/wrap.nix
+    '') { })
+    [
+      "STUB_PORT: not STUB_NIX_* or STUB_DEVGUARD_* (lib/port.py:1) (Tool-owned variables)"
+      "STUB_HOST: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:7, and 2 more) (Tool-owned variables)"
+      "STUB_USER: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:9)"
+      "STUB_MODE: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:10)"
+      "STUB_TOKEN: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:11)"
+      "STUB_SHA: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:12)"
+      "STUB_FLAG: not STUB_NIX_* or STUB_DEVGUARD_* (modules/wrap.nix:1)"
+      "STUB_LEVEL: not STUB_NIX_* or STUB_DEVGUARD_* (modules/wrap.nix:1)"
+      "8 variable(s) outside the conventions (docs/conventions.md, Environment variables)."
+    ]
+  }
+  ${stub.expectFailure
+    (envs stub.tree {
+      exceptions = [ ];
+      ignore = [ ];
+    })
+    [
+      "STUB_DB: not STUB_NIX_* or STUB_DEVGUARD_* (lib/restore.py:11)"
+      "STUB_RC: not STUB_NIX_* or STUB_DEVGUARD_* (lib/restore.py:15)"
+      "STUB_VERSION: not STUB_NIX_* or STUB_DEVGUARD_* (lib/template.py:1)"
+      "STUB_FIXTURE: not STUB_NIX_* or STUB_DEVGUARD_* (tests/fixtures/env.sh:1)"
+      "4 variable(s) outside the conventions"
+    ]
+  }
+  ${stub.expectFailure
+    (envs (stub.variant "env-required" ''
+      sed -i '/STUB_NIX_DEVGUARD/d' modules/devenv.nix
+      sed -i '/^ALLOW = /d' lib/restore.py
+    '') { })
+    [
+      "STUB_NIX_DEVGUARD: never read or set (Tool-owned variables)"
+      "STUB_NIX_RESTORE_ALLOW_UNGUARDED: never read or set (Unguarded restore)"
+    ]
+  }
+  ${stub.expectFailure
+    (envs stub.tree {
+      exceptions = stub.envVars.exceptions ++ [
+        "STUB_GONE"
+        "STUB_NIX_CI"
+      ];
+    })
+    [
+      "STUB_GONE: listed as an exception, but nothing is wrong with it"
+      "STUB_NIX_CI: listed as an exception, but nothing is wrong with it"
+    ]
+  }
+  echo "exceptions declared in the tree: ${envs (listing "env-declared" stub.envVars.exceptions) { }}"
+  ${stub.expectFailure (envs (listing "env-declared-stale" stale) { exceptions = stale; }) [
+    "STUB_GONE: listed as an exception, but nothing is wrong with it"
+    "1 variable(s) outside the conventions"
+  ]}
+
+  # Command flags: restore and the scaffolder each without the flags of a
+  # section, a flag left only in prose or renamed, exceptions, needed and
+  # stale, a command that fails or does not run, whose exceptions are not
+  # judged, and the other shapes of an option line that pass.
+  ${stub.expectFailure
+    (flags (helpWith "restore" [
+      [
+        "--no-force                      Refuse"
+        "--no-overwrite                  Refuse"
+      ]
+      [
+        "--migrate / --no-migrate"
+        "--migrate               "
+      ]
+      [
+        "--neutralize / --no-neutralize"
+        "--neutralize                  "
+      ]
+      [
+        "--files / --no-files"
+        "--attachments       "
+      ]
+      [
+        "--at TEXT"
+        "--to TEXT"
+      ]
+    ]) { })
+    [
+      "restore --no-force: not in its --help (Overwrite)"
+      "restore --no-migrate: not in its --help (Migrate after restore)"
+      "restore --no-neutralize: not in its --help (Neutralise)"
+      "restore --files: not in its --help (Files)"
+      "restore --at: not in its --help (Point in time)"
+      "5 difference(s) from the shared flags (docs/conventions.md, Restore and Scaffolder)."
+    ]
+  }
+  ${stub.expectFailure
+    (flags (helpWith "scaffolder" [
+      [
+        "-y, --yes"
+        "--yes    "
+      ]
+      [
+        "--version <v>"
+        "--series <v> "
+      ]
+      [
+        "--commit[=<msg>]"
+        "--commit-msg <m>"
+      ]
+    ]) { })
+    [
+      "scaffolder -y: not in its --help (Flags)"
+      "scaffolder --version: not in its --help (Version flag)"
+      "scaffolder --commit: not in its --help (Flags)"
+    ]
+  }
+  echo "an exception passes: ${
+    flags (helpWith "scaffolder" [
+      [
+        "-y, --yes"
+        "--yes    "
+      ]
+    ]) { exceptions = [ "scaffolder -y" ]; }
+  }"
+  ${stub.expectFailure
+    (flags stub.commands {
+      exceptions = [
+        "restore --no-force"
+        "scaffolder --gone"
+      ];
+    })
+    [
+      "restore --no-force: listed as an exception, but nothing is wrong with it"
+      "scaffolder --gone: listed as an exception, but nothing is wrong with it"
+    ]
+  }
+  ${stub.expectFailure
+    (flags {
+      restore = [
+        (lib.head stub.commands.restore)
+        "database"
+        "restore"
+      ];
+      scaffolder = [ "/nonexistent/stub-init" ];
+    } { exceptions = [ "restore --no-force" ]; })
+    [
+      "database restore --help` exited 2: stub: unexpected arguments: database restore --help"
+      "scaffolder: `/nonexistent/stub-init --help` did not run:"
+      "2 difference(s) from the shared flags"
+    ]
+  }
+  echo "and other shapes of an option line: ${
+    flags (helpWith "restore" [
+      [
+        "--neutralize / --no-neutralize"
+        "--[no-]neutralize             "
+      ]
+      [
+        "--files / --no-files            "
+        "--files/--no-files\t"
+      ]
+      [
+        "--at TEXT"
+        "--at AT [AT ...]"
+      ]
+    ]) { }
+  }"
 ''

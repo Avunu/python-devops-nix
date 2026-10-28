@@ -542,11 +542,103 @@ let
         };
     };
 
+  # The checks of the conventions over what a product's users meet: the
+  # environment variables its tools read and set, and the flags its commands
+  # take. interface.py has the rules.
+  interface = {
+    # docs/conventions.md, Tool-owned variables: every variable in the
+    # product's namespace, `<prefix>_*`, that its Python, shell and Nix use is
+    # `<prefix>_NIX_*` or devguard's `<prefix>_DEVGUARD_*`, and
+    # `<prefix>_NIX_DEVGUARD` and `<prefix>_NIX_RESTORE_ALLOW_UNGUARDED` are
+    # among them. `ignore` lists directories, relative to `src`, that are not
+    # scanned (fixtures, vendored trees). `exceptions` lists the names that may
+    # break the rule: the framework's own, the old names read until 2.0.0, and
+    # names that are not variables, such as a template's keys. One that is not
+    # found, or that follows the rule, fails the check. The Nix list that
+    # declares them, if `src` holds it, is not scanned: a list of just those
+    # strings, in order.
+    envVars =
+      {
+        pkgs,
+        src,
+        product,
+        prefix ? lib.toUpper (lib.replaceStrings [ "-" ] [ "_" ] (lib.removeSuffix "-nix" product)),
+        ignore ? [ ],
+        exceptions ? [ ],
+      }:
+      let
+        spec = builtins.toJSON {
+          inherit prefix ignore exceptions;
+          allowed = [
+            "${prefix}_NIX_"
+            "${prefix}_DEVGUARD_"
+          ];
+          required = {
+            "${prefix}_NIX_DEVGUARD" = "Tool-owned variables";
+            "${prefix}_NIX_RESTORE_ALLOW_UNGUARDED" = "Unguarded restore";
+          };
+        };
+      in
+      (mk { inherit pkgs product; }).script "env-vars" { } ''
+        ${lib.getExe pkgs.python3} ${./interface.py} env ${src} ${lib.escapeShellArg spec}
+      '';
+
+    # docs/conventions.md, Restore and Scaffolder: each command, run with
+    # `--help` in the build sandbox, lists the flags the conventions name for
+    # it. `commands` is { restore, scaffolder }, each the command's words, e.g.
+    # { restore = [ (lib.getExe' cli "odoo") "db" "restore" ]; scaffolder =
+    # lib.getExe odoo-init; }. The sandbox has no dev shell, so each command
+    # prints its help before it reads its configuration. `exceptions` lists
+    # flags, as "<command> <flag>" ("restore --no-force"), that may be missing;
+    # one that is not fails the check.
+    commandFlags =
+      {
+        pkgs,
+        product,
+        commands,
+        exceptions ? [ ],
+      }:
+      let
+        required = {
+          restore = {
+            "--no-force" = "Overwrite";
+            "--no-migrate" = "Migrate after restore";
+            "--neutralize" = "Neutralise";
+            "--no-neutralize" = "Neutralise";
+            "--files" = "Files";
+            "--at" = "Point in time";
+          };
+          scaffolder = {
+            "--version" = "Version flag";
+          }
+          // lib.genAttrs [
+            "--dry-run"
+            "--skip-lock"
+            "-y"
+            "--yes"
+            "--commit"
+            "--force"
+            "--name"
+            "--migrate"
+          ] (_: "Flags");
+        };
+        spec = builtins.toJSON {
+          inherit required exceptions;
+          commands = lib.mapAttrs (_: words: map toString (lib.toList words)) commands;
+        };
+      in
+      assert lib.assertMsg (lib.attrNames commands == lib.attrNames required)
+        "lib.checks.commandFlags: pass commands = { ${lib.concatStringsSep "; " (lib.attrNames required)}; }, each the command's words";
+      (mk { inherit pkgs product; }).script "command-flags" { } ''
+        ${lib.getExe pkgs.python3} ${./interface.py} flags ${lib.escapeShellArg spec}
+      '';
+  };
+
   # Every conformance check a product registers, by check name, from one set of
-  # arguments. A later family adds its checks here. The names depend on which
-  # arguments are given and never on their values, so `checks` can be the set
-  # this one is merged into: `option-paths` and `config-blocks` come with
-  # `options`, which needs `tenant` and `settings` too.
+  # arguments. The names depend on which arguments are given and never on
+  # their values, so `checks` can be the set this one is merged into:
+  # `option-paths` and `config-blocks` come with `options`, which needs
+  # `tenant` and `settings` too, and `command-flags` with `commands`.
   conventions =
     args@{
       pkgs,
@@ -555,10 +647,13 @@ let
       checks,
       checkNames ? { },
       dependabot ? { },
+      envVars ? { },
       optionPaths ? { },
       options ? null,
       tenant ? null,
       settings ? null,
+      commandFlags ? { },
+      commands ? null,
     }:
     let
       tree = { inherit pkgs src product; };
@@ -571,16 +666,21 @@ let
       ci-pins = repository.ciPins tree;
       dependabot = repository.dependabot (tree // dependabot);
       check-names = repository.checkNames ({ inherit pkgs product checks; } // checkNames);
+      env-vars = interface.envVars (tree // envVars);
     }
     // lib.optionalAttrs (args ? options) {
       option-paths = modules.optionPaths (modular // { inherit tenant; } // optionPaths);
       config-blocks = modules.configBlocks (modular // { inherit settings; });
+    }
+    // lib.optionalAttrs (args ? commands) {
+      command-flags = interface.commandFlags ({ inherit pkgs product commands; } // commandFlags);
     };
 in
 {
   inherit mk conventions;
   inherit (repository) ciPins dependabot checkNames;
   inherit (modules) optionPaths configBlocks;
+  inherit (interface) envVars commandFlags;
 
   # nixfmt (nixfmt-rs), statix and deadnix over every .nix file in `src`, and
   # statix.toml at its root compared with the base's copy (`sharedConfig`'s

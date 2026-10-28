@@ -53,6 +53,56 @@ rec {
     echo '{ name = @NAME@; }' > templates/flake.nix
     printf '_: { }\n' > default.nix
 
+    # Its tools' environment variables: STUB_NIX_* in Nix, Python and a shell
+    # script with no suffix, devguard's STUB_DEVGUARD_*, the framework's own
+    # STUB_RC, an old name, STUB_DB, and a template's key, STUB_VERSION, all
+    # listed in `envVars.exceptions`. Comment lines that would count as code,
+    # prose, a Python constant, another namespace's MY_STUB_HOME, a script's
+    # own lower-case stub_sha, a README and the ignored fixtures name others,
+    # which are not read.
+    mkdir -p modules lib bin tests/fixtures
+    cat > modules/devenv.nix <<'EOF'
+    { pkgs, ... }:
+    {
+      env = {
+        STUB_NIX_DEVGUARD = "1";
+        STUB_DEVGUARD_ENABLED = "1";
+      };
+      # env.STUB_OLD_DEVGUARD = "1"; was its name before.
+      scripts.stub-up = pkgs.writeShellScript "stub-up" '''
+        exec stub --port "$STUB_NIX_PORT_OFFSET"
+      ''';
+    }
+    EOF
+    cat > lib/restore.py <<'EOF'
+    """Restore refuses without devguard unless STUB_ALLOW is set."""
+
+    import os
+
+    # os.environ.get("STUB_RESTORE_ALLOW_UNGUARDED") read the old name.
+    STUB_PRESETS = "presets.json"
+    ALLOW = "STUB_NIX_RESTORE_ALLOW_UNGUARDED"
+
+
+    def allowed() -> bool:
+        return bool(os.environ.get(ALLOW) or os.environ.get("STUB_DB"))
+
+
+    def config() -> str:
+        return os.environ.get("STUB_RC", "set STUB_CONF to override")
+    EOF
+    cat > bin/stub-ci <<'EOF'
+    #!/usr/bin/env bash
+    MY_STUB_HOME=1
+    # export STUB_CI=1 was the old name.
+    export STUB_NIX_CI=1
+    stub_sha="$(git rev-parse HEAD)"
+    echo "CI mode: ''${STUB_NIX_CI} at $stub_sha"
+    EOF
+    echo 'TOKENS = {"STUB_VERSION": "16"}' > lib/template.py
+    echo 'Set `$STUB_SITE` to pick a site.' > README.md
+    echo 'echo "$STUB_FIXTURE"' > tests/fixtures/env.sh
+
     # Its .github: pinned actions in a workflow and in a composite action (one
     # quoted, one a reusable workflow, one local, one a docker image, one in a
     # flow mapping and one a folded scalar), and Dependabot's shape with one
@@ -132,6 +182,89 @@ rec {
       directory = "/dev";
     }
   ];
+
+  # The names `tree` uses that are not STUB_NIX_*, and the fixtures it does
+  # not scan.
+  envVars = {
+    ignore = [ "tests/fixtures" ];
+    exceptions = [
+      "STUB_DB"
+      "STUB_RC"
+      "STUB_VERSION"
+    ];
+  };
+
+  # Its commands' help: restore's as click prints it, the scaffolder's by
+  # hand, as frappe-init and odoo-init do. A line of restore's description
+  # starts with --no-force, which does not count as the flag.
+  help = {
+    restore = ''
+      Usage: stub db restore [OPTIONS] DB_NAME [BACKUP_PATH]
+
+        Restore BACKUP_PATH into DB_NAME, overwriting an existing one, which
+        --no-force refuses.
+
+      Options:
+        --neutralize / --no-neutralize  Disable outgoing mail and jobs on the
+                                        restored copy.
+        --at TEXT                       The newest backup within this point in
+                                        time.
+        --list                          List available backups and exit.
+        --no-force                      Refuse to overwrite a database that
+                                        already exists.
+        --migrate / --no-migrate        Migrate the restored database.
+        --files / --no-files            Restore the files too.
+        --help                          Show this message and exit.
+    '';
+    scaffolder = ''
+      Usage: stub-init [options] [target-dir]
+
+      Mode:
+        --init              Force scaffold mode
+        --migrate           Force migration mode
+        --force             Relax the mode guard; never overwrites a file
+        --dry-run           Print the plan and exit
+        -y, --yes           Assume yes
+
+      Common:
+        --version <v>       The framework's version
+        --name <name>       Project name
+        --skip-lock         Do not run `uv lock`
+        --commit[=<msg>]    Commit the result instead of only staging it
+        -h, --help          Show this help
+    '';
+  };
+
+  # The commands that print `help`, as lib.checks.commandFlags takes them:
+  # `stub db restore` and `stub-init`. Each refuses any other words, as a
+  # wrong argv would be refused.
+  commandsOf =
+    help:
+    let
+      command =
+        name: words: text:
+        pkgs.writeShellScript name ''
+          if [ "$*" != ${lib.escapeShellArg (lib.concatStringsSep " " (words ++ [ "--help" ]))} ]; then
+            echo "${name}: unexpected arguments: $*" >&2
+            exit 2
+          fi
+          cat <<'EOF'
+          ${text}
+          EOF
+        '';
+    in
+    {
+      restore = [
+        (command "stub" [
+          "db"
+          "restore"
+        ] help.restore)
+        "db"
+        "restore"
+      ];
+      scaffolder = command "stub-init" [ ] help.scaffolder;
+    };
+  commands = commandsOf help;
 
   # Its modules' option declarations: `stub.*` in the development shell and
   # `services.stub.*` in NixOS, each option the conventions name, with the
