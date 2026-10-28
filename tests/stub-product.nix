@@ -21,11 +21,17 @@ rec {
   # adds a key to .editorconfig and sets one differently (tabs for Python, as
   # frappe-nix does, listed in `exceptions`); extends another ruff config;
   # passes an extra argument to a shared hook, adds a hook, excludes its own
-  # paths and pins its own revisions.
+  # paths and pins its own revisions; adds a commit scope of its own and lists
+  # the scopes in another order (`addons` last), in tabs.
   tree = pkgs.runCommand "stub-product" { } ''
     mkdir "$out"
     cd "$out"
     cp ${self}/statix.toml statix.toml
+
+    sed -e 's/^  /\t/' \
+      -e '/^allowed_scopes = \[$/,/^\]$/{/^\t"addons",$/d;s/^\]$/\t"addons",\n]/}' \
+      -e 's/^allowed_scopes = \[$/&\n\t"stub-only",/' \
+      ${self}/committed.toml > committed.toml
 
     sed -e '/^\[\*\.py\]$/,/^$/s/^indent_style = space$/indent_style = tab/' \
       ${self}/.editorconfig > .editorconfig

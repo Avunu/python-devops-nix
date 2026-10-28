@@ -6,9 +6,10 @@ SPEC_JSON is {"files": [name, ...], "exceptions": {name: [[key, ...], ...]}}.
 Each file is read from both directories and parsed into nested mappings (see
 `load`). The rule (docs/conventions.md, Repository files): every setting the
 base's copy makes, the product's copy makes too, with the same value. The product may
-add settings of its own. A list is a value, compared whole. An exception names
-the path of one base setting the product may set differently or leave out, and
-the product documents why next to it.
+add settings of its own. A list is a value, compared whole, except the lists in
+`SETS`: the product's carries every item the base's has, and may add its own. An
+exception names the path of one base setting the product may set differently or
+leave out, and the product documents why next to it.
 
 Prints one line per difference and exits 1 if there is any.
 """
@@ -69,6 +70,13 @@ LOADERS = {
     ".pre-commit-config.yaml": load_prek,
 }
 
+# Per file, the paths of lists compared as sets the product may extend. The
+# scope list is one for both products, and a product adds the scopes only it
+# uses (docs/conventions.md, Commits).
+SETS = {
+    "committed.toml": {("allowed_scopes",)},
+}
+
 
 def load(path: Path) -> dict:
     if path.name in LOADERS:
@@ -79,7 +87,11 @@ def load(path: Path) -> dict:
 
 
 def compare(
-    base: dict, product: dict, path: tuple[str, ...], skip: set[tuple[str, ...]]
+    base: dict,
+    product: dict,
+    path: tuple[str, ...],
+    skip: set[tuple[str, ...]],
+    sets: set[tuple[str, ...]],
 ):
     for key, want in base.items():
         here = (*path, key)
@@ -89,7 +101,11 @@ def compare(
         if key not in product:
             yield f"{shown}: missing (base: {json.dumps(want)})"
         elif isinstance(want, dict) and isinstance(product[key], dict):
-            yield from compare(want, product[key], here, skip)
+            yield from compare(want, product[key], here, skip, sets)
+        elif here in sets and isinstance(product[key], list):
+            for item in want:
+                if item not in product[key]:
+                    yield f"{shown}: missing {json.dumps(item)}"
         elif product[key] != want:
             yield f"{shown}: {json.dumps(product[key])} (base: {json.dumps(want)})"
 
@@ -114,7 +130,8 @@ def main() -> int:
             continue
         skip = {tuple(p) for p in spec["exceptions"].get(name, [])}
         base = load(Path(base_dir, name))
-        diffs = list(compare(base, load(product_file), (), skip))
+        sets = SETS.get(name, set())
+        diffs = list(compare(base, load(product_file), (), skip, sets))
         # An exception for a setting the base no longer makes is stale.
         diffs += [
             f"{' > '.join(p)}: listed as an exception, but the base sets no such key"

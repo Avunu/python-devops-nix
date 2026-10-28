@@ -604,20 +604,21 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 
 ### Repository files
 
--   **Convention:** the same set in both: `.editorconfig`, `.envrc`, `.pre-commit-config.yaml`, `ruff.toml`, `ty.toml` and `statix.toml`, and `version.txt` once releases are wired up. Each product keeps its own copy at its root, because the tools read them from there, and the shared settings in each match this repository's copy.
+-   **Convention:** the same set in both: `.editorconfig`, `.envrc`, `.pre-commit-config.yaml`, `committed.toml`, `ruff.toml`, `ty.toml` and `statix.toml`, and `version.txt` once releases are wired up. Each product keeps its own copy at its root, because the tools read them from there, and the shared settings in each match this repository's copy.
 
-    The rule is the same for every shared file: **the product's copy makes every setting this repository's copy makes, with the same value, and may add its own.** Not byte-identical copies, because the products legitimately add to them: frappe-nix's `ruff.toml` extends Frappe's own ruff config, and both products' prek configurations add hooks and exclude their own paths. A list is one value and is compared whole. Per file, a setting is:
+    The rule is the same for every shared file: **the product's copy makes every setting this repository's copy makes, with the same value, and may add its own.** Not byte-identical copies, because the products legitimately add to them: frappe-nix's `ruff.toml` extends Frappe's own ruff config, and both products' prek configurations add hooks and exclude their own paths. A list is one value and is compared whole, except `committed.toml`'s scope list ([Commits](#commits)). Per file, a setting is:
 
     | File | A setting is | Not compared |
     | --- | --- | --- |
     | `statix.toml`, `ruff.toml` | each key, by its path through the TOML tables | — |
+    | `committed.toml` | each key, as in `ruff.toml`; and each scope in `allowed_scopes`, which the product's list must have, in any order, beside its own | — |
     | `.editorconfig` | each key under a section (`[*.py] indent_style`), and the preamble's `root` | — |
     | `.pre-commit-config.yaml` | each hook, by repository URL and hook `id` (with its `name` where the base gives one), and each key the base sets on it (`args`) | `rev`, which each repository's Dependabot moves on its own schedule; the top-level `exclude` and other keys, which name the repository's own paths |
 
     Where a product has to set a shared setting differently, it lists the setting as an exception in its check and says why in a comment next to it: frappe-nix's Python is written in Frappe's style, so its `[*.py] indent_style` is `tab`. An exception for a setting this repository no longer makes fails the check, so exceptions do not outlive their reason.
 
     ruff's `extend` was the obvious alternative for `ruff.toml`, and it was rejected: it takes a path, and this repository's copy is in the Nix store, which an editor or a prek run outside the development shell does not have. The base's ruff settings are few (the `target-version` floor), so copying them in is cheaper than any mechanism that resolves a store path.
--   **Adopted:** frappe-nix has every file, with the `[*.py] indent_style` exception. odoo-nix has every file since odoo-nix#76 (`.envrc`, `ty.toml`), with no exceptions. Both have `version.txt`.
+-   **Adopted:** frappe-nix has every file, with the `[*.py] indent_style` exception. odoo-nix has every file since odoo-nix#76 (`.envrc`, `ty.toml`), with no exceptions. Both have `version.txt`. Neither `committed.toml` carries the shared scope list yet ([Commits](#commits)).
 -   **Status:** decided.
 -   **Check:** `lib.checks.nixLint` compares `statix.toml`, and `lib.checks.sharedConfig` the rest:
 
@@ -631,7 +632,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     };
     ```
 
-    `files` defaults to `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml`; a product that has no Python yet can drop `ruff.toml` from it until it does.
+    `files` defaults to `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml` and `ruff.toml`; a product that has no Python yet can drop `ruff.toml` from it until it does.
 
 ### Dependabot
 
@@ -718,9 +719,13 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 ### Commits
 
 -   **Convention:** conventional commits, enforced by `committed` in a required `pr-policy` job, with one scope list for both products. A breaking change is a deliberate `Release-As: N.0.0` footer, never `!` or `BREAKING CHANGE`, which the policy refuses; `deprecate` is a commit type of its own.
--   **Adopted:** both enforce it with `committed.toml` and `pr-policy`. The scope lists differ: frappe-nix's has 61 scopes, the union of both repositories' history (frappe-nix#159), and odoo-nix's has 30.
--   **Status:** partial: one scope list, owned by this repository ([#21](https://github.com/Avunu/python-devops-nix/issues/21)).
--   **Check:** each product's `pr-policy` job. Not yet in the base, which has no `committed.toml` of its own.
+
+    The rules live in this repository's `committed.toml`, and each product keeps a copy at its root, where `committed` reads it ([Repository files](#repository-files)). Its scope list is every scope either product has used, and the ones this repository's commits use, so a scope one repository coins is not refused in the other. A product's list has every shared scope and may add scopes of its own, which need no exception; a scope both products use belongs here. The commit types and the other rules are compared whole: a product cannot add a type, because the types decide releases.
+
+    This repository has no releases and no `pr-policy` job. Its commits use the same types and scopes, and mark a breaking change with `!` and a `BREAKING CHANGE` footer.
+-   **Adopted:** both enforce it with `committed.toml` and `pr-policy`. The shared list is frappe-nix's 61 scopes, the union of both products' history (frappe-nix#159), with `conventions`, `sources` and `tui` from this repository. Both products carry it: odoo-nix since odoo-nix#114, which took the whole list in place of its 30, and frappe-nix since frappe-nix#206, which added this repository's three ([#21](https://github.com/Avunu/python-devops-nix/issues/21)).
+-   **Status:** decided.
+-   **Check:** `lib.checks.sharedConfig` compares each product's `committed.toml` with this repository's copy. Each product's `pr-policy` job runs `committed` over its pull requests.
 
 ## The development shell option tree
 

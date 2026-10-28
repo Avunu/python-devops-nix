@@ -8,6 +8,7 @@ let
   baseFiles = {
     ".editorconfig" = ../../.editorconfig;
     ".pre-commit-config.yaml" = ../../.pre-commit-config.yaml;
+    "committed.toml" = ../../committed.toml;
     "ruff.toml" = ../../ruff.toml;
     "statix.toml" = ../../statix.toml;
   };
@@ -723,8 +724,10 @@ in
   # The product's copies of the shared repository files, compared with the
   # base's: each must make every setting the base's copy makes, with the same
   # value, and may add its own (docs/conventions.md, Repository files).
-  # `exceptions` maps a file to the key paths of base settings the product
-  # sets differently, each one documented in the product, e.g.
+  # committed.toml's `allowed_scopes` is compared as a set: the product's
+  # lists every shared scope and may add its own. `exceptions` maps a file to
+  # the key paths of base settings the product sets differently, each one
+  # documented in the product, e.g.
   # { ".editorconfig" = [ [ "*.py" "indent_style" ] ]; }. statix.toml is
   # compared by `nixLint`.
   sharedConfig =
@@ -735,6 +738,7 @@ in
       files ? [
         ".editorconfig"
         ".pre-commit-config.yaml"
+        "committed.toml"
         "ruff.toml"
       ],
       exceptions ? { },

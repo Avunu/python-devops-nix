@@ -96,7 +96,7 @@ Conventions: [Images](conventions.md#images).
 | --- | --- |
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval`, `nixosTest` and `checkName`, each named `<product>-<x>-check`. |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy. |
-| `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | Checks that the product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings. |
+| `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | Checks that the product's `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml` and `ruff.toml` carry this repository's settings. |
 | `lib.checks.conventions { pkgs, src, product, checks, options ? null, tenant ? null, settings ? null, commands ? null, dependabot ? { }, checkNames ? { }, envVars ? { }, optionPaths ? { }, commandFlags ? { } }` | The conformance checks, by check name, for a product to merge into its checks: `ci-pins`, `dependabot`, `check-names` and `env-vars`; with `options`, `option-paths` and `config-blocks`; and with `commands`, `command-flags`. `checks` is the set they are merged into; only its names are read. `options` is `{ shell, nixos }`, the option sets of the product's modules, and needs `tenant` and `settings`. `commands` is `{ restore, scaffolder }`, each a command's words. |
 | `lib.checks.ciPins { pkgs, src, product }` | Every `uses:` in `.github/workflows` and `.github/actions` pinned by a full commit SHA (a `docker://` image by its sha256 digest) with a trailing comment, except a local `./` path. |
 | `lib.checks.dependabot { pkgs, src, product, prefix ? "fix(deps)", developmentPrefix ? "chore(deps)", development ? [ ] }` | Every ecosystem in `.github/dependabot.yml` with the prefix, `cooldown.default-days: 7` and a `patterns: ["*"]` group. `development` lists `{ ecosystem, directory ? "/" }` entries that take `developmentPrefix`. |
@@ -110,7 +110,7 @@ Conventions: [Images](conventions.md#images).
 | `.github/actions/nix-failures` | Markdown from the log of a failed `nix build` or `nix flake check`: each failed derivation with the end of its log, or the evaluation error. |
 | `.github/actions/check-report` | A workflow's last job: comments its jobs' results and the `failures-*` artifacts on the pull request when a job failed, and brings that comment up to date once they pass. |
 | `.github/actions/sticky-comment` | One comment per marker on a pull request, created or edited, never failing the job. The other actions comment through it. |
-| `.editorconfig`, `.pre-commit-config.yaml`, `ruff.toml`, `statix.toml` | The shared copies those checks compare with. |
+| `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml`, `ruff.toml`, `statix.toml` | The shared copies those checks compare with. `committed.toml` holds the commit types and the one scope list. |
 
 Conventions: [Tests](conventions.md#tests), [Repository files](conventions.md#repository-files), [CI](conventions.md#ci).
 
