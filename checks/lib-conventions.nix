@@ -74,7 +74,9 @@ mk.script "lib-conventions" { } ''
   echo "the entry point names its checks: ${meta}"
   echo "a conforming product passes: ${registered.ci-pins} ${registered.dependabot} ${registered.check-names}"
 
-  # CI: a tag, a short SHA in a composite action, and a pin with no version.
+  # CI: a tag, a short SHA in a composite action, a docker image by its tag,
+  # and pins with no comment: after a plain scalar, after a flow mapping and
+  # after a folded scalar's indicator.
   ${stub.expectFailure
     (pins (stub.variant "tag" "sed -i 's|checkout@[0-9a-f]*|checkout@v7|' .github/workflows/check.yml"))
     [
@@ -95,7 +97,26 @@ mk.script "lib-conventions" { } ''
       stub.variant "no-comment" "sed -i 's| # main (no release yet)$||' .github/workflows/check.yml"
     ))
     [
-      ".github/workflows/check.yml:10: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 has no version in a trailing comment"
+      ".github/workflows/check.yml:10: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 has no trailing comment"
+    ]
+  }
+  ${stub.expectFailure
+    (pins (
+      stub.variant "docker-tag" "sed -i 's|alpine@sha256:[0-9a-f]*|alpine:3.20|' .github/workflows/check.yml"
+    ))
+    [
+      ".github/workflows/check.yml:14: docker://alpine:3.20 is not pinned by a sha256 digest"
+    ]
+  }
+  ${stub.expectFailure
+    (pins (
+      stub.variant "no-comments" "sed -i 's/ # v[0-9.]*$//; s/>- # v3.1.0/>-/' .github/workflows/check.yml"
+    ))
+    [
+      ".github/workflows/check.yml:7: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 has no trailing comment"
+      ".github/workflows/check.yml:15: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 has no trailing comment"
+      ".github/workflows/check.yml:16: j178/prek-action@44924fe9ef4a6f88253c4b6b1bf11c689d3ce53d has no trailing comment"
+      "3 action(s) not pinned"
     ]
   }
   ${stub.expectFailure (pins (stub.variant "no-workflows" "rm -r .github")) [
@@ -103,7 +124,13 @@ mk.script "lib-conventions" { } ''
   ]}
 
   # Dependabot: a wrong prefix, a missing cooldown, no catch-all group, a
-  # development ecosystem not listed, a stale listing, and no file at all.
+  # development ecosystem not listed, one listed but with the release prefix, a
+  # stale listing, and no file at all. `directories:` matches a listing too.
+  echo "directories passes: ${
+    dependabot (stub.variant "directories" ''
+      sed -i 's|directory: /dev|directories: ["/dev"]|' .github/dependabot.yml
+    '') { }
+  }"
   ${stub.expectFailure
     (dependabot (stub.variant "chore" "sed -i '0,/fix(deps)/s//chore(deps)/' .github/dependabot.yml")
       { }
@@ -122,6 +149,15 @@ mk.script "lib-conventions" { } ''
   ${stub.expectFailure (dependabot stub.tree { development = [ ]; }) [
     ".github/dependabot.yml: uv in /dev: commit-message.prefix is \"chore(deps)\", not \"fix(deps)\""
   ]}
+  ${stub.expectFailure
+    (dependabot
+      (stub.variant "development-fix" "sed -i 's/chore(deps)/fix(deps)/' .github/dependabot.yml")
+      { }
+    )
+    [
+      ".github/dependabot.yml: uv in /dev: commit-message.prefix is \"fix(deps)\", not \"chore(deps)\""
+    ]
+  }
   ${stub.expectFailure
     (dependabot stub.tree {
       development = stub.dependabot.development ++ [ { ecosystem = "pip"; } ];

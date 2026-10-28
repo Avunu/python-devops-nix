@@ -145,8 +145,8 @@ let
   # them all.
   repository = {
     # docs/conventions.md, CI: every `uses:` in .github/workflows and
-    # .github/actions is pinned by a full commit SHA, with the version in a
-    # trailing comment. A local `./` path is exempt.
+    # .github/actions is pinned by a full commit SHA, or a `docker://` image by
+    # its sha256 digest, with a trailing comment. A local `./` path is exempt.
     ciPins =
       {
         pkgs,

@@ -582,7 +582,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   odoo-nix: SHA pins, the `lint` job (odoo-nix#76), and `flake`, which builds every check; the reusable workflow since odoo-nix#78. Its `main` requires `flake` and `pr-policy`, since odoo-nix#63 merged red.
     -   Both, and this repository: `autofix` and the `report` job. frappe-nix's `app-test` comments its `frappe-test` report (coverage, stage verdicts and failed tests) on the app's pull request. odoo-nix measures no coverage yet, so its report is the failures alone.
 -   **Status:** partial: frappe-nix's required checks.
--   **Check:** `ci-pins` (`lib.checks.ciPins`, through [`lib.checks.conventions`](#tests)): every `uses:` in `.github/workflows` and `.github/actions` is pinned by a 40-character SHA with a trailing comment, except a local `./` path. The base runs it on itself. Required checks are repository settings, which no check in the tree can see.
+-   **Check:** `ci-pins` (`lib.checks.ciPins`, through [`lib.checks.conventions`](#tests)): every `uses:` in `.github/workflows` and `.github/actions` is pinned by a 40-character SHA, or a `docker://` image by its sha256 digest, with a trailing comment, except a local `./` path. It cannot tell a version from any other comment. The base runs it on itself. Required checks are repository settings, which no check in the tree can see.
 
 ### Repository files
 
@@ -677,7 +677,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     ```
 
     It returns `ci-pins` ([CI](#ci)), `dependabot` ([Dependabot](#dependabot)) and `check-names`, which fails on a name that is not kebab-case or has a kind prefix. `checkNames.exceptions` lists names allowed to break the rule; one that no longer does fails the check. Each check is also exported on its own (`lib.checks.ciPins`, `lib.checks.dependabot`, `lib.checks.checkNames`). The checks of the other conventions join it as they land ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Neither product registers it yet.
--   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through it (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
+-   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through `lib.checks.mk` (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
 -   **Status:** decided.
 -   **Check:** the base's `lib-mk` tests the helper, and `check-names` (`lib.checks.checkNames`, through `lib.checks.conventions`) the names. The base runs `check-names` on itself, and `lib-conventions` tests the entry point and its checks against a stub product.
 

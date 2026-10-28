@@ -4,8 +4,9 @@
     repository.py dependabot PRODUCT_DIR SPEC_JSON
 
 `pins` (docs/conventions.md, CI): every `uses:` in .github/workflows and in
-.github/actions is pinned by a full commit SHA, with the version in a trailing
-comment. A local `./` path is exempt.
+.github/actions is pinned by a full commit SHA, or a `docker://` image by its
+sha256 digest, with a trailing comment, which by convention names the version.
+A local `./` path is exempt.
 
 `dependabot` (docs/conventions.md, Dependabot): every ecosystem in
 .github/dependabot.yml has the commit prefix, the seven-day cooldown and one
@@ -27,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-PIN = re.compile(r"[^@\s]+@[0-9a-f]{40}")
+PIN = re.compile(r"[^@\s]+@[0-9a-f]{40}|docker://[^@\s]+@sha256:[0-9a-f]{64}")
 COOLDOWN_DAYS = 7
 
 
@@ -65,11 +66,23 @@ def pin_findings(path: Path, rel: str) -> Iterator[str]:
         if ref.startswith("./"):
             continue
         if not PIN.fullmatch(ref):
-            yield f"{where}: {ref} is not pinned by a full commit SHA"
+            by = "sha256 digest" if ref.startswith("docker://") else "full commit SHA"
+            yield f"{where}: {ref} is not pinned by a {by}"
             continue
-        rest = lines[node.end_mark.line][node.end_mark.column :].strip()
-        if not rest.startswith("#") or not rest.lstrip("#").strip():
-            yield f"{where}: {ref} has no version in a trailing comment"
+        if not trailing_comment(lines, node):
+            yield f"{where}: {ref} has no trailing comment"
+
+
+def trailing_comment(lines: list[str], node: yaml.Node) -> bool:
+    # A block scalar's comment can only follow its `|` or `>` indicator; any
+    # other scalar's follows its end, maybe after the rest of a flow mapping.
+    block = getattr(node, "style", None) in ("|", ">")
+    mark = node.start_mark if block else node.end_mark
+    rest = lines[mark.line][mark.column :]
+    if block:
+        rest = rest.lstrip("|>+-0123456789")
+    comment = re.search(r"(?:^|\s)#(.*)", rest)
+    return comment is not None and bool(comment.group(1).strip())
 
 
 def pins(product_dir: Path) -> int:
@@ -95,7 +108,7 @@ def pins(product_dir: Path) -> int:
     if findings:
         print(
             f"{len(findings)} action(s) not pinned. Pin each by its full commit SHA,"
-            " with the version in a trailing comment (docs/conventions.md, CI)."
+            " with its version in a trailing comment (docs/conventions.md, CI)."
         )
         return 1
     print(f"every action in {len(files)} file(s) is pinned")

@@ -54,8 +54,9 @@ rec {
     printf '_: { }\n' > default.nix
 
     # Its .github: pinned actions in a workflow and in a composite action (one
-    # quoted, one a reusable workflow, one local), and Dependabot's shape with
-    # one development-only ecosystem, listed in `dependabot.development`.
+    # quoted, one a reusable workflow, one local, one a docker image, one in a
+    # flow mapping and one a folded scalar), and Dependabot's shape with one
+    # development-only ecosystem, listed in `dependabot.development`.
     mkdir -p .github/workflows .github/actions/setup
     cat > .github/workflows/check.yml <<'EOF'
     on: pull_request
@@ -68,6 +69,13 @@ rec {
           - uses: ./.github/actions/setup
       auto-merge:
         uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 # main (no release yet)
+      docker:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: docker://alpine@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef # 3.20
+          - { uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333, with: { name: report } } # v8.0.2
+          - uses: >- # v3.1.0
+              j178/prek-action@44924fe9ef4a6f88253c4b6b1bf11c689d3ce53d
     EOF
     cat > .github/actions/setup/action.yml <<'EOF'
     name: setup
