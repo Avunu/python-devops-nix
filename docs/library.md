@@ -87,13 +87,13 @@ Conventions: [Production](conventions.md#production), [Logging](conventions.md#l
 | --- | --- |
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval`, `nixosTest` and `checkName`, each named `<product>-<x>-check`. |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy. |
-| `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | Checks that the product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings. |
+| `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | Checks that the product's `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml` and `ruff.toml` carry this repository's settings. |
 | `.github/workflows/dependabot-auto-merge.yml` | A reusable workflow that auto-merges Dependabot pull requests by a policy the caller passes. A caller pins it by SHA. |
 | `.github/actions/pre-commit-autofix` | Runs the caller's fixers (`nix fmt`) and prek hooks over a pull request's branch, pushes what they rewrote, dispatches the workflows the push cannot start, and comments what it did. |
 | `.github/actions/nix-failures` | Markdown from the log of a failed `nix build` or `nix flake check`: each failed derivation with the end of its log, or the evaluation error. |
 | `.github/actions/check-report` | A workflow's last job: comments its jobs' results and the `failures-*` artifacts on the pull request when a job failed, and brings that comment up to date once they pass. |
 | `.github/actions/sticky-comment` | One comment per marker on a pull request, created or edited, never failing the job. The other actions comment through it. |
-| `.editorconfig`, `.pre-commit-config.yaml`, `ruff.toml`, `statix.toml` | The shared copies those checks compare with. |
+| `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml`, `ruff.toml`, `statix.toml` | The shared copies those checks compare with. `committed.toml` holds the commit types and the one scope list. |
 
 Conventions: [Tests](conventions.md#tests), [Repository files](conventions.md#repository-files), [CI](conventions.md#ci).
 
