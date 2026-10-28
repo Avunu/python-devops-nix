@@ -4,7 +4,7 @@ description: What python-devops-nix exports, from the secrets toolkit to the Nix
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-10-23
+updated: 2026-10-28
 ---
 
 # Library reference
@@ -88,6 +88,10 @@ Conventions: [Production](conventions.md#production), [Logging](conventions.md#l
 | `lib.checks.mk { pkgs, product }` | The helper a product registers its checks with: `script`, `eval`, `nixosTest` and `checkName`, each named `<product>-<x>-check`. |
 | `lib.checks.nixLint { pkgs, src, product, ignore ? [ ], compareStatix ? true }` | nixfmt-rs, statix and deadnix over the tree, and `statix.toml` compared with this repository's copy. |
 | `lib.checks.sharedConfig { pkgs, src, product, files ? [ … ], exceptions ? { } }` | Checks that the product's `.editorconfig`, `.pre-commit-config.yaml` and `ruff.toml` carry this repository's settings. |
+| `lib.checks.conventions { pkgs, src, product, checks, dependabot ? { }, checkNames ? { } }` | The conformance checks, by check name, for a product to merge into its checks: `ci-pins`, `dependabot` and `check-names`. `checks` is the set they are merged into; only its names are read. |
+| `lib.checks.ciPins { pkgs, src, product }` | Every `uses:` in `.github/workflows` and `.github/actions` pinned by a full commit SHA with a trailing comment, except a local `./` path. |
+| `lib.checks.dependabot { pkgs, src, product, prefix ? "fix(deps)", developmentPrefix ? "chore(deps)", development ? [ ] }` | Every ecosystem in `.github/dependabot.yml` with the prefix, `cooldown.default-days: 7` and a `patterns: ["*"]` group. `development` lists `{ ecosystem, directory ? "/" }` entries that take `developmentPrefix`. |
+| `lib.checks.checkNames { pkgs, product, checks, exceptions ? [ ] }` | An eval check that each name in `checks` is kebab-case with no `eval-`, `module-` or `vm-` prefix. |
 | `.github/workflows/dependabot-auto-merge.yml` | A reusable workflow that auto-merges Dependabot pull requests by a policy the caller passes. A caller pins it by SHA. |
 | `.github/actions/pre-commit-autofix` | Runs the caller's fixers (`nix fmt`) and prek hooks over a pull request's branch, pushes what they rewrote, dispatches the workflows the push cannot start, and comments what it did. |
 | `.github/actions/nix-failures` | Markdown from the log of a failed `nix build` or `nix flake check`: each failed derivation with the end of its log, or the evaluation error. |

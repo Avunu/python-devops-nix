@@ -582,7 +582,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   odoo-nix: SHA pins, the `lint` job (odoo-nix#76), and `flake`, which builds every check; the reusable workflow since odoo-nix#78. Its `main` requires `flake` and `pr-policy`, since odoo-nix#63 merged red.
     -   Both, and this repository: `autofix` and the `report` job. frappe-nix's `app-test` comments its `frappe-test` report (coverage, stage verdicts and failed tests) on the app's pull request. odoo-nix measures no coverage yet, so its report is the failures alone.
 -   **Status:** partial: frappe-nix's required checks.
--   **Check:** not yet in the base for the `uses:` pins ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Required checks are repository settings, which no check in the tree can see.
+-   **Check:** `ci-pins` (`lib.checks.ciPins`, through [`lib.checks.conventions`](#tests)): every `uses:` in `.github/workflows` and `.github/actions` is pinned by a 40-character SHA with a trailing comment, except a local `./` path. The base runs it on itself. Required checks are repository settings, which no check in the tree can see.
 
 ### Repository files
 
@@ -623,7 +623,13 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   odoo-nix#78: nix (with the `ocb` and `odoo-ls` groups), pre-commit and github-actions, all `fix(deps)`, all with the cooldown. It has no uv entry, because its template's lock cannot be resolved without a project.
     -   This repository, which has no releases, uses `chore`.
 -   **Status:** decided.
--   **Check:** not yet in the base: a check over `.github/dependabot.yml` for the prefix and the cooldown ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** `dependabot` (`lib.checks.dependabot`, through [`lib.checks.conventions`](#tests)): every ecosystem in `.github/dependabot.yml` has the prefix, the cooldown and a `patterns: ["*"]` group. A product lists its development-only entries, which take `chore(deps)`:
+
+    ```nix
+    dependabot.development = [ { ecosystem = "uv"; directory = "/dev"; } ];
+    ```
+
+    An entry listed there that the file does not have fails the check. The base runs it on itself with `prefix = "chore"`.
 
 ### Docs pipeline
 
@@ -651,9 +657,29 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     | `checkName <x>` | The derivation name, `<product>-<x>-check`, for a check built some other way. |
 
     `lib.checks.nixLint` and `lib.checks.sharedConfig` are built with it and take the same `product`.
+
+    `lib.checks.conventions` returns the checks that confirm a product follows this page, by check name, for the product to merge into its checks. It reads the names of the checks it is merged into, so it can pass them back in:
+
+    ```nix
+    checks = forAllSystems (
+      pkgs:
+      {
+        # ... the product's own checks
+      }
+      // python-devops-nix.lib.checks.conventions {
+        inherit pkgs;
+        src = ./.;
+        product = "frappe-nix";
+        checks = self.checks.${pkgs.stdenv.hostPlatform.system};
+        dependabot.development = [ { ecosystem = "uv"; directory = "/dev"; } ];
+      }
+    );
+    ```
+
+    It returns `ci-pins` ([CI](#ci)), `dependabot` ([Dependabot](#dependabot)) and `check-names`, which fails on a name that is not kebab-case or has a kind prefix. `checkNames.exceptions` lists names allowed to break the rule; one that no longer does fails the check. Each check is also exported on its own (`lib.checks.ciPins`, `lib.checks.dependabot`, `lib.checks.checkNames`). The checks of the other conventions join it as they land ([#19](https://github.com/Avunu/python-devops-nix/issues/19)). Neither product registers it yet.
 -   **Adopted:** odoo-nix#77 and frappe-nix#160 register every check through it (odoo-nix's `module-nginx` became `nginx`). Every frappe-nix derivation is `frappe-nix-<x>-check` or `vm-test-run-frappe-nix-<x>`, except `runtime`, which is the `frappe-runtime` package itself.
 -   **Status:** decided.
--   **Check:** the base's `lib-mk` tests the helper. A pattern over check attribute names is not yet in the base ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
+-   **Check:** the base's `lib-mk` tests the helper, and `check-names` (`lib.checks.checkNames`, through `lib.checks.conventions`) the names. The base runs `check-names` on itself, and `lib-conventions` tests the entry point and its checks against a stub product.
 
 ### Commits
 
