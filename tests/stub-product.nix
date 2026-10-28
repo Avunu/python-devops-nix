@@ -1,7 +1,7 @@
 # A stub product for testing lib.checks (docs/library.md, design rule 8): a tree
 # with the shared repository files and a .github as a product would carry them,
-# and helpers to derive broken variants of it and to assert that a check fails
-# on one.
+# the options its modules declare, and helpers to derive broken variants of
+# them and to assert that a check fails on one.
 #
 # The tree is built here rather than committed, because a nested
 # .pre-commit-config.yaml would be picked up by prek's workspace discovery.
@@ -130,6 +130,164 @@ rec {
     {
       ecosystem = "uv";
       directory = "/dev";
+    }
+  ];
+
+  # Its modules' option declarations: `stub.*` in the development shell and
+  # `services.stub.*` in NixOS, each option the conventions name, with the
+  # framework's settings as RFC 42 blocks. Only the declarations are read, so
+  # every leaf is the same untyped option.
+  declarations =
+    let
+      leaf = lib.mkOption {
+        type = lib.types.anything;
+        default = null;
+      };
+      leaves = names: lib.genAttrs names (_: leaf);
+      guard = leaves [ "enable" ];
+    in
+    {
+      shell.stub = {
+        name = leaf;
+        defaultSite = leaf;
+        restore = leaves [
+          "enable"
+          "migrate"
+          "neutralize"
+          "files"
+          "requireDevguard"
+        ];
+        watch = leaves [ "python" ];
+        devguard = {
+          enable = leaf;
+          egress = leaves [
+            "enable"
+            "allowHosts"
+          ];
+          mail = leaves [
+            "enable"
+            "sender"
+            "unmute"
+          ];
+          jobs = leaves [
+            "enable"
+            "extraBlocked"
+          ];
+          backups = guard;
+          objectstore = guard;
+          webhooks = guard;
+          # A product guard beside the shared ones.
+          iap = guard;
+        };
+        mailpit =
+          leaves [
+            "enable"
+            "host"
+            "port"
+            "httpPort"
+          ]
+          // {
+            pop3 = leaves [
+              "enable"
+              "port"
+              "user"
+              "password"
+            ];
+          };
+        ports = leaves [
+          "base"
+          "offset"
+          "worktreeSalt"
+          "http"
+          "db"
+          "smtp"
+          "mailUi"
+        ];
+        # odoo.conf's shape: INI by section, lists as one value.
+        settings = lib.mkOption {
+          type = lib.types.submodule {
+            freeformType = (pkgs.formats.ini { listToValue = lib.concatStringsSep ","; }).type;
+          };
+          default = { };
+        };
+      };
+      nixos.services.stub = {
+        enable = leaf;
+        package = leaf;
+        # site_config.json's shape, per site.
+        sites = lib.mkOption {
+          type = lib.types.attrsOf (
+            lib.types.submodule {
+              options.settings = lib.mkOption {
+                type = lib.types.submodule {
+                  freeformType = (pkgs.formats.json { }).type;
+                  options.host_name = leaf;
+                };
+                default = { };
+              };
+            }
+          );
+          default = { };
+        };
+      };
+    };
+
+  # Old names, which a product keeps hidden: `runtime.dev`, an alias of
+  # `watch.python`, and the removed `dev` tree.
+  hidden.shell = [
+    (lib.doRename {
+      from = [
+        "stub"
+        "runtime"
+        "dev"
+      ];
+      to = [
+        "stub"
+        "watch"
+        "python"
+      ];
+      visible = false;
+      warn = false;
+      use = lib.id;
+    })
+    {
+      options.stub.dev = lib.mkOption {
+        type = lib.types.anything;
+        visible = false;
+      };
+    }
+  ];
+
+  # The option sets `declared` and its hidden `aliases` evaluate to, as
+  # lib.checks.conventions takes them.
+  optionsOf =
+    declared: aliases:
+    lib.mapAttrs (
+      module: options:
+      (lib.evalModules { modules = [ { inherit options; } ] ++ aliases.${module} or [ ]; }).options
+    ) declared;
+  options = optionsOf declarations hidden;
+
+  # The default tenant's options, and the settings blocks.
+  tenant = {
+    shell = "defaultSite";
+    nixos = "sites";
+  };
+  settings = [
+    {
+      module = "nixos";
+      path = [
+        "sites"
+        "<name>"
+        "settings"
+      ];
+      format = "json";
+    }
+    {
+      module = "shell";
+      path = [ "settings" ];
+      format = "ini";
+      args.listToValue = lib.concatStringsSep ",";
     }
   ];
 
