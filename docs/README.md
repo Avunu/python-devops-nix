@@ -9,7 +9,7 @@ updated: 2026-10-28
 
 # python-devops-nix documentation
 
-python-devops-nix is the shared base of Avunu's Nix packaging for Python application frameworks, [frappe-nix](https://github.com/Avunu/frappe-nix) and [odoo-nix](https://github.com/Avunu/odoo-nix). It holds the pieces that do not depend on either product and are expensive to get wrong: the secrets toolkit and backup access, the devguard core, the Python environment fixes, development-shell helpers, the pieces inside the NixOS modules (unit hardening, migrate on deploy, sockets, nginx and journald logging), and repository hygiene. The products' development shells, NixOS modules and containers stay in the products.
+python-devops-nix is the shared base of Avunu's Nix packaging for Python application frameworks, [frappe-nix](https://github.com/Avunu/frappe-nix) and [odoo-nix](https://github.com/Avunu/odoo-nix). It holds the pieces that do not depend on either product and are expensive to get wrong: the secrets toolkit and backup access, the devguard core, the Python environment fixes, development-shell helpers, the pieces inside the NixOS modules (unit hardening, migrate on deploy, sockets, nginx and journald logging), the parts the container images share (their labels, user and healthcheck), and repository hygiene. The products' development shells, NixOS modules and container images stay in the products.
 
 It is for the maintainers of those products. If you deploy or develop with frappe-nix or odoo-nix, start with that product's documentation instead.
 

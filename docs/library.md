@@ -4,7 +4,7 @@ description: What python-devops-nix exports, from the secrets toolkit to the Nix
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-10-23
+updated: 2026-10-28
 ---
 
 # Library reference
@@ -40,7 +40,7 @@ Conventions: [devguard](conventions.md#devguard).
 | Export | What it does |
 | --- | --- |
 | `lib.python.overrides { pkgs }`, `lib.python.packageOverrides { pkgs }` | One pyproject-nix overlay with the fixes for packages that need a system library (psycopg2, python-ldap, lxml, pycups, python-magic, pyvips, cairocffi), composed after uv2nix's; and the same fixes one by one. |
-| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. |
+| `lib.python.rich { python, extraPackages ? ps: [ ] }` | A nixpkgs interpreter with rich, for a product's tooling. Its `.rich` is that rich, for a tool package to depend on. |
 | `lib.python.textual { python, extraPackages ? ps: [ ] }` | The same with textual, for the TUI: rich.nix's fixes made once in the package set, so textual, rich, markdown-it-py and mdit-py-plugins are one copy each. |
 | `lib.python.lockAudit { workspaceRoot, hasPackage, label, … }` | `{ missing, message, assertCurrent }`: a stale `uv.lock` reported as a sentence that names the member and the requirement. |
 | `lib.python.buildDeps { pkgs, label, always ? { }, python ? … }`, `lib.python.buildDepsModule` | `<label>-build-deps {update,check}`: `[tool.uv.extra-build-dependencies]` derived from `uv.lock` (python/uv_build_deps.py). |
@@ -80,6 +80,15 @@ Conventions: [Development shell](conventions.md#development-shell), [The develop
 | `lib.journald.mkGraft { pkgs, name, src }`, `lib.journald.module`, `lib.journald.check` | The product's journald graft with the formatter core (python/journald.py) and the post-import hook beside it. |
 
 Conventions: [Production](conventions.md#production), [Logging](conventions.md#logging), [nginx configuration](conventions.md#nginx-configuration).
+
+## Containers
+
+| Export | What it does |
+| --- | --- |
+| `lib.containers.mk { pkgs, label, name, user, home, nonRoot, source, version, licenses, registry ? "", revision ? null, labelOverrides ? { }, uid ? 1000, gid ? 1000 }` | The parts of an image both products write: `imageName <role>` (`[<registry>/]<name>/<role>`), `labels <role>` (the `org.opencontainers.image.*` labels), `user` (`<uid>:<gid>` with `nonRoot`, else `0:0`) and `homeEnv`, `users` (`/etc/passwd` and `/etc/group` for root, the user and nobody, named `<label>-container-users`), `writable <dirs>` and `fakeRootCommands { writable ? [ ], dirs ? [ ] }` (a world-writable `/tmp`, `dirs` created, and `writable` created and, with `nonRoot`, owned by the user), `healthcheck` and `buildImage` (`dockerTools.buildLayeredImage` with the config added to `passthru` as `imageConfig`). `label` is the product (`odoo-nix`), `name` the project the images are named after. |
+| `lib.containers.healthcheck <command>`, `lib.containers.second` | An image's `Healthcheck`: the command every 30 seconds, 10 seconds to answer, 3 retries, and failures in the first 120 seconds not counted. Durations are nanoseconds, and `second` is one. |
+
+Conventions: [Images](conventions.md#images).
 
 ## Repository
 

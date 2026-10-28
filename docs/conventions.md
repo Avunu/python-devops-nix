@@ -178,10 +178,10 @@ Both products build their environment the same way: pyproject-nix, uv2nix and py
 
 ### Tool interpreter with rich
 
--   **Convention:** a product's own tooling (a banner, a command line) runs on `lib.python.rich { python, extraPackages ? ps: [ ] }`: nixpkgs' rich, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped. It is never added to the application's environment.
--   **Adopted:** odoo-nix#59 (its command line, scaffolder and banner). frappe-nix's banner runs on it through `lib.banner`, but frappe-nix-tools, its command-line package, is still built on nixpkgs' plain rich (`lib/standards/package.nix`).
--   **Status:** partial: frappe-nix's tooling ([frappe-nix#179](https://github.com/Avunu/frappe-nix/issues/179)).
--   **Check:** the base's `lib-python-rich` builds it on every preset interpreter, with rich's suite.
+-   **Convention:** a product's own tooling (a banner, a command line) runs on `lib.python.rich { python, extraPackages ? ps: [ ] }`: nixpkgs' rich, with markdown-it-py's checks off and rich's racy `test_brokenpipeerror` skipped. Tooling built as a Python package of its own depends on that rich (`(lib.python.rich { python }).rich`), so every interpreter that holds the package gets it. This rich is never added to the application's environment.
+-   **Adopted:** odoo-nix#59 (its command line, scaffolder and banner) and frappe-nix#205 (frappe-nix-tools, its command-line package). frappe-nix's banner already ran on it through `lib.banner`.
+-   **Status:** decided.
+-   **Check:** the base's `lib-python-rich` builds it on every preset interpreter, with rich's suite. frappe-nix's `standards-cli` fails evaluation when frappe-nix-tools' rich is not this one.
 
 ### Stale lock
 
@@ -503,11 +503,13 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
     -   every image that serves HTTP has a healthcheck;
     -   with `containers.nonRoot`, an image runs as the product's user, uid and gid 1000, with its own `/etc/passwd` and `/etc/group`. `containers.nonRoot` is off through 1.x, because a volume a root image wrote needs a one-time `chown` first, and on from 2.0.0;
     -   an nginx image keeps port 80. Run as non-root under rootless Podman, it needs `--sysctl net.ipv4.ip_unprivileged_port_start=0`.
+
+    A product builds these pieces with `lib.containers.mk { pkgs, label, name, user, home, nonRoot, source, version, licenses, … }`: `imageName <role>`, `labels <role>` (with `revision` when it is not null, and `labelOverrides` over them), `user` and `homeEnv`, `users` (the `/etc/passwd` and `/etc/group`, in every image), `healthcheck <command>` (every 30 seconds, 10 seconds to answer, 3 retries, and no failure counted in the first 120 seconds), and `fakeRootCommands { writable ? [ ], dirs ? [ ] }`, which makes `/tmp` world-writable, creates the directories, and with `nonRoot` gives the user the `writable` ones. The probe a healthcheck runs stays the product's, since it asks the product's own readiness endpoint.
 -   **Adopted:**
     -   frappe-nix#157: `[<registry>/]<name>/<role>` and `container-<role>`, with the old output names aliased until 2.0.0 (`frappe-nix.containers.aliases`). The runtime, web, socketio and nginx images have a healthcheck; scheduler, the workers and bench do not. With `containers.nonRoot` the images run as `frappe`.
-    -   odoo-nix#81: the output is `container-odoo`. The image name stays `[<registry>/]<name>-odoo` by default through 1.x, with a warning, and becomes `<name>/odoo` with `containers.roleImageNames`, the default from 2.0.0. With `containers.nonRoot` it runs as `odoo`, home `/var/lib/odoo`. `containers.labels` overrides the labels.
--   **Status:** decided for the outputs, the labels and the healthchecks; deferred to 2.0.0 for `containers.nonRoot` and odoo-nix's role image name.
--   **Check:** not yet in the base. Each product evaluates its image configs (odoo-nix's `container-user`). A shared `lib.containers` would put these pieces in one place ([#20](https://github.com/Avunu/python-devops-nix/issues/20)).
+    -   odoo-nix#81: the output is `container-odoo`, and the image `[<registry>/]<name>/odoo` since 2.0.0 (1.x named it `<name>-odoo`). With `containers.nonRoot`, the default since 2.0.0, it runs as `odoo`, home `/var/lib/odoo`. `containers.labels` overrides the labels.
+-   **Status:** decided. `containers.nonRoot` is odoo-nix's default since its 2.0.0, and becomes frappe-nix's in its 2.0.0.
+-   **Check:** the base's `lib-containers` evaluates a stub product's images built from `lib.containers`: their names, labels, user and healthcheck, with and without `nonRoot`. It holds both products' own passwd and group derivations and frappe-nix's `fakeRootCommands` as golden values, so adopting `lib.containers` changes nothing in frappe-nix's images. odoo-nix's `fakeRootCommands` text differs (`chown -Rh` for `chown -R`, and the directories listed), so adopting it changes that text but not the image's layers. Each product evaluates its image configs (odoo-nix's `container-user`). Neither product uses `lib.containers` yet ([#20](https://github.com/Avunu/python-devops-nix/issues/20)).
 
 ## Repository
 
