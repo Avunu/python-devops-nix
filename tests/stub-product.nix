@@ -55,9 +55,11 @@ rec {
 
     # Its tools' environment variables: STUB_NIX_* in Nix, Python and a shell
     # script with no suffix, devguard's STUB_DEVGUARD_*, the framework's own
-    # STUB_RC and an old name, STUB_DB, both listed in `envVars.exceptions`.
-    # Comments, prose, a Python constant, another namespace's MY_STUB_HOME, a
-    # README and the ignored fixtures name others, which are not read.
+    # STUB_RC, an old name, STUB_DB, and a template's key, STUB_VERSION, all
+    # listed in `envVars.exceptions`. Comment lines that would count as code,
+    # prose, a Python constant, another namespace's MY_STUB_HOME, a script's
+    # own lower-case stub_sha, a README and the ignored fixtures name others,
+    # which are not read.
     mkdir -p modules lib bin tests/fixtures
     cat > modules/devenv.nix <<'EOF'
     { pkgs, ... }:
@@ -66,7 +68,7 @@ rec {
         STUB_NIX_DEVGUARD = "1";
         STUB_DEVGUARD_ENABLED = "1";
       };
-      # STUB_OLD_DEVGUARD was its name before.
+      # env.STUB_OLD_DEVGUARD = "1"; was its name before.
       scripts.stub-up = pkgs.writeShellScript "stub-up" '''
         exec stub --port "$STUB_NIX_PORT_OFFSET"
       ''';
@@ -77,7 +79,7 @@ rec {
 
     import os
 
-    # STUB_RESTORE_ALLOW_UNGUARDED was the old name.
+    # os.environ.get("STUB_RESTORE_ALLOW_UNGUARDED") read the old name.
     STUB_PRESETS = "presets.json"
     ALLOW = "STUB_NIX_RESTORE_ALLOW_UNGUARDED"
 
@@ -92,9 +94,12 @@ rec {
     cat > bin/stub-ci <<'EOF'
     #!/usr/bin/env bash
     MY_STUB_HOME=1
+    # export STUB_CI=1 was the old name.
     export STUB_NIX_CI=1
-    echo "CI mode: ''${STUB_NIX_CI}"
+    stub_sha="$(git rev-parse HEAD)"
+    echo "CI mode: ''${STUB_NIX_CI} at $stub_sha"
     EOF
+    echo 'TOKENS = {"STUB_VERSION": "16"}' > lib/template.py
     echo 'Set `$STUB_SITE` to pick a site.' > README.md
     echo 'echo "$STUB_FIXTURE"' > tests/fixtures/env.sh
 
@@ -178,13 +183,14 @@ rec {
     }
   ];
 
-  # The names `tree` reads that are not STUB_NIX_*, and the fixtures it does
+  # The names `tree` uses that are not STUB_NIX_*, and the fixtures it does
   # not scan.
   envVars = {
     ignore = [ "tests/fixtures" ];
     exceptions = [
       "STUB_DB"
       "STUB_RC"
+      "STUB_VERSION"
     ];
   };
 

@@ -19,10 +19,15 @@ source uses as one, in any file that is Python, shell or Nix:
     `--unset`, `--prefix` or `--suffix`;
 -   in Nix, an attribute: `NAME = ...;` (`env.NAME`, `environment.NAME`).
 
-A name only in a comment line, in prose or as a Python constant does not count.
-`required` names variables the source must use, and `exceptions` names that may
-break the rule (the framework's own, and old names read until 2.0.0). An
-exception that is not found, or that follows the rule, fails the check.
+A name on a comment line, inside a longer string or as a Python constant does
+not count. `$NAME` counts anywhere, a docstring's too. No scan can tell what a
+name is for, so two kinds of name count that are not the environment's: a
+quoted template key (`{"<P>_VERSION": ...}`), and a shell script's own
+variable (`<P>_SHA="$(git rev-parse HEAD)"`). A script writes its own in lower
+case. `required` names variables the source must use, and `exceptions` names
+that may break the rule (the framework's own, old names read until 2.0.0, and
+names that are not variables, such as a template's keys). An exception that is
+not found, or that follows the rule, fails the check.
 
 `flags` (docs/conventions.md, Restore and Scaffolder): each command, run with
 `--help`, lists the flags the conventions name for its role. SPEC_JSON is
@@ -30,8 +35,11 @@ exception that is not found, or that follows the rule, fails the check.
 "exceptions": ["<role> <flag>", ...]}. A flag counts when it heads a line of
 the help's option list, as argparse, click and a hand-written usage print it:
 `  --files / --no-files  ...`, `  -y, --yes  ...`, `  --at <when>  ...`,
-`  --commit[=<msg>]  ...`. One only named in a description does not, even
-at the start of a line.
+`  --commit[=<msg>]  ...`, `  --files FILES [FILES ...]  ...`,
+`  --[no-]force  ...`. Two spaces or a tab end the flags, and a metavar is in
+upper case or in brackets. One only named in a description does not count, even
+at the start of a line. A help in another shape (`--at when`, one space before
+the description) fails the check; it never passes it wrongly.
 
 Each prints one line per finding and exits 1 if there is any.
 """
@@ -52,11 +60,16 @@ COMMENT = re.compile(r"\s*#")
 SETTERS = r"export|unset|printenv|--set|--set-default|--unset|--prefix|--suffix"
 # The groups of `patterns` that hold the name.
 GROUPS = ("expanded", "quoted", "set", "named", "attribute")
-# A word of a help's option term: a flag (`-y,`, `--commit[=<msg>]`), the `/`
-# between a flag and its negation, or a metavar (`<when>`, `TEXT`, `[a|b]`,
-# `{a,b}`).
+# The words of a help's option term. A bracketed group is one word, spaces and
+# all (`[FILES ...]`).
+TERM_WORDS = re.compile(r"(?:\[[^\]]*\]|\{[^}]*\}|<[^>]*>|[^\s\[{<])+")
+# A word of a help's option term: a flag (`-y,`, `--commit[=<msg>]`,
+# `--files/--no-files`), the `/` between a flag and its negation, or a metavar
+# (`<when>`, `TEXT`, `[a|b]`, `{a,b}`, `[FILES ...]`).
 TERM_WORD = re.compile(r"(-\S*|/|<[^>]*>|\[[^\]]*\]|\{[^}]*\}|[A-Z][A-Z0-9_.-]*),?")
 FLAG = re.compile(r"--?[A-Za-z0-9][\w-]*")
+# `--[no-]force`, which is `--force` and `--no-force`.
+NEGATABLE = re.compile(r"--\[no-\]([A-Za-z0-9][\w-]*)")
 
 
 def language(path: Path) -> str | None:
@@ -163,12 +176,18 @@ def help_flags(text: str) -> set[str]:
         match = re.match(r"\s+(-\S.*)", line)
         if not match:
             continue
-        # The term is what comes before the description, two spaces on. A
-        # line of prose that starts with a flag has words a term cannot.
-        words = re.split(r"\s{2,}", match.group(1).strip())[0].split()
+        # The term is what comes before the description, two spaces or a tab
+        # on. A line of prose that starts with a flag has words a term cannot.
+        term = re.split(r"\s{2,}|\t", match.group(1).strip())[0]
+        words = TERM_WORDS.findall(term)
         if not all(TERM_WORD.fullmatch(word) for word in words):
             continue
-        flags |= {FLAG.match(word)[0] for word in words if FLAG.match(word)}
+        for word in words:
+            for part in word.split("/") if word.startswith("-") else []:
+                if negatable := NEGATABLE.match(part):
+                    flags |= {f"--{negatable[1]}", f"--no-{negatable[1]}"}
+                elif flag := FLAG.match(part):
+                    flags.add(flag[0])
     return flags
 
 
@@ -195,11 +214,14 @@ def run_help(argv: list[str]) -> tuple[str, str | None]:
 def flags(spec: dict) -> int:
     exceptions = set(spec["exceptions"])
     problems: dict[str, str] = {}
+    # The roles whose help could not be read, whose exceptions are not judged.
+    unread: set[str] = set()
     findings = []
     for role, required in sorted(spec["required"].items()):
         text, error = run_help(spec["commands"][role])
         if error:
             findings.append(f"{role}: {error}")
+            unread.add(role)
             continue
         accepted = help_flags(text)
         for flag, section in sorted(required.items()):
@@ -213,6 +235,7 @@ def flags(spec: dict) -> int:
     findings += [
         f"{key}: listed as an exception, but nothing is wrong with it"
         for key in sorted(exceptions - problems.keys())
+        if key.split()[0] not in unread
     ]
     for line in findings:
         print(line)

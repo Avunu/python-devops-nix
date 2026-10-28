@@ -592,18 +592,20 @@ mk.script "lib-conventions" { } ''
       : "''${STUB_USER:-x}"
       STUB_MODE=dev stub
       unset STUB_TOKEN
+      STUB_SHA="$(git rev-parse HEAD)"
       EOF
       echo '{ wrap = "--set STUB_FLAG 1"; env.STUB_LEVEL = "debug"; }' > modules/wrap.nix
     '') { })
     [
       "STUB_PORT: not STUB_NIX_* or STUB_DEVGUARD_* (lib/port.py:1) (Tool-owned variables)"
-      "STUB_HOST: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:5, and 2 more) (Tool-owned variables)"
-      "STUB_USER: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:7)"
-      "STUB_MODE: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:8)"
-      "STUB_TOKEN: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:9)"
+      "STUB_HOST: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:7, and 2 more) (Tool-owned variables)"
+      "STUB_USER: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:9)"
+      "STUB_MODE: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:10)"
+      "STUB_TOKEN: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:11)"
+      "STUB_SHA: not STUB_NIX_* or STUB_DEVGUARD_* (bin/stub-ci:12)"
       "STUB_FLAG: not STUB_NIX_* or STUB_DEVGUARD_* (modules/wrap.nix:1)"
       "STUB_LEVEL: not STUB_NIX_* or STUB_DEVGUARD_* (modules/wrap.nix:1)"
-      "7 variable(s) outside the conventions (docs/conventions.md, Environment variables)."
+      "8 variable(s) outside the conventions (docs/conventions.md, Environment variables)."
     ]
   }
   ${stub.expectFailure
@@ -614,8 +616,9 @@ mk.script "lib-conventions" { } ''
     [
       "STUB_DB: not STUB_NIX_* or STUB_DEVGUARD_* (lib/restore.py:11)"
       "STUB_RC: not STUB_NIX_* or STUB_DEVGUARD_* (lib/restore.py:15)"
+      "STUB_VERSION: not STUB_NIX_* or STUB_DEVGUARD_* (lib/template.py:1)"
       "STUB_FIXTURE: not STUB_NIX_* or STUB_DEVGUARD_* (tests/fixtures/env.sh:1)"
-      "3 variable(s) outside the conventions"
+      "4 variable(s) outside the conventions"
     ]
   }
   ${stub.expectFailure
@@ -642,8 +645,9 @@ mk.script "lib-conventions" { } ''
   }
 
   # Command flags: restore and the scaffolder each without the flags of a
-  # section, a flag left only in prose or renamed, a command that fails or does
-  # not run, and exceptions, needed and stale.
+  # section, a flag left only in prose or renamed, exceptions, needed and
+  # stale, a command that fails or does not run, whose exceptions are not
+  # judged, and the other shapes of an option line that pass.
   ${stub.expectFailure
     (flags (helpWith "restore" [
       [
@@ -725,10 +729,27 @@ mk.script "lib-conventions" { } ''
         "restore"
       ];
       scaffolder = [ "/nonexistent/stub-init" ];
-    } { })
+    } { exceptions = [ "restore --no-force" ]; })
     [
       "database restore --help` exited 2: stub: unexpected arguments: database restore --help"
       "scaffolder: `/nonexistent/stub-init --help` did not run:"
+      "2 difference(s) from the shared flags"
     ]
   }
+  echo "and other shapes of an option line: ${
+    flags (helpWith "restore" [
+      [
+        "--neutralize / --no-neutralize"
+        "--[no-]neutralize             "
+      ]
+      [
+        "--files / --no-files            "
+        "--files/--no-files\t"
+      ]
+      [
+        "--at TEXT"
+        "--at AT [AT ...]"
+      ]
+    ]) { }
+  }"
 ''

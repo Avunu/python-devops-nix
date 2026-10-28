@@ -552,8 +552,9 @@ let
     # `<prefix>_NIX_DEVGUARD` and `<prefix>_NIX_RESTORE_ALLOW_UNGUARDED` are
     # among them. `ignore` lists directories, relative to `src`, that are not
     # scanned (fixtures, vendored trees). `exceptions` lists the names that may
-    # break the rule: the framework's own, and the old names read until 2.0.0.
-    # One that is not found, or that follows the rule, fails the check.
+    # break the rule: the framework's own, the old names read until 2.0.0, and
+    # names that are not variables, such as a template's keys. One that is not
+    # found, or that follows the rule, fails the check.
     envVars =
       {
         pkgs,
