@@ -5,9 +5,9 @@
 #
 # Conventional commits: `fix:` makes a patch release, `feat:` a minor one. The
 # products' pr-policy refuses `!` and BREAKING CHANGE: a major release is a
-# deliberate `Release-As: <N>.0.0` footer. This repository has no releases and no
-# pr-policy job; its own commits use these types and scopes, and mark a breaking
-# change with `!`.
+# deliberate `Release-As: <N>.0.0` footer. This repository releases with
+# release-please from v1.0.0 (docs/releases.md) and has no pr-policy job; its own
+# commits use these types and scopes, and mark a breaking change with `!`.
 style = "conventional"
 allowed_types = [
   "build",
