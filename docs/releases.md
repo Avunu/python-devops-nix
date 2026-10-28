@@ -13,7 +13,7 @@ python-devops-nix is released with [release-please](https://github.com/googleapi
 
 ## How a release is cut
 
-`.github/workflows/release.yml` runs on every push to `main`. release-please keeps one release pull request open, `chore(main): release X.Y.Z`, which moves `version.txt`, `.release-please-manifest.json` and `CHANGELOG.md`. Merging it tags `vX.Y.Z` and moves the `release-<major>` branch to the tag (`release-1` for every `v1.*`). The branch only ever fast-forwards, and a new major starts a new branch.
+`.github/workflows/release.yml` runs on every push to `main`. release-please keeps one release pull request open, `chore(main): release X.Y.Z`, which moves `version.txt`, `.release-please-manifest.json` and `CHANGELOG.md`. Merging it tags `vX.Y.Z`, and `release.yml` fast-forwards the `release-<major>` branch to the tag (`release-1` for every `v1.*`). It never moves the branch any other way, and a new major starts a new branch.
 
 The version comes from the commits merged since the last release:
 
@@ -22,9 +22,9 @@ The version comes from the commits merged since the last release:
 -   `docs:`, `ci:`, `chore:`, `refactor:`, `test:` and `style:` release nothing by themselves.
 -   A `Release-As: X.Y.Z` footer sets the version outright. The first release used it.
 
-Dependabot's prefix follows what a bump ships ([Dependabot](conventions.md#dependabot)). The action pins reach the products through the reusable workflow, so their bumps are `fix(deps)` and cut a patch release. The flake inputs and the prek hook revs reach no product, so their bumps are `chore(deps)`: each product `follows` this flake's nixpkgs and flake-parts, and its copy of `.pre-commit-config.yaml` is compared without `rev`.
+Dependabot's prefix follows what a bump ships ([Dependabot](conventions.md#dependabot)). The github-actions entry watches `.github/workflows` and the composite actions in `.github/actions`. Some of those pins ship: the composite actions' pins, and fetch-metadata in the reusable workflow. The rest run only in this repository's CI. An entry has one prefix, so every action bump is `fix(deps)` and cuts a patch release, even one that changes nothing for the products. That is accepted. The flake inputs and the prek hook revs reach no product, so their bumps are `chore(deps)`: each product `follows` this flake's nixpkgs and flake-parts, and its copy of `.pre-commit-config.yaml` is compared without `rev`.
 
-The products mark a major differently: their `pr-policy` refuses `!` and BREAKING CHANGE, and a major is a deliberate `Release-As: N.0.0` footer ([Commits](conventions.md#commits)). This repository has no `pr-policy` yet ([#21](https://github.com/Avunu/python-devops-nix/issues/21)).
+The products mark a major differently: their `pr-policy` refuses `!` and BREAKING CHANGE, and a major is a deliberate `Release-As: N.0.0` footer ([Commits](conventions.md#commits)). This repository keeps `!` and the footer. Sharing their `committed.toml` ([#21](https://github.com/Avunu/python-devops-nix/issues/21)) does not change that: the refusal is in each product's `pr-policy`, not in `committed.toml`, and this repository has no `pr-policy`.
 
 ## What a breaking change is
 
@@ -34,7 +34,7 @@ A breaking change ships with a migration note, which is its BREAKING CHANGE foot
 
 ## Before and after 1.0
 
-The plan was to tag `v0.x.y` until both products had adopted the secrets toolkit and the devguard core, with breaking changes in minor releases. Both had adopted them before the first release, and both already depend on this repository in their own 1.x lines. So there is no 0.x line: the first release is `v1.0.0`, set by a `Release-As: 1.0.0` footer. From 1.0 on, a breaking change ships only in a major release.
+The plan was to tag `v0.x.y` until both products had adopted the secrets toolkit and the devguard core, with breaking changes in minor releases. Both had adopted them before the first release, and both already depend on this repository in their own releases. So there is no 0.x line: the first release is `v1.0.0`, set by a `Release-As: 1.0.0` footer. From 1.0 on, a breaking change ships only in a major release.
 
 ## Before a release
 
@@ -44,13 +44,13 @@ The release pull request is pushed with `GITHUB_TOKEN`, and a push made with it 
 
 ## Following a release
 
-A product pins a release, never a branch head:
+A product pins a release, never a commit of `main`:
 
--   The flake input at a release. `github:Avunu/python-devops-nix/release-1` locks to the latest 1.x release, and Dependabot's nix entry moves the lock only when a release moves the branch.
+-   The flake input at a release branch. `release-1` only ever points at a 1.x release, so `github:Avunu/python-devops-nix/release-1` locks to the latest one, and Dependabot's nix entry moves the lock only when a release moves the branch.
 -   The reusable workflow and the actions at a tag's commit, with the version in a comment, as every other action is pinned: `@<sha> # v1.0.0`. Dependabot's github-actions entry moves both.
 
 Until the first release, both products pin a commit of `main` ([CI](conventions.md#ci)).
 
 ## Rollback
 
-Rollback is the product's: it pins a base revision. A product that needs to go back moves its pin to an earlier release, the flake input's lock or the `uses:` commit, and nothing here changes. Tags are never moved or deleted. A bad release is fixed by the next one.
+Rollback is the product's: it pins a base revision. A product that needs to go back moves its pin to an earlier release, the flake input's lock or the `uses:` commit, and nothing here changes. Tags are not moved or deleted, and a bad release is fixed by the next one. No ruleset enforces this or the fast-forward-only `release-*` branches yet: the only ruleset protects `main`.

@@ -11,8 +11,11 @@ version: 2
 # bump cuts a patch release; `chore(deps)` for what only this repository runs, which
 # releases nothing. The products' flake inputs `follows` this flake's nixpkgs and
 # flake-parts, so its own flake.lock reaches no product, and their copies of
-# .pre-commit-config.yaml are compared without `rev`. The action pins do ship: the
-# reusable dependabot-auto-merge.yml runs them in the products.
+# .pre-commit-config.yaml are compared without `rev`. The github-actions group mixes pins
+# that ship (the composite actions in .github/actions, and fetch-metadata in the reusable
+# dependabot-auto-merge.yml) with pins only this repository's CI runs, and an entry has one
+# prefix. It takes `fix(deps)`, so a bump of CI-only pins also cuts a patch release, one
+# that changes nothing for the products. That is accepted.
 updates:
   # Nix flake inputs: nixpkgs and flake-parts. Dependabot reads flake.lock directly.
   # Weekly, not daily: nixpkgs tracks nixos-unstable and moves constantly. Grouped so
@@ -42,10 +45,11 @@ updates:
       pre-commit-hooks:
         patterns: ["*"]
 
-  # GitHub Actions used by the workflows in .github/workflows, pinned by commit with the
-  # version in a trailing comment; Dependabot moves both.
+  # GitHub Actions used by the workflows in .github/workflows (`/`) and by the composite
+  # actions in .github/actions, pinned by commit with the version in a trailing comment;
+  # Dependabot moves both. One group across the directories, so one pull request.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: daily
     cooldown:

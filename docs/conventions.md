@@ -621,7 +621,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 -   **Adopted:**
     -   frappe-nix#159: nix, pre-commit and github-actions with `fix(deps)`, and uv in `/dev` (its own lint and type-check tools, the `dev-tools` group) with `chore(deps)`. Every ecosystem has the cooldown.
     -   odoo-nix#78: nix (with the `ocb` and `odoo-ls` groups), pre-commit and github-actions, all `fix(deps)`, all with the cooldown. It has no uv entry, because its template's lock cannot be resolved without a project.
-    -   This repository, which releases from v1.0.0 ([Releases](releases.md)): github-actions with `fix(deps)`, because the reusable workflow runs those actions in the products; nix and pre-commit with `chore(deps)`, because both products `follows` its nixpkgs and flake-parts and compare `.pre-commit-config.yaml` without `rev`, so those bumps ship nothing.
+    -   This repository, which releases from v1.0.0 ([Releases](releases.md)): github-actions over `.github/workflows` and `.github/actions` with `fix(deps)`, because the composite actions and the reusable workflow run some of those pins in the products (a bump of a pin only its own CI runs cuts a patch release too); nix and pre-commit with `chore(deps)`, because both products `follows` its nixpkgs and flake-parts and compare `.pre-commit-config.yaml` without `rev`, so those bumps ship nothing.
 -   **Status:** decided.
 -   **Check:** not yet in the base: a check over `.github/dependabot.yml` for the prefix and the cooldown ([#19](https://github.com/Avunu/python-devops-nix/issues/19)).
 
