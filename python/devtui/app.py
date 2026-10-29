@@ -2,7 +2,10 @@
 all of them, and the one place command lines are run from.
 
 Tabs appear for what the spec has: Stack with "stack", Commands with
-"commands", Store with a plugin whose catalog is not empty.
+"commands", Store with a plugin whose catalog is not empty. With
+``only="store"`` the store is the whole screen, without the tabs: what a
+product's own picker runs (`odoo module add`, `bench install-app`, with no
+arguments). Its follow-ups (rebuild and restart) work as in the tab.
 """
 
 from __future__ import annotations
@@ -47,6 +50,9 @@ FOCUS = {
     "store": "#store-table",
 }
 
+#: The views that can be shown alone (DevTui's `only`).
+ONLY = {"", "store"}
+
 REBUILD = Action(label="Rebuild & restart the stack", argv=("devtui:rebuild",))
 RESTART = Action(label="Restart the stack's processes", argv=("devtui:restart",))
 
@@ -70,6 +76,7 @@ class DevTui(App[int]):
         vars_command: str = "",
         client: pc.Client | None = None,
         product: Product | None = None,
+        only: str = "",
     ) -> None:
         super().__init__()
         self.data = data
@@ -82,6 +89,14 @@ class DevTui(App[int]):
             self.spec.stack.socket if self.spec.stack else None
         )
         self.product = product if product is not None else load_plugin(self.spec)
+        if only not in ONLY:
+            raise ValueError(f"only: {only!r} is not one of {sorted(ONLY)}")
+        #: "" for the tabs, or the one view shown without them.
+        self.only = only
+        if only == "store":
+            if not self.has_store:
+                raise ValueError(f"{self.spec.product} has no store here")
+            self.sub_title = f"{self.spec.product}: add {self.product.catalog().noun}s"
         #: The stack's processes, or None when process-compose is not running.
         self.processes: list[pc.Process] | None = None
 
@@ -115,10 +130,19 @@ class DevTui(App[int]):
         for view in self.query(HomeView):
             view.spec_changed()
 
+    @property
+    def has_store(self) -> bool:
+        return self.product is not None and bool(self.product.catalog().items)
+
     # -- layout --------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield Header()
+        if self.only == "store":
+            assert self.product is not None
+            yield StoreView(self.product)
+            yield Footer()
+            return
         with TabbedContent(initial="home", id="tabs"):
             with TabPane("Home", id="home"):
                 yield HomeView()
@@ -128,18 +152,25 @@ class DevTui(App[int]):
             if self.spec.commands:
                 with TabPane("Commands", id="commands"):
                     yield CommandsView()
-            if self.product is not None and self.product.catalog().items:
+            if self.has_store:
+                assert self.product is not None
                 with TabPane("Store", id="store"):
                     yield StoreView(self.product)
         yield Footer()
 
     def on_mount(self) -> None:
+        # Alone, the store still polls: a rebuild stops a running stack first.
         if self.spec.stack is not None:
             self.poll_stack()
             self.set_interval(1.0, self.poll_stack)
+        if self.only:
+            self.call_after_refresh(self.query_one(FOCUS[self.only]).focus)
 
     def action_tab(self, tab: str) -> None:
-        tabs = self.query_one("#tabs", TabbedContent)
+        found = self.query("#tabs")
+        if not found:
+            return
+        tabs = found.first(TabbedContent)
         if not tabs.query(f"#{tab}"):
             return
         # Focus left in the old pane would bring it back (TabbedContent shows
