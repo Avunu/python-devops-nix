@@ -420,6 +420,50 @@ class AppTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(view.adds, [])
             self.assertIn("repair_order", view.installed)
 
+    async def test_store_alone(self):
+        # `--only store`: the picker a product's own command opens.
+        product = Product()
+        app = self.app(product=product, only="store")
+        async with app.run_test(size=(160, 50)) as pilot:
+            self.assertEqual(list(app.query("TabPane")), [])
+            self.assertEqual(app.sub_title, "stub-nix: add modules")
+            view = app.query_one(StoreView)
+            table = view.query_one("#store-table", DataTable)
+            await self.until(pilot, lambda: app.focused is table)
+            await pilot.press("4", "1")  # no tabs to switch to
+            self.assertIs(app.focused, table)
+            await pilot.press("space")
+            self.assertEqual(view.adds, [view.rows[0].id])
+            await pilot.press("a")
+            await self.until(pilot, lambda: isinstance(app.screen, ConfirmScreen))
+            await pilot.click("#confirm-run")
+            await self.until(
+                pilot,
+                lambda: isinstance(app.screen, RunScreen) and app.screen.ok is not None,
+            )
+            self.assertTrue(app.screen.ok)
+            run = app.screen
+            await pilot.click("#run-after-0")
+            await self.until(
+                pilot,
+                lambda: (
+                    isinstance(app.screen, RunScreen)
+                    and app.screen is not run
+                    and app.screen.ok
+                ),
+            )
+            await pilot.press("escape")
+            self.assertIs(app.screen.query_one(StoreView), view)
+            self.assertEqual(view.adds, [])
+
+    def test_store_alone_needs_a_store(self):
+        with self.assertRaisesRegex(ValueError, "stub-nix has no store here"):
+            DevTui(
+                self.data, vars_command=self.vars_command, product=None, only="store"
+            )
+        with self.assertRaisesRegex(ValueError, "only: 'stack'"):
+            self.app(only="stack")
+
     async def test_bundle(self):
         product = Product()
         app = self.app(product=product)

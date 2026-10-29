@@ -245,6 +245,11 @@ rec {
             exit 1
           fi
           grep -qF 'the menu needs a terminal. Run `stub --help`' err
+          if ${lib.getExe runner} --only store < /dev/null 2> err; then
+            echo "the store started for a spec without one" >&2
+            exit 1
+          fi
+          grep -qF 'has no store here' err
           printf '{"product": "p", "cli": "c", "banner": {"title": "t"}, "colour": 1}' > bad.json
           if ${lib.getExe tui} bad.json < /dev/null 2> err; then
             echo "an unknown key was accepted" >&2

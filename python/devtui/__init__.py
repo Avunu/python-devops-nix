@@ -2,10 +2,11 @@
 Development shell): the shell's banner, devenv's processes, every command of
 the product's command line, and a store for what the product can add.
 
-    devtui SPEC.json [--vars-command PROGRAM] [--var NAME=VALUE]...
+    devtui SPEC.json [--vars-command PROGRAM] [--var NAME=VALUE]... [--only store]
 
 The spec is devtui.spec's, written by the product at evaluation
-(lib.tui.script). The TUI is a front end: every change it makes is a command
+(lib.tui.script). `--only store` shows the store alone, without the tabs: a
+product's picker for what it adds (`odoo module add` with no arguments). The TUI is a front end: every change it makes is a command
 line of the product's own, shown before it runs. It needs a terminal on
 stdin and stdout, and says so otherwise.
 
@@ -41,6 +42,12 @@ def main(argv: Sequence[str], prog: str | None = None) -> int:
         metavar="NAME=VALUE",
         help="fill @NAME@ in the spec's strings; repeatable",
     )
+    parser.add_argument(
+        "--only",
+        choices=["store"],
+        default="",
+        help="show this view alone, without the tabs",
+    )
     args = parser.parse_args(argv)
     variables = {}
     for item in args.var:
@@ -57,14 +64,17 @@ def main(argv: Sequence[str], prog: str | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"{parser.prog}: {args.spec}: {exc}", file=sys.stderr)
         return 1
+    from devtui.app import DevTui
+
+    try:
+        app = DevTui(data, variables, vars_command=args.vars_command, only=args.only)
+    except ValueError as exc:
+        print(f"{parser.prog}: {exc}", file=sys.stderr)
+        return 2
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print(
             f"{parser.prog}: the menu needs a terminal. Run `{parsed.cli} --help` for the commands.",
             file=sys.stderr,
         )
         return 2
-
-    from devtui.app import DevTui
-
-    app = DevTui(data, variables, vars_command=args.vars_command)
     return app.run() or 0
