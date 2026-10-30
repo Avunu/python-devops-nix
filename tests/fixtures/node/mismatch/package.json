@@ -1,0 +1,1 @@
+{ "name": "mismatch", "version": "1.0.0", "packageManager": "pnpm@10.4.1", "dependencies": { "is-number": "7.0.0" } }

@@ -4,7 +4,7 @@ description: What python-devops-nix exports, from the secrets toolkit to the Nix
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 # Library reference
@@ -52,6 +52,21 @@ Conventions: [devguard](conventions.md#devguard).
 | `lib.python.interpreters { presets ? [ ] }`, `lib.python.defaultInterpreters` | The interpreters the products' presets files name, for a test matrix. |
 
 Conventions: [Python environment](conventions.md#python-environment).
+
+## JavaScript
+
+| Export | What it does |
+| --- | --- |
+| `lib.node.detect { src, label, key ? … }` | A directory as a target, or null without a `package.json`. It returns the manager (from `packageManager`, then `devEngines.packageManager`, then the lockfile), the lockfile, the declared major, the scripts (`hasBuild`, `hasWatch`), `hasDeps`, the workspace `members` the lock covers, and the members with a build script (`memberBuilds`). Two lockfiles, a manager mismatch, yarn berry and bun are refused with the fix. |
+| `lib.node.discover { label, candidates }` | Sorts `[ { key, src } ]` (keys relative to one root) into `targets` (directories with a lockfile), `covered` (the workspace members a target's lock installs, with that target's key) and `lockless`. |
+| `lib.node.modules { pkgs, label, target, nodejs, lockFile ? …, pnpm2nix ? null, overrides ? { } }` | A target's node_modules, built offline from the manifests alone: nixpkgs' `importNpmLock` for npm, `yarnLock`'s mirror for yarn 1, pnpm2nix-nzbr's plan for pnpm. Also each member's node_modules. It is null when there is nothing to install. |
+| `lib.node.build { pkgs, label, target, nodejs, nodeModules, src ? …, env ? { }, overrides ? { }, buildDirs ? … }`, `lib.node.builds target` | The target's tree after `<manager> run build`, without node_modules. The build runs in the target itself, or, when the target has no build script, in each workspace member that has one (`memberBuilds`). `builds` says whether either holds. |
+| `lib.node.managerPackage { pkgs, target, nodejs, label }`, `lib.node.sandboxEnv` | The nixpkgs package that runs a target's manager (`pnpm_<major>`, `yarn`, node's npm), and the environment every sandboxed run gets: no pnpm version switch, no install before `pnpm run`, no update check. |
+| `lib.node.command { pkgs, label, targets, ciVar ? null, python ? … }`, `lib.node.module` | `<label>-node {list,install,build,watch} [KEY]...` over a JSON file of `[ { key, path } ]`: the dev shell's frozen online install (skipped when nothing has moved, and in CI mode), and the targets' build and watch scripts (python/node.py). |
+| `lib.node.yarnLockWith { label }`, `lib.node.pnpmLockWith { label }`, `lib.node.yarnLock`, `lib.node.pnpmLock` | The lock readers. yarn.lock gives `parse`, `urlToName`, `plan` and `mkOfflineMirror`. pnpm-lock.yaml gives `importers`, `members`, `version`, `projectDocument`, `registryOf` and `plan`. |
+| `lib.node.check { pkgs, pnpm2nix, … }` | The tests: detection on every fixture, an offline build per manager, the yarn.lock reader, the command, and python/node.py on every preset interpreter. |
+
+Conventions: [JavaScript](conventions.md#javascript).
 
 ## Development shell
 
@@ -120,7 +135,7 @@ Everything in this repository follows these rules.
 
 1.  **No product names in code.** The base never says Frappe or Odoo. Each product passes in its option paths, environment prefix, package names, log prefixes and command names.
 2.  **Uniform names over unchanged names.** Where the products name the same thing differently, both move to the name in the [conventions](conventions.md), with an alias that warns until the product's next major release ([Renames and the 1.x line](conventions.md#renames-and-the-1x-line)).
-3.  **A small lock.** The base's own inputs are nixpkgs and flake-parts, and consumers `follows` both. Heavier dependencies (agenix-shell, pyproject-nix, uv2nix) are taken as arguments from the product, never as inputs here.
+3.  **A small lock.** The base's own inputs are nixpkgs and flake-parts, and consumers `follows` both. Heavier dependencies (agenix-shell, pyproject-nix, uv2nix, pnpm2nix) are taken as arguments from the product, never as inputs here.
 4.  **Python versions follow from where the code runs.** See [Python versions](#python-versions).
 5.  **Logic is Python, glue is bash.** Anything that parses data, handles dates, JSON or more than a few flags, keeps an exit-code table or prompts is Python. Bash is kept for thin glue, built with `writeShellApplication` so shellcheck runs on it.
 6.  **Python is vendored at build time, not installed as a dependency.** Shared Python is copied into the product's package by Nix (the devguard core into `<p>_devguard/`), so a virtualenv gains no new distribution.

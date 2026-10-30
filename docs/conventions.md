@@ -3,7 +3,7 @@ title: Conventions
 description: How frappe-nix and odoo-nix name and do the jobs they both do, and where each product stands on each decision.
 order: 1
 tags: [conventions, frappe-nix, odoo-nix]
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 # Conventions
@@ -215,6 +215,55 @@ Both products build their environment the same way: pyproject-nix, uv2nix and py
 -   **Adopted:** frappe-nix#127 and odoo-nix#59, in all three places.
 -   **Status:** decided.
 -   **Check:** none.
+
+## JavaScript
+
+A JavaScript target is a directory with a `package.json`: an Odoo addon, a Frappe app or its nested frontend. Both products build them with `lib.node`. The rules are the ones Corepack and frappe/pilot#617 already apply.
+
+### Package manager
+
+-   **Convention:** the manager is chosen in this order:
+    1.  `package.json`'s `packageManager` (Corepack's `pnpm@10.4.1+sha512…`);
+    2.  its `devEngines.packageManager` (`{ name, version }`). pnpm 12 apps pin through this field, because yarn 1 refuses `packageManager`;
+    3.  the lockfile: `pnpm-lock.yaml` → pnpm, a v1 `yarn.lock` → yarn, `package-lock.json` or `npm-shrinkwrap.json` → npm.
+
+    Each of these is an evaluation error that names the fix:
+    -   two lockfiles in one folder;
+    -   a declared manager the lockfile disagrees with;
+    -   a yarn berry lock;
+    -   a bun lock.
+
+    Managers come from nixpkgs, never from Corepack or from pnpm's own version switch. The declared major picks `pnpm_<major>`, a missing major is an error, yarn 1 is `yarn`, and npm is the one node ships. Inside the sandbox, `pnpm_config_pm_on_fail=ignore` stops pnpm 11+ from downloading the version `devEngines` names. Without it, pnpm retries until the build times out.
+-   **Adopted:** odoo-nix applies it to every addon and module repository with a `package.json` (`lib/node.nix`). frappe-nix applies it to every app with a `pnpm-lock.yaml`, and refuses one with a `yarn.lock` beside it. Its other apps stay on its yarn 1 path: the `node-locks/` fallback, and a leftover `package-lock.json` tolerated beside a `yarn.lock`.
+-   **Status:** partial, until frappe-nix's yarn apps go through `lib.node.detect` as well. That makes two lockfiles in one app an error, so it is a breaking change for a bench that has them.
+-   **Check:** the base's `lib-node` checks detection on every fixture, and that python/node.py agrees with `lib.node.detect` on all of them.
+
+### Offline install
+
+-   **Convention:** every install is frozen, offline and `--ignore-scripts`. No hash is kept by hand: each manager fetches tarballs by the hashes its own lockfile records.
+    -   **npm:** nixpkgs' `importNpmLock`.
+    -   **yarn 1:** `lib.node.yarnLock`, from frappe-nix's yarn.lock reader.
+    -   **pnpm:** pnpm2nix-nzbr's `processLockfile`, which the product passes in as a `flake = false` input. Two caveats:
+        -   pnpm2nix reads the lock through import-from-derivation, for pnpm targets only. A CI step that runs `nix flake check --no-build` has to realise it first.
+        -   pnpm 11+ writes two YAML documents into one lockfile when `devEngines` pins pnpm. Only the last (the project's) is read.
+
+    A node_modules derivation's source is only the manifests: `package.json`, the lock, `.npmrc`/`.yarnrc`/`.pnpmfile.cjs`/`pnpm-workspace.yaml`, and each workspace member's `package.json`. An edit to code therefore never reinstalls.
+
+    Workspace members are installed once, with the root whose lock lists them: an `importers:` key in pnpm's lock, or a match in `workspaces` for yarn and npm. A folder with dependencies, no lockfile of its own and no root is lockless, and the product decides what happens to it: frappe-nix's `node-locks/`, an error in odoo-nix.
+
+    A product's per-target overrides (`nodeOverrides`) are merged into the derivation for a package that cannot do without its install script.
+-   **Adopted:** odoo-nix, for npm, yarn 1 and pnpm. frappe-nix, for pnpm through `lib.node.modules`. Its yarn 1 install uses `lib.node.yarnLock`, which is its own former `lib/yarn-lock.nix`. The pnpm2nix input is in both.
+-   **Status:** partial: frappe-nix installs its yarn apps with its own derivation over `lib.node.yarnLock`, not `lib.node.modules`.
+-   **Check:** the base's `lib-node` builds a node_modules offline for npm, yarn 1, pnpm, and a pnpm 12 workspace with a devEngines pin newer than nixpkgs' pnpm.
+
+### Build
+
+-   **Convention:** only a target with a `build` script is built: one in the target itself, or, if the target has none, in each workspace member that has one. A root's build script builds the whole workspace, so the members' scripts are not run as well. The build runs `<manager> run build` with node_modules linked in entry by entry, so a bundler can write next to its packages. The result is the target's tree without node_modules. Where the outputs go is the target's own configuration. Without a build script, the Nix build does nothing, not even an install.
+
+    The dev shell installs every target with `lib.node.command`'s `install`: online, frozen, and skipped when the manifests are unchanged, or in CI mode. It also runs `watch` scripts as a process (`watch`). Frappe's `*.bundle.js` convention stays inside `bench build`. Odoo has no file-name convention; its addons put outputs in `static/dist/`.
+-   **Adopted:** odoo-nix lays each build into `builtOdoo`, and into a whool-packaged addon's wheel, because Odoo finds the wheel first. It runs the shell's `install`, `node-watch` (`watch.node`) and `odoo module build`. frappe-nix keeps `bench build`. Its dev shell installs a pnpm app with `pnpm install --frozen-lockfile` from its own installer, and frappe-nix-node-verify skips it.
+-   **Status:** partial: frappe-nix's dev shell installer is its own, with the same manager rule, not `lib.node.command`.
+-   **Check:** the base's `lib-node`. odoo-nix's `node-*` and `node-built`, and frappe-nix's `node-pnpm` and `node-modules`.
 
 ## Scaffolder
 

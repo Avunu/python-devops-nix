@@ -1,0 +1,6 @@
+packages:
+  - types
+
+# Settings, as frappe/suite keeps them: an override every member shares.
+overrides:
+  is-number: 7.0.0
