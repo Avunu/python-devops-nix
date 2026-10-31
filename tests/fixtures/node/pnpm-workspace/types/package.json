@@ -1,0 +1,9 @@
+{
+  "name": "@fixture/types",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "is-number": "^7.0.0"
+  }
+}

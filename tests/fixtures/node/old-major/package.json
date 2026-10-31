@@ -1,0 +1,1 @@
+{ "name": "old-major", "version": "1.0.0", "packageManager": "pnpm@7.33.0", "dependencies": { "is-number": "7.0.0" } }

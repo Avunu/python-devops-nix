@@ -21,7 +21,10 @@ repos:
       - id: check-ast
       - id: check-json
       - id: check-toml
+      # pnpm 11+ writes two documents into a pnpm-lock.yaml whose package.json
+      # pins pnpm through devEngines.
       - id: check-yaml
+        args: [--allow-multiple-documents]
       - id: debug-statements
 
   # ruff fixes the imports, then lints, then formats the result, with ruff.toml.

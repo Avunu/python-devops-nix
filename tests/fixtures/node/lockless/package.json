@@ -1,0 +1,1 @@
+{ "name": "lockless", "version": "1.0.0", "scripts": { "build": "node -e 1" }, "dependencies": { "is-number": "7.0.0" } }
