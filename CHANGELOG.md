@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/Avunu/python-devops-nix/compare/v1.1.0...v1.2.0) (2026-10-31)
+
+
+### Features
+
+* **ci:** auto-merge every Dependabot PR with a GitHub App and keep them up to date ([#52](https://github.com/Avunu/python-devops-nix/issues/52)) ([943029b](https://github.com/Avunu/python-devops-nix/commit/943029bfb2b56888c38514e4efce20d34eb9d2bc))
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#54](https://github.com/Avunu/python-devops-nix/issues/54)) ([d5e06f5](https://github.com/Avunu/python-devops-nix/commit/d5e06f5c8776b81689538388e128a6bf859f47ff))
+
 ## [1.1.0](https://github.com/Avunu/python-devops-nix/compare/v1.0.0...v1.1.0) (2026-10-31)
 
 
