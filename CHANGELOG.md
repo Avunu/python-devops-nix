@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.0](https://github.com/Avunu/python-devops-nix/compare/v1.0.0...v1.1.0) (2026-10-31)
+
+
+### Features
+
+* **node:** lib.node, one JavaScript toolchain for both products ([#48](https://github.com/Avunu/python-devops-nix/issues/48)) ([c07df3e](https://github.com/Avunu/python-devops-nix/commit/c07df3edb5c3ab98d91ca06e7c406fea134b03cf))
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#47](https://github.com/Avunu/python-devops-nix/issues/47)) ([8f91074](https://github.com/Avunu/python-devops-nix/commit/8f91074496a452a567ca5164a7e99afdf6eb5db0))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#51](https://github.com/Avunu/python-devops-nix/issues/51)) ([b2e9b75](https://github.com/Avunu/python-devops-nix/commit/b2e9b758326d8058e4328d91d223f3d5b47f0ff8))
+
 ## 1.0.0 (2026-10-29)
 
 
