@@ -1,0 +1,173 @@
+name: Dependabot update branches
+
+# Reusable: brings every open Dependabot pull request that is behind its base branch up to
+# date, so auto-merge (dependabot-auto-merge.yml) is not left waiting on a stale branch and
+# what merges was checked against the base it lands on. A pull request that is not behind is
+# left alone, as is every pull request Dependabot did not open (release-please's among them).
+#
+#   only Dependabot's commits  comment `@dependabot rebase`, once per head commit; when
+#                              Dependabot has not rebased it six hours later, the
+#                              update-branch API instead
+#   anyone else's commits too  the update-branch API (a merge of the base), which keeps them
+#   a conflict                 left for a person, with a notice
+#
+# A repository calls it on a push to its default branch and on a schedule, pinned as
+# dependabot-auto-merge.yml is:
+#
+#   on:
+#     push:
+#       branches: [main]
+#     schedule:
+#       - cron: "0 9 * * *"
+#     workflow_dispatch:
+#   permissions: {}
+#   jobs:
+#     update-branches:
+#       permissions:
+#         contents: write
+#         pull-requests: write
+#         actions: write
+#       uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@<sha> # vX.Y.Z
+#       with:
+#         dispatch: check.yml
+#       secrets:
+#         APP_ID: ${{ vars.ORG_CI_APP_ID }}
+#         APP_PRIVATE_KEY: ${{ secrets.ORG_CI_PRIVATE_KEY }}
+#
+# With a GitHub App, the App comments and updates, so an updated branch starts its checks the
+# normal way. With GITHUB_TOKEN, an update raises no event: the workflows in `dispatch` are
+# dispatched on the updated branch instead, and those must have `workflow_dispatch`. A branch
+# Dependabot rebases starts its checks either way.
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        description: >-
+          The branch whose Dependabot pull requests are brought up to date. The repository's
+          default branch by default.
+        type: string
+        default: ""
+      dispatch:
+        description: >-
+          Space-separated workflow files dispatched on a branch updated with GITHUB_TOKEN:
+          the ones whose checks the base branch requires. Not used with a GitHub App.
+        type: string
+        default: ""
+    secrets:
+      APP_ID:
+        description: >-
+          The ID (or client ID) of a GitHub App installed on the repository with Contents and
+          Pull requests write (and Workflows write, to bring in a base that changed
+          .github/workflows). Without it and APP_PRIVATE_KEY, GITHUB_TOKEN.
+        required: false
+      APP_PRIVATE_KEY:
+        description: The GitHub App's private key (PEM).
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  update-branches:
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 15
+    # One run at a time; a burst of merges leaves one run pending, which sees them all.
+    concurrency:
+      group: dependabot-update-branches
+      cancel-in-progress: false
+    steps:
+      - name: Whether the caller passed a GitHub App
+        id: app
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      # A merge that brings .github/workflows/ changes in needs Workflows write: ask for it
+      # first and, from an App without it, fall back to Contents and Pull requests.
+      - name: Mint the GitHub App's token, with Workflows write
+        id: app-token-workflows
+        if: steps.app.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Mint the GitHub App's token
+        id: app-token
+        if: steps.app.outputs.enabled == 'true' && steps.app-token-workflows.outcome != 'success'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Bring Dependabot pull requests that are behind up to date
+        env:
+          GH_TOKEN: ${{ steps.app-token-workflows.outputs.token || steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          APP: ${{ steps.app-token-workflows.outputs.token != '' || steps.app-token.outputs.token != '' }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ inputs.base }}
+          DISPATCH: ${{ inputs.dispatch }}
+        run: |
+          set -euo pipefail
+          # A scheduled run's event names no repository, so ask for its default branch.
+          BASE="${BASE:-$(gh api "repos/$REPO" --jq .default_branch)}"
+          now="$(date -u +%s)"
+          update() { # <number> <head sha> <head branch>
+            if ! gh api -X PUT "repos/$REPO/pulls/$1/update-branch" -f expected_head_sha="$2" > /dev/null; then
+              echo "::notice::#$1: could not update it from $BASE (a conflict needs a person)"
+              return
+            fi
+            echo "#$1: merged $BASE into $3"
+            if [ "$APP" = true ] || [ -z "$DISPATCH" ]; then
+              return
+            fi
+            # A GITHUB_TOKEN update raises no event. Wait for the new head, then check it.
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              sleep 3
+              if [ "$(gh api "repos/$REPO/pulls/$1" --jq .head.sha)" != "$2" ]; then
+                for workflow in $DISPATCH; do
+                  gh workflow run "$workflow" --repo "$REPO" --ref "$3" ||
+                    echo "::warning::#$1: could not dispatch $workflow on $3"
+                done
+                return
+              fi
+            done
+            echo "::notice::#$1: its new head did not appear yet; run its checks by hand"
+          }
+          gh pr list --repo "$REPO" --base "$BASE" --state open --author app/dependabot --limit 100 \
+            --json number,headRefOid,headRefName --jq '.[] | "\(.number) \(.headRefOid) \(.headRefName)"' |
+            while read -r number sha branch; do
+              if [ "$(gh api "repos/$REPO/compare/$BASE...$sha" --jq .behind_by)" = 0 ]; then
+                continue
+              fi
+              others="$(gh api --paginate "repos/$REPO/pulls/$number/commits" \
+                --jq '.[] | select(.author.login != "dependabot[bot]") | .sha')"
+              if [ -n "$others" ]; then
+                update "$number" "$sha" "$branch"
+                continue
+              fi
+              head_date="$(gh api --paginate "repos/$REPO/pulls/$number/commits" \
+                --jq '.[].commit.committer.date' | tail -n 1)"
+              # ISO 8601 UTC times sort as text: the newest request made since the head commit.
+              asked="$(gh api --paginate "repos/$REPO/issues/$number/comments" \
+                --jq '.[] | select(.body | contains("@dependabot rebase")) | .created_at' |
+                awk -v after="$head_date" '$0 > after' | sort | tail -n 1)"
+              if [ -z "$asked" ]; then
+                gh pr comment "$number" --repo "$REPO" --body "@dependabot rebase"
+                echo "#$number: asked Dependabot to rebase it on $BASE"
+              elif [ $((now - $(date -u -d "$asked" +%s))) -lt 21600 ]; then
+                echo "#$number: Dependabot was asked to rebase it at $asked; waiting"
+              else
+                echo "::notice::#$number: Dependabot has not rebased it since $asked; updating the branch instead"
+                update "$number" "$sha" "$branch"
+              fi
+            done

@@ -598,23 +598,49 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 
 ### CI
 
--   **Convention:** every action is pinned by full commit SHA, with the version in a trailing comment. A `lint` job runs prek over the whole tree. A `flake` job runs `nix flake check` and builds the checks; VM tests may run in a job of their own. The docs are checked by `Avunu/site-docs`'s `check-docs.yml` ([Docs pipeline](#docs-pipeline)). Dependabot pull requests auto-merge through this repository's reusable workflow, called pinned the same way. Until this repository's first release, the pin is a commit of `main`; after it, a release's commit with its version in the comment ([Releases](releases.md#following-a-release)). Dependabot's github-actions entry moves it:
+-   **Convention:** every action is pinned by full commit SHA, with the version in a trailing comment. A `lint` job runs prek over the whole tree. A `flake` job runs `nix flake check` and builds the checks; VM tests may run in a job of their own. The docs are checked by `Avunu/site-docs`'s `check-docs.yml` ([Docs pipeline](#docs-pipeline)). Dependabot pull requests auto-merge, and are kept up to date with the default branch, through this repository's reusable workflows, called pinned the same way. Until this repository's first release, the pin is a commit of `main`; after it, a release's commit with its version in the comment ([Releases](releases.md#following-a-release)). Dependabot's github-actions entry moves it:
 
     ```yaml
-    on: pull_request
+    on:
+      pull_request:
+      push:
+        branches: [main]
+      schedule:
+        - cron: "0 9 * * *"
+      workflow_dispatch:
 
     permissions: {}
 
     jobs:
       auto-merge:
-        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
         permissions:
           contents: write # gh pr merge --auto
           pull-requests: write # gh pr merge --auto
-        uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # main (no release yet)
+        uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # vX.Y.Z
+        secrets:
+          APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+
+      update-branches:
+        if: github.event_name != 'pull_request'
+        permissions:
+          contents: write # update-branch
+          pull-requests: write # comment `@dependabot rebase`, update-branch
+          actions: write # dispatch the required checks without the App
+        uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@<sha> # vX.Y.Z
+        with:
+          dispatch: check.yml
+        secrets:
+          APP_ID: ${{ vars.AVUNU_CI_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
     ```
 
-    Its inputs carry the policy. `update-types` (default `major minor patch other`, where `other` is an update with no semver type, such as a flake input) lists what auto-merges; `exclude-ecosystems` (default `github_actions`) lists ecosystems a person reviews; `merge-method` (default `squash`) is passed to `gh pr merge`. frappe-nix and odoo-nix take the defaults. The workflow decides by ecosystem and update type, not by group, so a group a person reviews is the caller's `if`: odoo-nix skips `dependabot/nix/ocb-*`, because an OCB bump can need a relock. wordpress-nix takes the defaults too: it merges major bumps, and its gate is its required OCI build, not an input. A repository that wants majors reviewed passes `update-types: minor patch other`.
+    `dependabot-auto-merge.yml`'s inputs carry the policy. `update-types` (default `major minor patch other`, where `other` is an update with no semver type, such as a flake input) lists what auto-merges; `exclude-ecosystems` (default none) lists ecosystems a person reviews; `merge-method` (default `squash`) is passed to `gh pr merge`. Every Dependabot pull request auto-merges by default, github-actions bumps included: their required checks run the bumped actions before the merge, and a pull request whose checks fail stays open. frappe-nix, odoo-nix and wordpress-nix take the defaults; wordpress-nix's gate is its OCI build, which its default branch must require before auto-merge waits on anything. The workflow decides by ecosystem and update type, not by group, so a group a person reviews is the caller's `if`: odoo-nix skips `dependabot/nix/ocb-*`, because an OCB bump can need a relock. A repository that wants majors reviewed passes `update-types: minor patch other`.
+
+    `dependabot-update-branches.yml` runs on each push to the default branch and daily, and brings every open Dependabot pull request that is behind it up to date: `@dependabot rebase` while the pull request has only Dependabot's commits (once per head commit, and the update-branch API when Dependabot has not answered in six hours), else the update-branch API, which keeps the other commits. One that is not behind, one with a conflict and one Dependabot did not open are left alone. Its `dispatch` input lists the workflows whose checks the default branch requires.
+
+    Both take the org's GitHub App as two secrets, `APP_ID` and `APP_PRIVATE_KEY`, and enable auto-merge, comment and update with its token. A merge GitHub makes for the App raises a `push`, so CI and release-please run on the default branch at once, and a branch the App updates starts its checks. Without the App, `GITHUB_TOKEN`: its merge raises no `push` (the release workflow's daily cron catches up), and `dispatch`'s workflows are dispatched on each branch it updates. A run Dependabot starts sees only Dependabot secrets, so the App's ID is a Dependabot secret as well as an Actions variable.
 
     **Auto-merge is only as safe as the checks marked required on the default branch**, so `flake` is a required check. Without it, auto-merge merges a bump before its checks fail.
 
@@ -649,8 +675,9 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 -   **Adopted:**
     -   frappe-nix: SHA pins and the `lint`, `flake` and `vm-tests` jobs; the reusable workflow since frappe-nix#159. Its `main` requires the docs check (`build / Check`) and `flake`; `flake` became required on 2026-10-22, after frappe-nix#163 merged with it failing.
     -   odoo-nix: SHA pins, the `lint` job (odoo-nix#76), and `flake`, which builds every check; the reusable workflow since odoo-nix#78. Its `main` requires `flake` and `pr-policy`, since odoo-nix#63 merged red.
+    -   This repository: every Dependabot pull request auto-merges, github-actions bumps included, with the org's GitHub App, and `dependabot-update-branches.yml` keeps them up to date. The products take both as they move their pin to the revision that has them.
     -   Both, and this repository: `autofix` and the `report` job. frappe-nix's `app-test` comments its `frappe-test` report (coverage, stage verdicts and failed tests) on the app's pull request. odoo-nix measures no coverage yet, so its report is the failures alone.
--   **Status:** partial: frappe-nix's required checks.
+-   **Status:** partial: frappe-nix's required checks, and the products' move to `dependabot-update-branches.yml` and the App.
 -   **Check:** `ci-pins` (`lib.checks.ciPins`, through [`lib.checks.conventions`](#tests)): every `uses:` in `.github/workflows` and `.github/actions` is pinned by a 40-character SHA, or a `docker://` image by its sha256 digest, with a trailing comment, except a local `./` path. It cannot tell a version from any other comment. The base runs it on itself. Required checks are repository settings, which no check in the tree can see.
 
 ### Repository files
@@ -687,7 +714,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 
 ### Dependabot
 
--   **Convention:** one shape: commit prefix `fix(deps)`, so a merged bump cuts a patch release through release-please; a seven-day cooldown (`cooldown.default-days: 7`); and one group per ecosystem (`patterns: ["*"]`), plus named groups only where inputs must move apart (odoo-nix's `ocb` and `odoo-ls`). A bump to development-only tooling that ships nothing keeps `chore(deps)`. Each product lists its own ecosystems. Pull requests auto-merge, except github-actions bumps, which a person reviews, through the reusable workflow in [CI](#ci).
+-   **Convention:** one shape: commit prefix `fix(deps)`, so a merged bump cuts a patch release through release-please; a seven-day cooldown (`cooldown.default-days: 7`); and one group per ecosystem (`patterns: ["*"]`), plus named groups only where inputs must move apart (odoo-nix's `ocb` and `odoo-ls`). A bump to development-only tooling that ships nothing keeps `chore(deps)`. Each product lists its own ecosystems. Every pull request, github-actions bumps included, auto-merges once the required checks pass and is kept up to date with the default branch, through the reusable workflows in [CI](#ci).
 -   **Adopted:**
     -   frappe-nix#159: nix, pre-commit and github-actions with `fix(deps)`, and uv in `/dev` (its own lint and type-check tools, the `dev-tools` group) with `chore(deps)`. Every ecosystem has the cooldown.
     -   odoo-nix#78: nix (with the `ocb` and `odoo-ls` groups), pre-commit and github-actions, all `fix(deps)`, all with the cooldown. It has no uv entry, because its template's lock cannot be resolved without a project.
