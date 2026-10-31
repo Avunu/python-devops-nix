@@ -22,6 +22,6 @@ jobs:
   docs:
     permissions:
       contents: read # checkout
-    uses: Avunu/site-docs/.github/workflows/check-docs.yml@ed2b7e189cab0ef2cef0164c013da0a4e0d499ca # 2026-10-23, python-devops-nix registered
+    uses: Avunu/site-docs/.github/workflows/check-docs.yml@79c453a829b1f95ac9c493f51514a1b1c1895cc0 # 2026-10-23, python-devops-nix registered
     with:
       path: python-devops-nix # its path in site-docs's projects.json
