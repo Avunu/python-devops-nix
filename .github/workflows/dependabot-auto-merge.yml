@@ -3,24 +3,34 @@ name: Dependabot auto-merge
 # Reusable: enables auto-merge on a Dependabot pull request that the caller's policy
 # allows. GitHub then merges it once the branch is mergeable and every *required* status
 # check passes, so the required checks are what this merges on; without them it merges
-# on nothing.
+# on nothing. A pull request whose checks fail stays open.
 #
 # A repository calls it from its own workflow, pinned to a commit with the version in a
-# comment, so Dependabot's github-actions entry moves the pin:
+# comment, so Dependabot's github-actions entry moves the pin. With a GitHub App, which
+# the caller passes as two secrets, the App enables auto-merge, so the merge GitHub makes
+# raises a push that starts the default branch's workflows (release-please's among them);
+# with GITHUB_TOKEN it raises none:
 #
 #   on: pull_request
-#   permissions:
-#     contents: write
-#     pull-requests: write
+#   permissions: {}
 #   jobs:
 #     auto-merge:
+#       if: github.event.pull_request.user.login == 'dependabot[bot]'
+#       permissions:
+#         contents: write
+#         pull-requests: write
 #       uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # vX.Y.Z
 #       # with:
 #       #   update-types: major minor patch other
-#       #   exclude-ecosystems: github_actions
+#       #   exclude-ecosystems: ""
 #       #   merge-method: squash
+#       # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
+#       secrets:
+#         APP_ID: ${{ vars.ORG_CI_APP_ID || secrets.ORG_CI_APP_ID }}
+#         APP_PRIVATE_KEY: ${{ secrets.ORG_CI_PRIVATE_KEY }}
 #
-# This repository calls it the same way, from auto-merge.yml.
+# dependabot-update-branches.yml keeps the same pull requests up to date with the base
+# branch. This repository calls both, from auto-merge.yml.
 #
 # Requires (one-time, in the caller's settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
@@ -34,22 +44,32 @@ on:
         description: >-
           Space-separated update types to auto-merge: major, minor and patch (semver), and
           other, an update with no semver type, such as a flake input or a git revision.
-          Every one by default, which frappe-nix, odoo-nix and wordpress-nix all use: the
-          required checks are the gate, not the update type.
+          Every one by default: the required checks are the gate, not the update type.
         type: string
         default: major minor patch other
       exclude-ecosystems:
         description: >-
           Space-separated package ecosystems whose pull requests a person reviews instead,
           as dependabot/fetch-metadata names them: the segment after dependabot/ in the
-          pull request's branch, such as github_actions or npm_and_yarn. By default, action bumps: they change what CI runs,
-          this workflow included.
+          pull request's branch, such as github_actions or npm_and_yarn. None by default:
+          every ecosystem auto-merges, action bumps included, whose required checks run
+          the bumped actions before the merge.
         type: string
-        default: github_actions
+        default: ""
       merge-method:
         description: How GitHub merges once the checks pass, as `gh pr merge` takes it.
         type: string
         default: squash
+    secrets:
+      APP_ID:
+        description: >-
+          The ID (or client ID) of a GitHub App installed on the repository with Contents
+          and Pull requests write. With APP_PRIVATE_KEY, the App's token enables auto-merge,
+          so the merge raises a push. Without them, GITHUB_TOKEN does.
+        required: false
+      APP_PRIVATE_KEY:
+        description: The GitHub App's private key (PEM).
+        required: false
 
 permissions:
   contents: write
@@ -58,7 +78,8 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
-    if: ${{ github.actor == 'dependabot[bot]' }}
+    # The pull request's author, not github.actor (which a re-run by a person changes).
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -92,10 +113,35 @@ jobs:
           echo "$ECOSYSTEM, $type update: auto-merge $merge"
           echo "merge=$merge" >> "$GITHUB_OUTPUT"
 
+      - name: Whether the caller passed a GitHub App
+        id: app
+        if: steps.policy.outputs.merge == 'true'
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      # An App that is not installed on the repository falls back to GITHUB_TOKEN.
+      - name: Mint the GitHub App's token
+        id: app-token
+        if: steps.app.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Enable auto-merge
         if: steps.policy.outputs.merge == 'true'
-        run: gh pr merge --auto "--$MERGE_METHOD" "$PR_URL"
+        run: |
+          set -euo pipefail
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            echo "auto-merge is already enabled on $PR_URL"
+            exit 0
+          fi
+          gh pr merge --auto "--$MERGE_METHOD" "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           MERGE_METHOD: ${{ inputs.merge-method }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}

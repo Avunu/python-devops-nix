@@ -1,15 +1,48 @@
 name: auto-merge
 
-# This repository's Dependabot pull requests, through the reusable workflow the products
-# call (dependabot-auto-merge.yml), with its default policy: everything but action bumps
-# auto-merges once the required checks ("lint", "checks", "downstream") pass. The products
-# call it pinned to a commit; this repository calls its own copy at the same revision.
-on: pull_request
+# This repository's Dependabot pull requests, through the reusable workflows the products
+# call, with their default policy: every one auto-merges, action bumps included, once the
+# required checks ("lint", "checks", "downstream") pass, and each one that falls behind main
+# is brought up to date (dependabot-update-branches.yml). The products call them pinned to a
+# commit; this repository calls its own copies at the same revision.
+#
+# The org's GitHub App (the variable AVUNU_CI_APP_ID, or a Dependabot secret of that name,
+# and the secret AVUNU_CI_PRIVATE_KEY) enables auto-merge and updates the branches, so a
+# merge raises a push that starts check.yml and release.yml on main, and an updated branch
+# starts its checks. Without it, GITHUB_TOKEN, and check.yml is dispatched on an updated
+# branch.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   dependabot:
+    # The pull request's author, not github.actor (which a re-run by a person changes).
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      contents: write # gh pr merge --auto
+      pull-requests: write # gh pr merge --auto
     uses: ./.github/workflows/dependabot-auto-merge.yml
+    # A Dependabot run sees only Dependabot secrets: the App's ID is one too.
+    secrets:
+      APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+
+  update-branches:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write # update-branch without the App
+      pull-requests: write # comment `@dependabot rebase`, update-branch
+      actions: write # without the App, dispatch check.yml on the updated branch
+    uses: ./.github/workflows/dependabot-update-branches.yml
+    with:
+      dispatch: check.yml
+    secrets:
+      APP_ID: ${{ vars.AVUNU_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
