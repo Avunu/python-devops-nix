@@ -4,12 +4,13 @@ name: Dependabot update branches
 # date, so auto-merge (dependabot-auto-merge.yml) is not left waiting on a stale branch and
 # what merges was checked against the base it lands on. A pull request that is not behind is
 # left alone, as is every pull request Dependabot did not open (release-please's among them).
+# A pull request that is behind is updated through the update-branch API (a merge of the
+# base); a conflict is left for a person, with a notice.
 #
-#   only Dependabot's commits  comment `@dependabot rebase`, once per head commit; when
-#                              Dependabot has not rebased it six hours later, the
-#                              update-branch API instead
-#   anyone else's commits too  the update-branch API (a merge of the base), which keeps them
-#   a conflict                 left for a person, with a notice
+# Not `@dependabot rebase`: Dependabot takes its commands only from a person with push
+# access, and answers a GitHub App or github-actions[bot] with "only users with push access
+# can use that command". Once its branch is updated, Dependabot stops rebasing the pull
+# request, so a later conflict needs a person; auto-merge usually lands it first.
 #
 # A repository calls it on a push to its default branch and on a schedule, pinned as
 # dependabot-auto-merge.yml is:
@@ -36,8 +37,7 @@ name: Dependabot update branches
 #
 # With a GitHub App, the App comments and updates, so an updated branch starts its checks the
 # normal way. With GITHUB_TOKEN, an update raises no event: the workflows in `dispatch` are
-# dispatched on the updated branch instead, and those must have `workflow_dispatch`. A branch
-# Dependabot rebases starts its checks either way.
+# dispatched on the updated branch instead, and those must have `workflow_dispatch`.
 
 on:
   workflow_call:
@@ -122,7 +122,6 @@ jobs:
           set -euo pipefail
           # A scheduled run's event names no repository, so ask for its default branch.
           BASE="${BASE:-$(gh api "repos/$REPO" --jq .default_branch)}"
-          now="$(date -u +%s)"
           update() { # <number> <head sha> <head branch>
             if ! gh api -X PUT "repos/$REPO/pulls/$1/update-branch" -f expected_head_sha="$2" > /dev/null; then
               echo "::notice::#$1: could not update it from $BASE (a conflict needs a person)"
@@ -151,25 +150,5 @@ jobs:
               if [ "$(gh api "repos/$REPO/compare/$BASE...$sha" --jq .behind_by)" = 0 ]; then
                 continue
               fi
-              others="$(gh api --paginate "repos/$REPO/pulls/$number/commits" \
-                --jq '.[] | select(.author.login != "dependabot[bot]") | .sha')"
-              if [ -n "$others" ]; then
-                update "$number" "$sha" "$branch"
-                continue
-              fi
-              head_date="$(gh api --paginate "repos/$REPO/pulls/$number/commits" \
-                --jq '.[].commit.committer.date' | tail -n 1)"
-              # ISO 8601 UTC times sort as text: the newest request made since the head commit.
-              asked="$(gh api --paginate "repos/$REPO/issues/$number/comments" \
-                --jq '.[] | select(.body | contains("@dependabot rebase")) | .created_at' |
-                awk -v after="$head_date" '$0 > after' | sort | tail -n 1)"
-              if [ -z "$asked" ]; then
-                gh pr comment "$number" --repo "$REPO" --body "@dependabot rebase"
-                echo "#$number: asked Dependabot to rebase it on $BASE"
-              elif [ $((now - $(date -u -d "$asked" +%s))) -lt 21600 ]; then
-                echo "#$number: Dependabot was asked to rebase it at $asked; waiting"
-              else
-                echo "::notice::#$number: Dependabot has not rebased it since $asked; updating the branch instead"
-                update "$number" "$sha" "$branch"
-              fi
+              update "$number" "$sha" "$branch"
             done

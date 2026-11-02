@@ -38,7 +38,7 @@ jobs:
     if: github.event_name != 'pull_request'
     permissions:
       contents: write # update-branch without the App
-      pull-requests: write # comment `@dependabot rebase`, update-branch
+      pull-requests: write # update-branch
       actions: write # without the App, dispatch check.yml on the updated branch
     uses: ./.github/workflows/dependabot-update-branches.yml
     with:
