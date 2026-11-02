@@ -28,7 +28,8 @@ the tree is not a store path. And why frozen: yarn 1's `install
 --frozen-lockfile` in a folder whose yarn.lock is gone exits 0 having resolved
 every range afresh — an app that moved to pnpm gets unpinned packages and no
 error (frappe/suite#980). Here the lockfile picks the manager, so pnpm's lock
-is installed by pnpm, and a folder with dependencies and no lock is an error.
+is installed by pnpm, and a folder with dependencies and no lock is an error
+when it builds (one that only carries tooling, and builds nothing, is skipped).
 
 A pnpm 11+ target whose devEngines pins another pnpm than the shell's would
 download that one and switch to it; the shell keeps its own (the one Nix
@@ -332,7 +333,11 @@ def install_env() -> dict[str, str]:
 
 def install(target: Target, label: str, *, force: bool = False) -> bool:
     if target.lock_name is None:
-        if target.has_deps:
+        # Nothing pinned. Refused only where something is built from it, as
+        # lib.node refuses it in the Nix build; a package.json that carries a
+        # third-party addon's own lint tooling, with no lockfile and no build,
+        # is left alone rather than reported on every shell entry.
+        if target.has_deps and (target.has_build or target.member_builds):
             raise Refused(
                 f"{target.key} has dependencies and no lockfile, so nothing says "
                 f"which versions to install; run `{target.manager} install` there "

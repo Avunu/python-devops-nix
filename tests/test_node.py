@@ -180,6 +180,15 @@ class Command(unittest.TestCase):
         self.assertEqual((code, self.calls()), (1, []))
         self.assertIn("lockless has dependencies and no lockfile", err)
 
+    def test_lockless_tooling_that_builds_nothing_is_skipped(self) -> None:
+        # A third-party addon's lint tooling: dependencies, no lockfile, no build.
+        tooling = self.root / "tooling"
+        tooling.mkdir()
+        (tooling / "package.json").write_text('{"dependencies": {"eslint": "^10.5.0"}}')
+        self.targets.append({"key": "tooling", "path": str(tooling)})
+        code, _, err = self.run_cli("install")
+        self.assertEqual((code, self.calls(), err), (0, [], ""))
+
     def test_a_refused_target_does_not_stop_the_others(self) -> None:
         self.add("ambiguous")
         self.add("yarn")
