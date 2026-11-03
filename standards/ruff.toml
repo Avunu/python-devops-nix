@@ -1,0 +1,4 @@
+# The repository's ruff.toml, plus one exclusion: DESIGN.md's Python blocks are
+# the design's text, kept as written, and ruff formats Markdown code blocks.
+extend = "../ruff.toml"
+extend-exclude = ["DESIGN.md"]
