@@ -27,10 +27,16 @@ if TYPE_CHECKING:
     from standards_core.product import Product
 
 # The labels the core's steps apply: name → (color, description, module); "" = always.
-# A product's `ci.labels` adds to them and may reword them.
+# The auto-merge steps apply these two, on Dependabot's pull requests, so `repo apply`
+# creates them and `repo doctor` checks them while `dependabot` is on. A product's
+# `ci.labels` adds to them and may reword them.
 CORE_LABELS: Mapping[str, tuple[str, str, str]] = {
-    "dependencies": ("0366d6", "Dependency updates", ""),
-    "needs-review": ("d93f0b", "Not merged automatically; a person reviews it", ""),
+    "dependencies": ("0366d6", "Dependency updates", "dependabot"),
+    "needs-review": (
+        "d93f0b",
+        "Not merged automatically; a person reviews it",
+        "dependabot",
+    ),
 }
 
 

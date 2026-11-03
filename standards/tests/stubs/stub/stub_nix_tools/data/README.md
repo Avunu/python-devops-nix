@@ -9,3 +9,4 @@ The stub product's data root (DESIGN §11.1).
 | `profiles/` | `minimal` and `recommended@1.0` |
 | `manifest.d/` | the managed files, retire rules and floors |
 | `templates/` | the templates the manifest renders |
+| `repo-policy/self/` | the stub engine repository's own settings and rulesets (`repo apply --self`) |

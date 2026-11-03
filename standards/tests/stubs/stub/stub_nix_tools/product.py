@@ -416,6 +416,11 @@ def derive(cfg: dict[str, Any], checkout: Checkout | None) -> None:
         cfg["site"] = f"{checkout.hyphen}.localhost"
 
 
+def fleet_table(repo: str, entry: Mapping[str, Any], ref: str) -> dict[str, Any]:
+    """A fleet target that has not opted in: the required ``major``, the current one."""
+    return {"major": 16}
+
+
 PRODUCT = Product(
     identity=IDENTITY,
     markers=MARKERS,
@@ -430,6 +435,7 @@ PRODUCT = Product(
         template_globals=template_globals,
         derive=derive,
         write_fixture=write_fixture,
+        fleet_table=fleet_table,
     ),
     ci=CI,
     branching=BRANCHING,
@@ -437,4 +443,5 @@ PRODUCT = Product(
     handlers=MappingProxyType({"stub-pyproject": PYPROJECT}),
     first_opt_in=FIRST_OPT_IN,
     fixtures=FIXTURES,
+    self_repo="example/stub-nix",
 )

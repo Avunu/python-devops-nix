@@ -12,7 +12,7 @@ The frappe-nix checkout is read only: its tools are imported from
 
 It builds the core's stub product with frappe-nix's identity and markers (the
 ``Product`` frappe-nix will build when it moves onto the core) and compares, for what
-the core ships so far (DESIGN §12: stages 3 and 4):
+the core ships so far (DESIGN §12: stages 3, 4 and 8):
 
 - **header lines**: ``render.header`` for every header kind, with and without a local
   region, with and without a note, byte for byte;
@@ -28,8 +28,14 @@ the core ships so far (DESIGN §12: stages 3 and 4):
   diff's header lines (the diffs themselves differ: the two products render different
   files).
 
-It prints one line per comparison and exits 1 when any differs. The later stages add
-``repo-policy`` (8) and ``--help`` (9).
+- **repo-policy** (stage 8): ``repo_policy.for_target`` with the frappe product
+  against frappe-nix-tools' ``repo_policy.for_app``, on the same resolved
+  configuration, for both phases and a range of ``repo-policy``/``releases`` values,
+  gate sets and documentation URLs: the settings, the labels and every ruleset, equal
+  as data; and ``bypass_actors`` for frappe's two forms.
+
+It prints one line per comparison and exits 1 when any differs. The later stage adds
+``--help`` (9).
 """
 
 from __future__ import annotations
@@ -81,11 +87,27 @@ FRAPPE_OPT_IN_HINT = (
 )
 
 
+# frappe-nix's labels (its LABEL_MODULES and repo-settings.json): the core ships the
+# first two in its settings file, and the product adds the third.
+FRAPPE_LABELS = {
+    "dependencies": ("0366d6", "Dependency updates", "dependabot"),
+    "needs-review": (
+        "d93f0b",
+        "Not merged automatically; a person reviews it",
+        "dependabot",
+    ),
+    "screenshots": ("c5def5", "Screenshot refresh from nightly", "screenshots"),
+}
+
+
 def frappe_product():
     """The stub product with frappe-nix's string values."""
+    from types import MappingProxyType
+
     import frappe_nix_tools
     from frappe_nix_tools import cli as frappe_cli
     from frappe_nix_tools.common import pyproject as frappe_pyproject
+    from frappe_nix_tools.common import repo_policy as frappe_repo_policy
     from standards_core.product import FirstOptIn, Identity, Markers
     from stub_nix_tools.product import PRODUCT as STUB
 
@@ -117,8 +139,13 @@ def frappe_product():
         FirstOptIn(path=path, hint=FRAPPE_OPT_IN_HINT, message=FRAPPE_OPT_IN_MESSAGE)
         for path in ("flake.nix", ".envrc")
     )
+    ci = dataclasses.replace(
+        STUB.ci,
+        gates=tuple(frappe_repo_policy.GATE_ORDER),
+        labels=MappingProxyType(FRAPPE_LABELS),
+    )
     return dataclasses.replace(
-        STUB, identity=identity, markers=markers, first_opt_in=first_opt_in
+        STUB, identity=identity, markers=markers, first_opt_in=first_opt_in, ci=ci
     )
 
 
@@ -360,6 +387,97 @@ def first_opt_in(results: Results, product, work: Path) -> None:
         )
 
 
+# Tables over the recommended profile: each repo-policy/releases shape frappe renders.
+POLICY_TABLES = {
+    "recommended": {},
+    "repo-policy values": {
+        "repo-policy": {
+            "enable": True,
+            "required-approvals": 0,
+            "merge-methods": ["rebase", "squash"],
+            "require-code-owner-review": True,
+            "require-thread-resolution": False,
+            "delete-branch-on-merge": False,
+        }
+    },
+    "managed parts off": {
+        "repo-policy": {
+            "manage-default-branch": False,
+            "manage-features": False,
+            "secret-scanning": False,
+        }
+    },
+    "required checks": {"repo-policy": {"required-checks": ["lint"]}},
+    "main+tags": {"releases": {"branching": "main+tags"}},
+    "empty tag prefix, user bypass": {
+        "releases": {"tag-prefix": ""},
+        "repo-policy": {"release-bypass": "user:42"},
+    },
+    "dependabot off": {"dependabot": {"enable": False}},
+    "releases off": {"releases": {"enable": False}},
+}
+POLICY_GATES = (
+    ["pr-policy", "lint", "typecheck", "test", "marketplace"],
+    ["test", "lint"],
+    [],
+)
+
+
+def repo_policy(results: Results, product) -> None:
+    from frappe_nix_tools.common import config as frappe_config
+    from frappe_nix_tools.common import repo_policy as frappe_repo_policy
+    from standards_core.common import repo_policy as core_repo_policy
+
+    for label, extra in POLICY_TABLES.items():
+        table = {
+            "schema": 1,
+            "profile": "recommended",
+            "frappe-major": 16,
+            "repo": "example/demo_app",
+            **extra,
+        }
+        doc = {"tool": {"frappe-nix": table}}
+        resolved = frappe_config.resolve_doc(doc, on_github=True)
+        cfg, modules = resolved.cfg, resolved.modules
+        for gates in POLICY_GATES:
+            if (
+                extra.get("repo-policy", {}).get("required-checks")
+                and "lint" not in gates
+            ):
+                continue
+            # Only the release branches the branching makes: main+tags has none (the
+            # core also needs the branching's release_pattern for the ruleset).
+            branching = cfg.get("releases", {}).get("branching")
+            branches = ("version-16", "") if branching == "develop+version" else ("",)
+            for phase in ("provisional", "full"):
+                for release_branch in branches:
+                    for documentation in ("", "https://d.example.org/"):
+                        kwargs = {
+                            "phase": phase,
+                            "release_branch": release_branch,
+                            "documentation": documentation,
+                        }
+                        core = core_repo_policy.for_target(
+                            product, cfg, modules, gates, **kwargs
+                        )
+                        frappe = frappe_repo_policy.for_app(
+                            cfg, modules, gates, **kwargs
+                        )
+                        results.same(
+                            f"repo-policy {label}, gates {','.join(gates) or '-'},"
+                            f" {phase}, release {release_branch or '-'}, docs"
+                            f" {'yes' if documentation else 'no'}",
+                            dataclasses.asdict(core),
+                            dataclasses.asdict(frappe),
+                        )
+    for bypass in ("github-actions", "user:42"):
+        results.same(
+            f"repo-policy bypass_actors {bypass}",
+            core_repo_policy.bypass_actors(bypass),
+            frappe_repo_policy.bypass_actors(bypass),
+        )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
@@ -376,6 +494,7 @@ def main(argv: list[str]) -> int:
     results = Results()
     headers(results, product)
     reports(results, product)
+    repo_policy(results, product)
     with tempfile.TemporaryDirectory() as tmp:
         commands(results, product, Path(tmp))
         first_opt_in(results, product, Path(tmp))

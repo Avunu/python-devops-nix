@@ -56,11 +56,29 @@ class TestCli(unittest.TestCase):
     def test_core_commands_in_sort_key_order(self):
         self.assertEqual(
             [c.name for c in CORE_COMMANDS],
-            ["ci", "config", "data-path", "pin-path", "policy", "profile", "sync"],
+            [
+                "ci",
+                "config",
+                "data-path",
+                "pin-path",
+                "policy",
+                "profile",
+                "repo",
+                "sync",
+            ],
         )
         self.assertEqual(
             commands(cli.build_parser(STUB)),
-            ["ci", "config", "data-path", "pin-path", "policy", "profile", "sync"],
+            [
+                "ci",
+                "config",
+                "data-path",
+                "pin-path",
+                "policy",
+                "profile",
+                "repo",
+                "sync",
+            ],
         )
 
     def test_extra_commands_interleave_by_sort_key(self):
@@ -78,6 +96,7 @@ class TestCli(unittest.TestCase):
                 "aa",
                 "policy",
                 "profile",
+                "repo",
                 "sync",
                 "zz-last",
             ],

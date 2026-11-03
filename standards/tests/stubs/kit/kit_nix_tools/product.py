@@ -566,6 +566,12 @@ CI = CiConfig(
 )
 
 
+def fleet_table(repo: str, entry: Mapping[str, Any], ref: str) -> dict[str, Any]:
+    """A fleet target that has not opted in: the fleet entry's ``shape``, when it names
+    one."""
+    return {"shape": entry["shape"]} if entry.get("shape") else {}
+
+
 PRODUCT = Product(
     identity=IDENTITY,
     markers=MARKERS,
@@ -582,6 +588,7 @@ PRODUCT = Product(
         checks=checks,
         committed_argv=lambda root: ["committed"],
         write_fixture=write_fixture,
+        fleet_table=fleet_table,
     ),
     ci=CI,
     json_style=JsonStyle(indent="  ", width=80, trailing_commas="none"),

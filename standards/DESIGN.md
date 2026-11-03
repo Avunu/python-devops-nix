@@ -2521,6 +2521,67 @@ Deviations made while implementing, with the reason for each.
 - **Deferred to stage 8.** §11.3's `test_bump` item "the integration ruleset renders the App bypass under
   post-merge-bump" needs `common/repo_policy.py`; it lands with `test_repo_policy`.
 
+### Stage 8
+
+- **Signatures** (product first, per §2): `repo_policy.for_target(product, cfg, modules, gates, *, phase,
+  release_branch, documentation="", overrides=None)`, `values(product, cfg, modules, gates, documentation="",
+  release_branch="")`, `required_checks(product, cfg, gates)`, `read_file(product, rel, *, directory, overrides)`
+  (org override, else `directory`, else the data roots, product first), `ruleset_names(product, cfg, modules, phase,
+  release_branch)` and `self_dir(product)`, which reads only the product's data root (the core ships no
+  `repo-policy/self/`; the stub ships one). `hooks.rulesets(cfg, modules, phase, release_branch)` returns file names
+  under `rulesets/`. `targets.load/entries/load_fleet/clone/fetch_profile(product, …)`,
+  `targets.resolve_profile(product, repo, ref, entry)`, `targets.opted_in(product, root)` (through
+  `pyproject.config_path`, §15.CR1); `apply.plan_policy/documentation_url(product, t, …)`; `audit.run_tool(product,
+  root, argv, spec)`; `doctor.rows_for(product, repo, rc)` with `rc` a `RepoConfig`; `rollout.plan(product, rc, …)`,
+  `rollout.check_reached(product, root, to)` and `rollout.set_profile_ref(product, path, ref)`.
+- **`Target`** also has `product` (not compared, not printed; its `release_branch` needs the product's branching)
+  and a `private` property. `targets.entry_integration(entry)` is §7.1's entry rule (`integration_branch`, else
+  `branches[0]`); `Target.integration` falls back to the resolved `integration-branch`, and `load` clones that branch
+  when it differs from the default branch's. A not-opted-in target has `gates = []` (its provisional ruleset has
+  no status checks) and `facts = {}`.
+- **Labels.** `ci.CORE_LABELS` now names module `dependabot` for `dependencies` and `needs-review` (stage 7 had
+  `""`): frappe's `LABEL_MODULES`, and the auto-merge steps that apply them run only on Dependabot's pull requests.
+  The policy's labels are the settings file's `labels`, then each `ci.labels` entry the file does not name, each
+  kept while its module (from `ci.labels`; none: always) is on; the file's own color and description win. The core
+  settings file lists the two core labels, so frappe's `screenshots` comes from its `ci.labels`.
+- **Placeholders.** `integration.json` also uses `{strict_checks}` for `strict_required_status_checks_policy`
+  (§7.3 lists it; `false` renders frappe's file). **§15.CR3 is in**: `integration_bypass` is the release-bypass
+  actors only with `releases` on, the flow `post-merge-bump` and a non-empty release branch. `{release_pattern}` and
+  `{release_label}` are `""` for a product with no branching; the release-branch ruleset then is never selected.
+- **`repo targets`** takes `--profile` (as `apply`), and its JSON is a list of rows (the matrix source); the text
+  form is one line per target.
+- **`repo apply`.** `--self` with no `product.self_repo` is exit 2. The 422 fallback text names `release_label`
+  and adds the `integration:<id>` form; frappe's token-secret name is dropped. `documentation_url` is
+  `hooks.documentation_url` alone (frappe's `marketplace/listing.toml` read is its hook).
+- **`repo audit`.** `RowSpec` lives in `commands/repo/audit.py`; `Audit.product` is the target's. Release tags are
+  `<tag-prefix><version>` whose version the checkout's `releases.version-scheme` takes (`scheme.valid` is `None`),
+  which generalises frappe's `frappe-major` filter. A2 under `post-merge-bump` compares the release branch with the
+  integration head through `repos/{r}/compare/{release}...{head}`: equal or `ahead` by commits whose gate contexts
+  (`check_state`) are all `pending` is green, else red (`diverged` included). A11 is n/a outside the tags flow. A5
+  checks the pr-policy gate's workflow (from `ci.contexts`) when it is not `ci.ci_workflow`, and
+  `ci.nightly_workflow` when set. A9 is the sync report's legacy files only (frappe's `public/dist`, `pyupgrade` and
+  `extend-exclude` checks are its own). A10 recognises the relock commit by the subject prefix `chore(deps): relock`
+  (the relock commit is the products' workflow text). Rows a product row does not replace keep their text;
+  unreadable data (any `StandardsError`) is `unknown`.
+- **`repo doctor`.** The release-branch row names the `repo-policy.release-bypass` actor (`GitHub Actions`,
+  `user <id>` or `App <id>`) and checks that actor in each restricting ruleset's bypass list. The pull-request row
+  drops frappe's "(release-please)". Frappe's `ci.schedules` catch-up notice names its workflows, so it is a product
+  notice (`hooks.doctor_rows`), not a core one. Without `<owner/repo>` the checkout root is
+  `pyproject.checkout_root` (§15.CR1).
+- **`repo rollout`.** `set_profile_ref` edits only the `profile` line inside `[tool.<table>]` of the file
+  `pyproject.config_path` names (frappe edits the first `profile =` line anywhere). The built-in skip names the
+  profile (`'recommended'`), not frappe's `'builtin'` source tag. `sync.rollout_steps` run after the flake updates
+  and before `.#<init_app> -- --sync`.
+- **Stubs.** The stub has `self_repo = "example/stub-nix"`, a `repo-policy/self/` (frappe's own policy, neutral)
+  and `hooks.fleet_table` (`major = 16`); the kit's `fleet_table` passes the entry's `shape`.
+- **Tests.** `tests/support/repos.py` holds `RepoCase` (the fake GitHub, `targets.clone` patched), `write_unit`
+  and `kit_bundle`. §11.3's deferred `test_bump` item (the integration ruleset's App bypass under post-merge-bump)
+  is `test_repo_policy`'s `test_post_merge_bump_lets_the_app_past_the_integration_ruleset`.
+- **Parity harness.** It now compares `repo_policy.for_target` (frappe's gate order and labels on the frappe
+  product) with frappe-nix-tools' `for_app` over eight tables, three gate sets, both phases, the release branch the
+  branching makes and two documentation values, plus `bypass_actors`. Against frappe-nix-tools 2.2.1: no
+  difference.
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.

@@ -15,8 +15,9 @@ describing itself as a `standards_core.product.Product` and calling
 |---|---|
 | `standards_core/product.py` | the product plugin contract |
 | `standards_core/cli.py` | the dispatcher a product's console script calls |
-| `standards_core/commands/` | the core's subcommands: `config`, `data-path`, `pin-path`, `profile`, `sync` |
-| `standards_core/common/` | exit codes and reports, data roots, schemas and their composition, configuration resolution, `flake.lock`, NAR hashing, pin fetches, GitHub, git, the config file |
+| `standards_core/commands/` | the core's subcommands: `ci`, `config`, `data-path`, `pin-path`, `policy`, `profile`, `repo` (`apply`, `audit`, `doctor`, `rollout`, `targets`), `sync` |
+| `standards_core/ci/` | the `ci` steps: the auto-merge verdict, relock, dispatch and sweep, the release-branch fast-forward, the post-merge bump, update-branches, drift |
+| `standards_core/common/` | exit codes and reports, data roots, schemas and their composition, configuration resolution, `flake.lock`, NAR hashing, pin fetches, GitHub, git, the config file, repo-policy rendering, version skew |
 | `standards_core/scaffold/` | the manifest, rendering, the template context, discovery, the changed-defaults warning, globs, the formatter-shaped JSON emitter, semantic comparison, local regions, floors; the engine (the plan), the strategy handlers, the TOML and JSON key groups, fixture checkouts and sync's external steps |
 | `standards_core/testing/` | what product test suites use: fakes and the conformance check |
 | `standards_core/data/` | the data every product shares ([README](standards_core/data/README.md)) |
