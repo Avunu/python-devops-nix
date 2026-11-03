@@ -2421,6 +2421,37 @@ Deviations made while implementing, with the reason for each.
   entries), `test_product.py` (defaults read from a product that sets only the required fields) and
   `test_conformance.py` (the no-render-part case uses `support.without_fixtures`, as the kit has fixtures now).
 
+### Stage 6
+
+- **Signatures** (product first, per §2): `bootstrap.lock_reasons(product, root, inputs, url)`,
+  `release_ref_needed(product, root, url)`, `release_branch_exists/release_branch_rev(product, root, branch)`;
+  `phase_a_lock(runner, inputs, url)`, `require_release_branch(runner, url)`, `maybe_reexec(runner, argv,
+  lock_changed)` and `locked_engine_version(runner)` read the product from the `Runner`. New helpers:
+  `release_branch(product)` (`engine.release_branch` at the running major), `engine_repo_url(product)`,
+  `dry_run_lock(product, root, url)` (the node a dry run renders phase B against) and `reexec_argv(product, argv)`
+  (`sync.reexec_argv`, else `nix run --no-pure-eval .#<init_app> -- --sync <argv>`).
+- **`--skip-lock` skips every phase-A Nix step**, the release-branch check included (and the preflight's), as §6.3's
+  offline phase A says; in frappe it only skips the bench relock. `--only` locks and hands over when it names
+  `flake.nix` or a phase-`a` item's path (frappe: `flake.nix` or `.envrc`).
+- **Order.** `require_release_branch` runs after `sync.phase_a_before` (§6.3 steps 2-3); `sync.phase_a_after`
+  gets the second build's plan when one ran; `maybe_reexec` runs after it (step 8). The re-exec passes
+  `passthrough(product, args, init=True)` and the lock change (own or inherited).
+- **The re-exec's version read.** `locked_engine_version` passes both the locked node and `engine.version_file` to
+  `nix eval` as data (`<PREFIX>_LOCKED_REV` holds `{"node": …, "file": …}`), so no product value is spliced into
+  the expression either.
+- **Release-branch refusal text** is neutral: `"https://github.com/<engine.repo> has no <branch> branch yet: the
+  checkout's flake follows it, and it is created when <identity.name> v<major>.0.0 is tagged. Nothing was written;
+  sync works from that release on."` No parity output compares it.
+- **`common/skew.py`** has `expect_rev_problems`, `caller_problems`, `core_problems` and `caller_pattern` beside
+  `problems`; items are `flake.lock` (or the workflow) with strategy `skew`, exit 3. The expect-rev and caller
+  texts format from `identity.distribution` and `engine.flake_input`, which gives frappe's text for its values.
+  The core row is skipped without a readable `flake.lock` (the lock rows report that). `ALLOW_SKEW` reuses
+  `engine.allow_skew`.
+- **Tests.** `test_bootstrap.py` runs a fake `nix` (and `git`) on PATH over stub checkouts; besides the §11.2 list
+  it covers the URL override, the reentry/reexec hooks, `required_tools`, `--skip-lock`/`--only` and the
+  `git ls-remote` probe through a fake `git`. `test_skew.py` adds forks (owner/name from the lock), one item per
+  file, the base-input name and the URL-override rule moved from frappe's `TestSkew`.
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.

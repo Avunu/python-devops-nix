@@ -5,13 +5,14 @@ Only a checkout that opted in is synced: one whose config file has a
 both modes exit 2 with the opt-in hint and write nothing.
 
 ``--write`` runs both phases: phase A writes the files the flake needs (the flake,
-``.envrc``); phase B renders every other managed file, retracts what a module that
-turned off left, deletes what is retired, and brings the locks up. It stages what it
-wrote with ``git add`` and commits nothing.
+``.envrc``), locks the flake, and re-executes sync from the engine the lock pins when
+that is another release; phase B renders every other managed file, retracts what a
+module that turned off left, deletes what is retired, and brings the locks up. It
+stages what it wrote with ``git add`` and commits nothing.
 
 ``--check`` computes the same plan in memory and runs nothing, so it works in a CI job
 without Nix. Exit codes: 0 clean, 1 drift, 2 invalid configuration that sync can't fix,
-3 environment (not a checkout, unreadable lock).
+3 environment (not a checkout, unreadable lock, version skew).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from standards_core.commands import help_text
-from standards_core.common import repo
+from standards_core.common import repo, skew
 from standards_core.common.report import (
     CLEAN,
     DRIFT,
@@ -191,6 +192,7 @@ def check(product: Product, root: Path, args: argparse.Namespace) -> int:
     if not _only(args):
         items += engine.lock_problems(plan)
         items += engine.untracked_lock_problems(plan)
+    items += skew.problems(product, plan, getattr(args, "expect_rev", ""))
     code = worst(*(i.code for i in items))
     findings = [i.finding() for i in items]
     sys.stdout.write(_report(product, findings, args.format, code, plan))
@@ -345,27 +347,80 @@ def _create_table(
     _stage(root, [path], runner)
 
 
+def _flake_step(plan: engine.Plan, args: argparse.Namespace) -> bool:
+    """Whether phase A locks the flake (and checks the release branch, and hands over):
+    always, unless ``--only`` names none of the phase-``a`` files. ``[tool.<table>]`` is
+    created either way, since every other file renders from it."""
+    only = _only(args)
+    if only is None:
+        return True
+    return bool({"flake.nix", *(i.path for i in plan.items)} & set(only))
+
+
+def _lock(product: Product, root: Path, runner: bootstrap.Runner, url: str) -> bool:
+    """Lock the flake the phase-``a`` files make and stage the lock; returns whether
+    ``flake.lock`` changed."""
+    text = engine.read(product, root, "flake.nix")
+    if text is None:
+        return False
+    changed = bootstrap.phase_a_lock(runner, engine.flake_input_specs(text), url)
+    if (root / "flake.lock").is_file():
+        _stage(root, ["flake.lock"], runner)
+    return changed
+
+
 def phase_a(
     product: Product, root: Path, args: argparse.Namespace, runner: bootstrap.Runner
 ) -> bool:
-    """Phase A: build the phase-``a`` plan, run ``sync.phase_a_before``, create the
-    table, write and stage the phase-``a`` files, run ``sync.phase_a_after``. Returns
-    whether ``flake.lock`` changed.
+    """Phase A (DESIGN §6.3 steps 1 to 8). Returns whether ``flake.lock`` changed.
 
-    This is the offline phase A (DESIGN §6.3: steps 1, 2, 4 and 7); the release-branch
-    check, the flake lock, the second build against a newly locked profile and the
-    re-exec are the Nix steps."""
+    Under ``--offline`` or ``--skip-lock`` it runs steps 1, 2, 4 and 7 only: no
+    release-branch check, no lock, no second build against a newly locked profile and
+    no re-exec. ``--only`` limits it too: the flake is locked and handed over only when
+    ``--only`` is not given or names a phase-``a`` file."""
     plan = _build(product, root, args, phases=("a",))
     code = _invalid(product, plan.items)
     if code:
         raise SystemExit(code)
+    flake_step = _flake_step(plan, args)
+    locking = flake_step and not args.offline and not args.skip_lock
     product.sync.phase_a_before(plan, runner, args)
+    if locking:
+        bootstrap.require_release_branch(runner, plan.ctx.engine.url)
     _create_table(product, root, plan, runner)
     touched = _apply(product, root, plan.items, runner)
-    # A flake sees only tracked files: stage them before anything reads the flake.
+    # A flake sees only tracked files: stage them before `nix flake lock` reads the flake.
     _stage(root, touched, runner)
     changed = False
+    if locking and not runner.dry_run:
+        changed = _lock(product, root, runner, plan.ctx.engine.url)
+        # An org profile read only now that it is locked: render the phase-a files again
+        # from it (its modules can change the flake), then lock once more.
+        again = _build(product, root, args, phases=("a",))
+        code = _invalid(product, again.items)
+        if code:
+            raise SystemExit(code)
+        redone = _apply(product, root, again.items, runner)
+        if redone:
+            _stage(root, redone, runner)
+            changed = _lock(product, root, runner, again.ctx.engine.url) or changed
+        plan = again
+    elif locking:
+        print(
+            "would run: nix flake lock (when flake.lock is missing or stale, or"
+            f" {product.engine.flake_input} is not locked from flake.nix's URL)"
+        )
+        # Phase B of a dry run renders against the rev that lock would take.
+        node = bootstrap.dry_run_lock(product, root, plan.ctx.engine.url)
+        if node is not None:
+            args.dry_run_lock = node
     product.sync.phase_a_after(plan, runner, args, changed)
+    if locking and not runner.dry_run:
+        bootstrap.maybe_reexec(
+            runner,
+            passthrough(product, args, init=True),
+            changed or bootstrap.inherited_lock_change(product),
+        )
     return changed
 
 
@@ -480,10 +535,15 @@ def write(product: Product, root: Path, args: argparse.Namespace) -> int:
     lock_changed = False
     if args.phase == "preflight":
         # Before a product's init app writes its own files: what phase A would refuse
-        # (an invalid table, a --standards it contradicts, an unknown profile) is
-        # refused now, with nothing written.
+        # (an invalid table, a --standards it contradicts, an unknown profile, a missing
+        # release branch) is refused now, with nothing written.
         plan = _build(product, root, args, phases=("a",))
-        return _invalid(product, plan.items)
+        code = _invalid(product, plan.items)
+        if code:
+            return code
+        if _flake_step(plan, args) and not args.skip_lock:
+            bootstrap.require_release_branch(runner, plan.ctx.engine.url)
+        return CLEAN
     if args.phase in ("all", "a"):
         lock_changed = phase_a(product, root, args, runner)
     if args.phase == "a":
@@ -599,6 +659,12 @@ def register(subparsers: argparse._SubParsersAction, product: Product) -> None:
         choices=("text", "json", "github"),
         default="text",
         help="--check: report format",
+    )
+    flag(
+        "--expect-rev",
+        default="",
+        help=f"--check: the {product.engine.flake_input} revision this"
+        f" {identity.distribution} was installed from",
     )
     p.add_argument(
         "--phase",
