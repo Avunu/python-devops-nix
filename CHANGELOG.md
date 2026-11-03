@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/Avunu/python-devops-nix/compare/v1.2.0...v1.2.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ci:** update Dependabot branches without asking Dependabot to rebase ([#57](https://github.com/Avunu/python-devops-nix/issues/57)) ([0c9a3a0](https://github.com/Avunu/python-devops-nix/commit/0c9a3a0dd9e45c99299029ae1baa5fdb3a2f6963))
+* **node:** skip lockless targets that build nothing in the dev shell ([#55](https://github.com/Avunu/python-devops-nix/issues/55)) ([351a7e7](https://github.com/Avunu/python-devops-nix/commit/351a7e78fd3461ed30d396a48efe0cf5bd78c2ce))
+
 ## [1.2.0](https://github.com/Avunu/python-devops-nix/compare/v1.1.0...v1.2.0) (2026-10-31)
 
 
