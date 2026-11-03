@@ -91,6 +91,7 @@ def load(
     resolved = config.resolve(
         product,
         pyproject.config_path(product, checkout.root),
+        root=checkout.root,
         lock_path=lock_path,
         profile_dir=profile_dir,
         checkout=checkout,

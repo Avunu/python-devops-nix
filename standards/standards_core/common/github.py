@@ -15,12 +15,12 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from standards_core.common.report import EnvError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from standards_core.product import Product
 
@@ -184,3 +184,114 @@ def gates_protected(
     contexts, known = required_contexts(repo, branch)
     wanted = set(gate_contexts(product, gates))
     return known and bool(wanted) and wanted <= contexts
+
+
+# A check run counts as passed with these conclusions, the ones GitHub's required checks
+# accept; it failed with these. Anything else (queued, in progress, no conclusion yet)
+# is pending.
+GREEN_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
+FAILED_CONCLUSIONS = frozenset(
+    {
+        "failure",
+        "cancelled",
+        "timed_out",
+        "action_required",
+        "startup_failure",
+        "stale",
+    }
+)
+
+
+def _check_runs(repo: str, sha: str) -> list[dict]:
+    data = get(f"repos/{repo}/commits/{sha}/check-runs?per_page=100", paginate=True)
+    pages = data if isinstance(data, list) else [data]
+    runs: list[dict] = []
+    for page in pages:
+        if isinstance(page, dict):
+            runs += [r for r in page.get("check_runs") or [] if isinstance(r, dict)]
+        elif isinstance(page, list):
+            runs += [r for r in page if isinstance(r, dict)]
+    return runs
+
+
+def _run_order(run: dict) -> tuple[bool, str, int]:
+    """A check run's place among the attempts of one name: a run with no
+    ``started_at`` (a queued re-run) after every started one, then by start, then id."""
+    started = run.get("started_at") or ""
+    run_id = run.get("id")
+    return (not started, started, run_id if isinstance(run_id, int) else 0)
+
+
+def _statuses(repo: str, sha: str) -> dict[str, dict]:
+    """The commit statuses on ``sha`` by context, from every page of the combined
+    status (none on a 404)."""
+    try:
+        data = get(f"repos/{repo}/commits/{sha}/status?per_page=100", paginate=True)
+    except GitHubError as e:
+        if e.status == 404:
+            return {}
+        raise
+    pages = data if isinstance(data, list) else [data]
+    out: dict[str, dict] = {}
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        for status in page.get("statuses") or []:
+            if isinstance(status, dict) and status.get("context"):
+                # The combined status lists the newest status per context; keep the
+                # first page's should a context repeat.
+                out.setdefault(status["context"], status)
+    return out
+
+
+def _run_state(run: dict) -> str:
+    if run.get("status") != "completed":
+        return "pending"
+    conclusion = run.get("conclusion") or ""
+    if conclusion in GREEN_CONCLUSIONS:
+        return "green"
+    if conclusion in FAILED_CONCLUSIONS:
+        return "failed"
+    return "pending"
+
+
+def _status_state(status: dict) -> str:
+    state = status.get("state") or ""
+    if state == "success":
+        return "green"
+    if state in ("failure", "error"):
+        return "failed"
+    return "pending"
+
+
+def check_state(
+    repo: str, sha: str, contexts: Iterable[str]
+) -> Literal["green", "pending", "failed"]:
+    """Whether the required ``contexts`` passed on ``sha`` (DESIGN §8.2).
+
+    Each context is read from its newest check run (highest ``started_at``, then ``id``;
+    a run not started yet is newer than any started one), so a re-run replaces a failed
+    attempt; a commit status counts for a context no check run names. Every context
+    green is ``green``; any failed is ``failed``; anything else (missing, queued, in
+    progress, a pending status) is ``pending``.
+    """
+    newest: dict[str, dict] = {}
+    for run in _check_runs(repo, sha):
+        name = run.get("name") or ""
+        have = newest.get(name)
+        if have is None or _run_order(run) > _run_order(have):
+            newest[name] = run
+    statuses = _statuses(repo, sha)
+    states = []
+    for context in contexts:
+        if context in newest:
+            states.append(_run_state(newest[context]))
+        elif context in statuses:
+            states.append(_status_state(statuses[context]))
+        else:
+            states.append("pending")
+    if "failed" in states:
+        return "failed"
+    if all(s == "green" for s in states):
+        return "green"
+    return "pending"

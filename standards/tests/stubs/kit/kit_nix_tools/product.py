@@ -26,10 +26,12 @@ from types import MappingProxyType
 from typing import Any
 
 from kit_nix_tools import __version__
+from standards_core.ci.verdict import DecisionRule
 from standards_core.common import repo
 from standards_core.common.report import DRIFT, ConfigError, EnvError
 from standards_core.product import (
     Branching,
+    CiConfig,
     Engine,
     FirstOptIn,
     Fixture,
@@ -556,6 +558,14 @@ FIRST_OPT_IN = (
 )
 
 
+# The kit's CI: every gate is a job of ci.yml, which runs on push to the integration
+# branch too (the bump commit's required checks); a submodule bump is relocked.
+CI = CiConfig(
+    contexts=(("ci / lint", "ci.yml"), ("ci / pr-policy", "ci.yml")),
+    decision_table=(DecisionRule("submodules", "relock"),),
+)
+
+
 PRODUCT = Product(
     identity=IDENTITY,
     markers=MARKERS,
@@ -573,6 +583,7 @@ PRODUCT = Product(
         committed_argv=lambda root: ["committed"],
         write_fixture=write_fixture,
     ),
+    ci=CI,
     json_style=JsonStyle(indent="  ", width=80, trailing_commas="none"),
     jsonc_globs=(".vscode/*.json",),
     branching=BRANCHING,

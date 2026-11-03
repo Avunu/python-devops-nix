@@ -16,9 +16,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from standards_core.ci.verdict import DecisionRule
 from standards_core.common.report import INVALID, ConfigError
 from standards_core.product import (
     Branching,
+    CiConfig,
     Engine,
     FirstOptIn,
     Fixture,
@@ -174,6 +176,46 @@ class StubMajor:
         self, tag: str, cfg: Mapping[str, Any], facts: Mapping
     ) -> str | None:
         return self.valid(tag.removeprefix("v"), cfg, facts)
+
+
+# --- CI: the auto-merge decision table and the labels ---------------------------------
+
+# A framework product's table, with neutral names: the engine pin and the docs and pilot
+# actions are reviewed, grouped actions and minor/patch package updates merge, a nix bump
+# waits for its relock (or is closed when it moves a rollout input).
+DECISION_TABLE = (
+    DecisionRule("github_actions", "review", names=("$engine",), sticky=True),
+    DecisionRule("github_actions", "review", groups=("docs-actions", "pilot")),
+    DecisionRule(
+        "github_actions", "review", names=("$param:docs-patterns", "example/pilot*")
+    ),
+    DecisionRule("github_actions", "auto", groups=("actions",)),
+    DecisionRule("github_actions", "auto", ungrouped_named=True),
+    DecisionRule("npm_and_yarn", "review", directories=("/docs-site",)),
+    DecisionRule("npm_and_yarn", "auto", update="minor-patch"),
+    DecisionRule("uv", "auto", update="minor-patch"),
+    DecisionRule("pre_commit", "review", groups=("test-utils",)),
+    DecisionRule("pre_commit", "review", names=("*example/test_utils*",)),
+    DecisionRule("pre_commit", "auto", groups=("hooks",)),
+    DecisionRule("pre_commit", "auto", ungrouped_named=True),
+    DecisionRule("nix", "close", names=("$rollout-inputs",)),
+    DecisionRule("nix", "relock"),
+    DecisionRule("submodules", "auto"),
+)
+
+CI = CiConfig(
+    labels=MappingProxyType(
+        {"extras": ("c5def5", "An extras refresh", "extras")},
+    ),
+    decision_table=DECISION_TABLE,
+    arg_aliases=MappingProxyType(
+        {
+            "--stub-nix-repo": "--engine-repo",
+            "--docs-patterns": "--param docs-patterns",
+            "--stub-major": "--set major",
+        }
+    ),
+)
 
 
 # --- pyproject.toml: the managed keys -----------------------------------------------
@@ -389,6 +431,7 @@ PRODUCT = Product(
         derive=derive,
         write_fixture=write_fixture,
     ),
+    ci=CI,
     branching=BRANCHING,
     version_schemes=MappingProxyType({"stub-major": StubMajor()}),
     handlers=MappingProxyType({"stub-pyproject": PYPROJECT}),

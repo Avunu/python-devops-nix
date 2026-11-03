@@ -2452,6 +2452,75 @@ Deviations made while implementing, with the reason for each.
   `git ls-remote` probe through a fake `git`. `test_skew.py` adds forks (owner/name from the lock), one item per
   file, the base-input name and the URL-override rule moved from frappe's `TestSkew`.
 
+### Stage 7
+
+- **Signatures** (product first, per §2): `verdict.decide(product, ecosystem, …)` as §8.3, plus `verdict.match`
+  (the first rule that holds), `verdict.patterns` (a rule's `names` with the tokens expanded) and
+  `verdict.problems(product)` (conformance); `automerge.ensure_label/label/enable/close/apply(product, …)`;
+  `relock.moved_inputs(product, base, head)`; `drift.run(product, root, repo, latest, …)`;
+  `policy.message_problems(product, text, rules)`, `rules_for(product, root, …)`,
+  `run_committed(product, root, …)`, `check_pr(product, root, rules, env)`. `release.ensure_ci`, `dispatch_ci`,
+  `sweep` and `branches.Updater` take the context pairs as an argument (default: `CiConfig.contexts`' default);
+  the `ci` steps pass `product.ci.contexts`.
+- **The `semver` scheme** is `ci.conventional.SEMVER` (`<major>.<minor>.<patch>`, no message or tag rule), and
+  `conventional.scheme(product, name)` looks a scheme up in `{"semver", **product.version_schemes}`; an unknown
+  name is exit 2. `conventional.commit_level` gives one commit's level.
+- **Labels.** `ci.CORE_LABELS` holds `dependencies` and `needs-review` (the core's steps apply them, so every
+  product has them), and `ci.labels(product)` is `{**CORE_LABELS, **product.ci.labels}`. A product rewords one by
+  naming it.
+- **`ci fast-forward`.** `FastForward(repo, branch, sha, tag="", scheme, cfg, facts, integration, wait, sleep,
+  dispatch_after, dry_run)`; `moved` (`true`/`pending`/`false`) is written for both flows. The checkout is loaded
+  (scheme, cfg, facts) unless `--version-scheme semver` is given and the guard's input is too (`--tag`, or
+  `--integration` for a tagless move), so an engine repository's own release runs outside a checkout as in frappe.
+  `--tag-prefix` sets `releases.tag-prefix` in the step's cfg; `--set` overrides any key. `--pilot-assets` is
+  `--dispatch-after <workflow>` (repeatable): a `store_true` flag has no `arg_aliases` form, so a frappe shim passes
+  `--dispatch-after assets.yml` when it migrates. `wait_checks` reads once with `--wait-checks 0` (the default)
+  and otherwise every 15 s within the budget. The scheme-refusal text is neutral (`"release tag <t>: <problem>;
+  under version-scheme = <name> <branch> does not take it"`); no parity output compares it.
+- **`ci bump`** builds its `ctx` from `repoconfig.load` (`name`, `cfg` with `--set`, `modules`, `discover` = the
+  facts, `gates`, `branches`) rather than a full `context.build`, which needs the lock and floors the step does not
+  read. It refuses (exit 2) a product with no `release_tool` and a checkout with `releases` off. A unit with no
+  version at `since` (new since the release branch) is skipped with a notice. **§15.CR6 is in**: a push rejected
+  as non-fast-forward (`[rejected]`, `fetch first`) is exit 0 with `bumped` empty and the notice; any other push
+  failure is exit 1. `--integration` defaults to the cfg's.
+- **`policy`.** `hooks.pr_checks` runs on every PR the policy checks (frappe ran compat on `release-please--*`
+  branches only; that branch test is the product's now), never under `--major-free`. `PrContext.changed` diffs
+  `base...head`. The policy does not check `commits.subject-length` itself: `committed` does, from the
+  `committed.toml` the product renders from that key, as in frappe (a second check would print a second
+  message).
+- **Checkout root (§15 CR1, point 4).** `policy` (without `--major-free`) and every `ci` step that falls back to
+  the checkout (`automerge`/`enable-automerge` without `--gates`, `fast-forward`, `bump`) take the root from
+  `pyproject.checkout_root(product, start=None)`: the nearest directory `d` at or above the current directory, up
+  to the work-tree root, for which `config_path(product, d)` is a file, else the work-tree root (outside git, the
+  start directory). The root is never the config file's directory, so `identity.config_file = "sub/pyproject.toml"`
+  reads `<root>/sub/pyproject.toml` from the root and from below it (`NestedConfigCase` in `test_policy` and
+  `test_ci_steps`). CR1 point 3 is in as far as `repoconfig.load` reaches: `config.resolve` takes `root=`
+  (default: the config file's directory, unchanged for one-file products) and `repoconfig.load` passes
+  `checkout.root`, so the lock and in-repo profiles resolve against the checkout. `config`, `profile show` and
+  `hooks.config_file`/`identity.config_paths` stay stage 10's.
+- **`check_state` ordering and statuses.** A check run with no `started_at` ranks after every started attempt of
+  its name (a queued re-run replaces a failed one), then by `started_at`, then `id`. The combined status is read
+  as `repos/{r}/commits/{sha}/status?per_page=100` with pagination (a 404 is no statuses), not only its first page.
+- **`ci` arguments.** Every step flag has a `ci <step> <flag>` help key. `--param KEY=JSON` must be a JSON list of
+  strings, `--set KEY=JSON` any JSON (strict: a bare word is exit 2). An alias is added on each step that has its
+  target flag, with `default=SUPPRESS`, so an unused alias changes nothing; its default help is `"same as <target>"`.
+- **Small behaviour changes.** `ensure_ci` dispatches a workflow once even when two missing contexts name it (the
+  kit's `ci / lint` and `ci / pr-policy` both come from `ci.yml`). Sleep defaults are resolved at call time
+  (`None` → `time.sleep`). Texts name the checkout ("This checkout's workflows pin …"); `refuse-workflows` drops the
+  spec reference.
+- **Conformance, CI part.** The rule checks (decision rules, labels: six-hex color and a known module, distinct
+  gate contexts, `ci.contexts` contexts that are gate contexts and plain workflow file names, the composed
+  `repo-policy.required-checks` items within `ci.gates`) run with the static part, so `check(render=False)` covers
+  them. The push-trigger check renders each fixture under the newest `recommended` with `releases.enable`,
+  `releases.branching = "<name>"` and `ci.enable` prepended to its table, and runs after the render part. A
+  workflow in `ci.contexts` that sync does not write is a problem.
+- **Stubs.** The stub has frappe's decision table with neutral names (`example/pilot*`, `*example/test_utils*`), a
+  module label (`extras`) and three aliases of frappe's shape (`--stub-nix-repo`, `--docs-patterns`,
+  `--stub-major` → `--set major`). The kit has `submodules` → `relock` and `ci.contexts` naming `ci.yml` for both
+  contexts (its one workflow runs every gate).
+- **Deferred to stage 8.** §11.3's `test_bump` item "the integration ruleset renders the App bypass under
+  post-merge-bump" needs `common/repo_policy.py`; it lands with `test_repo_policy`.
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.

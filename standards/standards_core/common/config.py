@@ -567,6 +567,7 @@ def resolve(
     product: Product,
     config_path: Path,
     *,
+    root: Path | None = None,
     lock_path: Path | None = None,
     profile_dir: Path | None = None,
     checkout: Checkout | None = None,
@@ -576,9 +577,11 @@ def resolve(
     Its text must spell the table the way the dev shell's line match finds it
     (``pyproject.check_opt_in_spelling``), so the shell and the tools never disagree on
     whether the checkout opted in. A missing file reads as empty (not opted in) when the
-    product's config file is optional.
+    product's config file is optional. ``root`` is the checkout's directory (in-repo
+    profiles, the default lock ``root / "flake.lock"``, origin); it defaults to the
+    config file's directory, which is the root when the file sits at it (§15.CR1).
     """
-    root = config_path.resolve().parent
+    root = root or config_path.resolve().parent
     if not product.identity.config_required and not config_path.exists():
         text = ""
     else:

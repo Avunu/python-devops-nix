@@ -1,5 +1,6 @@
 """A throwaway stub checkout in a git repository, and ``stub-nix`` run against it offline."""
 
+import dataclasses
 import json
 import os
 import tempfile
@@ -10,6 +11,7 @@ from unittest import mock
 from stub_nix_tools.product import PRODUCT as STUB
 
 from standards_core.scaffold import manifest
+from standards_core.scaffold.context import default_load_checkout
 from standards_core.testing.fakes import flake_lock, git, run_cli, uv_lock
 
 PYPROJECT = """[project]
@@ -171,3 +173,30 @@ class CheckoutCase(unittest.TestCase):
         return {
             f: (self.root / f).read_bytes() for f in files if (self.root / f).is_file()
         }
+
+
+def nested_config_product(product, rel: str = "sub/pyproject.toml"):
+    """``product`` with its config file at ``rel`` below the checkout's root
+    (``identity.config_file`` holds a directory part, §15.CR1)."""
+    nested = dataclasses.replace(
+        product,
+        identity=dataclasses.replace(product.identity, config_file=rel),
+        hooks=dataclasses.replace(
+            product.hooks,
+            load_checkout=lambda root: default_load_checkout(nested, root),
+        ),
+    )
+    return nested
+
+
+class NestedConfigCase(CheckoutCase):
+    """A ``CheckoutCase`` whose config file is ``sub/pyproject.toml``: the checkout's
+    root is the work tree's root, not the file's directory."""
+
+    product = nested_config_product(STUB)
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.root / "sub").mkdir()
+        (self.root / "pyproject.toml").rename(self.root / "sub/pyproject.toml")
+        self.commit("nested config")

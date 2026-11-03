@@ -1,4 +1,5 @@
-"""``common/github.py`` directly: the transport seam, pagination and required contexts."""
+"""``common/github.py`` directly: the transport seam, pagination, required contexts and
+the state of a commit's required checks."""
 
 import json
 import subprocess
@@ -164,6 +165,155 @@ class TestContexts(GitHubCase):
         self.assertFalse(github.gates_protected(STUB, "o/r", "main", ["lint", "test"]))
         self.assertFalse(github.gates_protected(STUB, "o/r", "main", []))
         self.assertFalse(github.gates_protected(STUB, "o/other", "main", ["lint"]))
+
+
+def run(
+    name,
+    status="completed",
+    conclusion="success",
+    started="2026-01-01T00:00:00Z",
+    id_=1,
+):
+    return {
+        "id": id_,
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        "started_at": started,
+    }
+
+
+class TestCheckState(GitHubCase):
+    SHA = "c" * 40
+    RUNS = f"repos/o/r/commits/{'c' * 40}/check-runs?per_page=100"
+    STATUS = f"repos/o/r/commits/{'c' * 40}/status?per_page=100"
+
+    def state(self, runs=(), statuses=(), contexts=("ci / lint",)):
+        self.gh.routes[("GET", self.RUNS)] = {
+            "total_count": len(runs),
+            "check_runs": list(runs),
+        }
+        self.gh.routes[("GET", self.STATUS)] = {
+            "state": "pending",
+            "statuses": list(statuses),
+        }
+        return github.check_state("o/r", self.SHA, contexts)
+
+    def test_green_conclusions(self):
+        for conclusion in ("success", "neutral", "skipped"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(
+                    self.state([run("ci / lint", conclusion=conclusion)]), "green"
+                )
+
+    def test_failed_conclusions(self):
+        for conclusion in (
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "startup_failure",
+            "stale",
+        ):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(
+                    self.state([run("ci / lint", conclusion=conclusion)]), "failed"
+                )
+
+    def test_pending(self):
+        self.assertEqual(self.state([]), "pending")  # missing
+        self.assertEqual(self.state([run("ci / lint", "in_progress", None)]), "pending")
+        self.assertEqual(self.state([run("ci / lint", "queued", None)]), "pending")
+        self.assertEqual(
+            self.state([run("ci / lint", conclusion="something-new")]), "pending"
+        )
+
+    def test_every_context_must_be_green_and_any_failure_fails(self):
+        both = ("ci / lint", "ci / test")
+        self.assertEqual(self.state([run("ci / lint")], contexts=both), "pending")
+        self.assertEqual(
+            self.state([run("ci / lint"), run("ci / test", id_=2)], contexts=both),
+            "green",
+        )
+        self.assertEqual(
+            self.state(
+                [
+                    run("ci / lint", conclusion="failure"),
+                    run("ci / test", "queued", None),
+                ],
+                contexts=both,
+            ),
+            "failed",
+        )
+
+    def test_a_rerun_replaces_the_failed_attempt(self):
+        failed = run("ci / lint", conclusion="failure", started="2026-01-01T00:00:00Z")
+        rerun = run("ci / lint", started="2026-01-01T01:00:00Z", id_=2)
+        self.assertEqual(self.state([failed, rerun]), "green")
+        self.assertEqual(self.state([rerun, failed]), "green")
+        broken = run("ci / lint", conclusion="failure", started="2026-01-02T00:00:00Z")
+        self.assertEqual(self.state([rerun, broken]), "failed")
+        # the same start: the higher id is the newer
+        same = "2026-01-01T00:00:00Z"
+        self.assertEqual(
+            self.state(
+                [
+                    run("ci / lint", conclusion="failure", started=same, id_=5),
+                    run("ci / lint", started=same, id_=4),
+                ]
+            ),
+            "failed",
+        )
+
+    def test_a_queued_rerun_with_no_start_replaces_the_failed_attempt(self):
+        failed = run("ci / lint", conclusion="failure", id_=1)
+        queued = run("ci / lint", "queued", None, started=None, id_=2)
+        self.assertEqual(self.state([failed, queued]), "pending")
+        self.assertEqual(self.state([queued, failed]), "pending")
+        # of two unstarted attempts the higher id is the newer
+        later = run("ci / lint", "completed", "failure", started=None, id_=3)
+        self.assertEqual(self.state([later, queued]), "failed")
+        self.assertEqual(self.state([queued, later]), "failed")
+
+    def test_a_status_only_context(self):
+        def status(state):
+            return {"context": "ci / lint", "state": state}
+
+        self.assertEqual(self.state(statuses=[status("success")]), "green")
+        self.assertEqual(self.state(statuses=[status("failure")]), "failed")
+        self.assertEqual(self.state(statuses=[status("error")]), "failed")
+        self.assertEqual(self.state(statuses=[status("pending")]), "pending")
+        # a check run of the same name wins over the status
+        self.assertEqual(
+            self.state([run("ci / lint")], statuses=[status("failure")]), "green"
+        )
+
+    def test_no_combined_status_and_paginated_pages(self):
+        self.gh.routes[("GET", self.RUNS)] = [
+            {"total_count": 2, "check_runs": [run("ci / lint")]},
+            {"total_count": 2, "check_runs": [run("ci / test", id_=2)]},
+        ]
+        self.assertEqual(
+            github.check_state("o/r", self.SHA, ["ci / lint", "ci / test"]), "green"
+        )
+        self.assertIn(("GET", self.STATUS, None), self.gh.calls)
+
+    def test_paginated_statuses(self):
+        self.gh.routes[("GET", self.RUNS)] = {"total_count": 0, "check_runs": []}
+        self.gh.routes[("GET", self.STATUS)] = [
+            {
+                "state": "pending",
+                "statuses": [{"context": "ci / lint", "state": "success"}],
+            },
+            {
+                "state": "pending",
+                "statuses": [{"context": "ci / test", "state": "error"}],
+            },
+        ]
+        contexts = ["ci / lint", "ci / test"]
+        self.assertEqual(github.check_state("o/r", self.SHA, contexts), "failed")
+        self.gh.routes[("GET", self.STATUS)][1]["statuses"][0]["state"] = "success"
+        self.assertEqual(github.check_state("o/r", self.SHA, contexts), "green")
 
 
 if __name__ == "__main__":

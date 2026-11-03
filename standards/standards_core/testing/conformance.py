@@ -19,10 +19,18 @@ every ``recommended@*``, syncs with ``sync --write --offline``, then (with the l
 offline sync leaves to Nix and the lock commands faked) checks clean with ``sync
 --check``, and a second write changes no byte; every ``seed_template`` holds its entry's
 anchor.
+
+The CI part: every decision rule names a verdict and an update kind that exist; the
+labels name modules the product has; every gate's required context is distinct, the
+required-checks the schema admits are gates, and every dispatch context is a gate's;
+and for every branching whose flow is ``post-merge-bump``, each fixture rendered under it
+has ``ci.ci_workflow`` and every workflow in ``ci.contexts`` run on ``push`` to the
+integration branch (the bump commit's required checks come from that run).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import json
 import os
@@ -31,6 +39,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -394,14 +403,175 @@ def _render(product: Product) -> list[str]:
     return out
 
 
+# --- the CI part --------------------------------------------------------------------
+
+_COLOR = re.compile(r"[0-9a-fA-F]{6}")
+
+
+def _ci_rules(product: Product) -> list[str]:
+    """The decision table, the labels, and the gates against the repo-policy values."""
+    from standards_core.ci import labels, verdict
+
+    out = verdict.problems(product)
+    modules = set(product.modules.names)
+    for name, value in labels(product).items():
+        if not (isinstance(value, tuple) and len(value) == 3):
+            out.append(f"ci.labels[{name!r}] is not (color, description, module)")
+            continue
+        color, _description, module = value
+        if not _COLOR.fullmatch(str(color)):
+            out.append(f"ci.labels[{name!r}]: color {color!r} is not six hex digits")
+        if module and module not in modules:
+            out.append(f"ci.labels[{name!r}]: module {module!r} is not a module")
+    contexts = _guard(
+        out,
+        "ci.check_context",
+        lambda: [product.ci.check_context.format(gate=g) for g in product.ci.gates],
+    )
+    if contexts is not None and len(set(contexts)) != len(contexts):
+        out.append("ci.check_context gives two gates the same required context")
+    for context, workflow in product.ci.contexts:
+        if contexts is not None and context not in contexts:
+            out.append(
+                f"ci.contexts: {context!r} is no gate's required context"
+                f" ({', '.join(contexts) or 'no gates'})"
+            )
+        if not workflow.endswith((".yml", ".yaml")) or "/" in workflow:
+            out.append(f"ci.contexts: {workflow!r} is not a workflow file name")
+    node = _guard(
+        out,
+        "repo-policy.required-checks",
+        lambda: schema.node_at(product, schema.APP, "repo-policy.required-checks"),
+    )
+    for option in (node or {}).get("anyOf", []):
+        items = (option.get("items") or {}).get("enum")
+        for gate in items or []:
+            if gate not in product.ci.gates:
+                out.append(
+                    f"repo-policy.required-checks admits {gate!r}, which is not in"
+                    " ci.gates"
+                )
+    return out
+
+
+def _triggers(doc: Any) -> Any:
+    """A workflow's ``on`` (YAML 1.1 reads the bare key as ``True``)."""
+    if not isinstance(doc, dict):
+        return None
+    return doc.get("on", doc.get(True))
+
+
+def push_problem(text: str, branch: str) -> str | None:
+    """Why a workflow does not run on ``push`` to ``branch``, or ``None``."""
+    import yaml
+
+    try:
+        on = _triggers(yaml.safe_load(text))
+    except yaml.YAMLError as e:
+        return f"is not YAML: {e}"
+    if on == "push" or (isinstance(on, list) and "push" in on):
+        return None
+    if not isinstance(on, dict) or "push" not in on:
+        return "does not run on push"
+    push = on["push"] or {}
+    if not isinstance(push, dict):
+        return "has an unreadable on.push"
+    branches = push.get("branches")
+    if branches is None:
+        return None if "branches-ignore" not in push else "filters push branches"
+    if isinstance(branches, str):
+        branches = [branches]
+    if any(fnmatchcase(branch, str(b)) for b in branches):
+        return None
+    return f"runs on push to {list(branches)}, not to {branch}"
+
+
+def _bump_fixture(fixture: Any, branching: str) -> Any:
+    """``fixture`` with ``releases`` and ``ci`` on under ``branching``."""
+    lines = [
+        ("releases.enable", "releases.enable = true"),
+        ("releases.branching", f'releases.branching = "{branching}"'),
+        ("ci.enable", "ci.enable = true"),
+    ]
+    keep = [
+        line
+        for key, line in lines
+        if not any(t.strip().startswith(key) for t in fixture.table.splitlines())
+    ]
+    return dataclasses.replace(
+        fixture, table="".join(f"{line}\n" for line in keep) + fixture.table
+    )
+
+
+def _ci_push(product: Product) -> list[str]:
+    """Each post-merge-bump branching: the required-check workflows run on push."""
+    from standards_core.scaffold import engine, fixtures
+
+    flows = [b for b in product.branching.values() if b.flow == "post-merge-bump"]
+    if not flows or not product.fixtures or product.hooks.write_fixture is None:
+        return []
+    out: list[str] = []
+    profile = _guard(
+        out, "profiles", lambda: config.builtin_name(product, "recommended")
+    )
+    if profile is None:
+        return out
+    workflows = sorted(
+        {product.ci.ci_workflow, *(w for _, w in product.ci.contexts)} - {""}
+    )
+    with tempfile.TemporaryDirectory() as tmp, _isolated(product):
+        work = Path(tmp)
+        for branching in flows:
+            for name, fixture in product.fixtures.items():
+                label = f"fixture {name} x {branching.name}"
+                try:
+                    root = fixtures.throwaway(
+                        product,
+                        work,
+                        None,
+                        name,
+                        _bump_fixture(fixture, branching.name),
+                        profile=profile,
+                    )
+                    code, text = _sync(
+                        product, root, "--write", "--offline", "--throwaway"
+                    )
+                    if code != 0:
+                        out.append(
+                            f"{label}: sync --write --offline exited {code}: {text}"
+                        )
+                        continue
+                    plan = engine.build(product, root, options={"throwaway": True})
+                except (StandardsError, RuntimeError, OSError) as e:
+                    out.append(f"{label}: {type(e).__name__}: {e}")
+                    continue
+                integration = plan.cfg.get("integration-branch", "")
+                for workflow in workflows:
+                    path = root / ".github" / "workflows" / workflow
+                    if not path.is_file():
+                        out.append(
+                            f"{label}: .github/workflows/{workflow} is not written, but"
+                            " ci names it"
+                        )
+                        continue
+                    problem = push_problem(path.read_text(), integration)
+                    if problem:
+                        out.append(
+                            f"{label}: .github/workflows/{workflow} {problem}: the bump"
+                            " commit gets no required checks"
+                        )
+    return out
+
+
 def check(product: Product, *, render: bool = True) -> list[str]:
     """Every way ``product`` breaks the core's contract; empty when it conforms.
-    ``render=False`` runs the static part only."""
+    ``render=False`` runs the static parts only (the CI part's rules included)."""
     problems = _builds(product)
-    for part in (_modules, _schemas, _profiles, _manifest, _env_names):
+    for part in (_modules, _schemas, _profiles, _manifest, _env_names, _ci_rules):
         problems += part(product)
     if render and not problems:
         problems += _render(product)
+        problems += _ci_push(product)
     return problems
 
 

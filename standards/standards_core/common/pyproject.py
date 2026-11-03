@@ -14,6 +14,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from standards_core.common import repo
 from standards_core.common.report import ConfigError, EnvError
 
 if TYPE_CHECKING:
@@ -55,6 +56,27 @@ def parse(text: str, path: Path) -> dict:
 def config_path(product: Product, root: Path) -> Path:
     """The checkout's config file: ``<root>/<identity.config_file>``."""
     return root / product.identity.config_file
+
+
+def checkout_root(product: Product, start: Path | None = None) -> Path:
+    """The checkout at or above ``start`` (default: the current directory).
+
+    It is the nearest directory ``d``, up to the git work tree's root, for which
+    ``config_path(product, d)`` is a file, else the work tree's root (outside git,
+    ``start``). The root is never derived from the config file's location, which may
+    sit in a subdirectory of it (DESIGN §15.CR1).
+    """
+    here = (start or Path.cwd()).resolve()
+    try:
+        top = repo.toplevel(here).resolve()
+    except EnvError:
+        return here
+    for directory in (here, *here.parents):
+        if config_path(product, directory).is_file():
+            return directory
+        if directory == top:
+            break
+    return top
 
 
 def config_text(product: Product, root: Path) -> str:

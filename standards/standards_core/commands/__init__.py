@@ -39,12 +39,14 @@ def help_text(product: Product, key: str, default: str | None) -> str | None:
 
 
 def _core_commands() -> tuple[Command, ...]:
-    from standards_core.commands import config, paths, profile, sync
+    from standards_core.commands import ci, config, paths, policy, profile, sync
 
     return (
+        Command("ci", ci.register),
         Command("config", config.register),
         Command("data-path", paths.register_data_path, "paths"),
         Command("pin-path", paths.register_pin_path, "paths"),
+        Command("policy", policy.register),
         Command("profile", profile.register),
         Command("sync", sync.register),
     )

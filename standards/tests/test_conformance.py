@@ -1,5 +1,5 @@
-"""The conformance check (DESIGN §11.4), static and render parts: both stubs conform,
-and a broken copy of the stub fails each rule."""
+"""The conformance check (DESIGN §11.4), static, render and CI parts: both stubs
+conform, and a broken copy of a stub fails each rule."""
 
 import contextlib
 import dataclasses
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from support import KIT, STUB, product_copy, without_fixtures
 
+from standards_core.ci.verdict import DecisionRule
 from standards_core.common import repo
 from standards_core.product import CiConfig, Fixture, Modules
 from standards_core.scaffold import handlers
@@ -296,6 +297,145 @@ class TestModulesCheckUsesTheProductsNames(unittest.TestCase):
             )
             self.assertEqual(conformance.check(product), [])
             self.assertIsInstance(product.modules, Modules)
+
+
+class TestCiPart(unittest.TestCase):
+    """The CI part: the decision table, the labels and contexts, and the push trigger
+    the post-merge bump's required checks need."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def assertProblem(self, product, text, *, render=True):
+        problems = conformance.check(product, render=render)
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def ci(self, base=STUB, **changes):
+        return dataclasses.replace(base, ci=dataclasses.replace(base.ci, **changes))
+
+    def test_decision_rules_use_known_values(self):
+        product = self.ci(
+            decision_table=(
+                DecisionRule("uv", "merge"),
+                DecisionRule("uv", "auto", update="patch"),
+            )
+        )
+        self.assertProblem(
+            product, "ci.decision_table[0] (uv): verdict 'merge'", render=False
+        )
+        self.assertProblem(
+            product, "ci.decision_table[1] (uv): update 'patch'", render=False
+        )
+
+    def test_labels_name_modules_and_colors(self):
+        product = self.ci(labels={"x": ("c5def5", "x", "nope"), "y": ("blue", "y", "")})
+        self.assertProblem(
+            product, "ci.labels['x']: module 'nope' is not a module", render=False
+        )
+        self.assertProblem(
+            product, "ci.labels['y']: color 'blue' is not six hex digits", render=False
+        )
+
+    def test_contexts_are_gate_contexts_of_workflow_files(self):
+        product = self.ci(contexts=(("ci / docs", "docs.yml"), ("ci / lint", "x/ci")))
+        self.assertProblem(
+            product,
+            "ci.contexts: 'ci / docs' is no gate's required context",
+            render=False,
+        )
+        self.assertProblem(
+            product, "ci.contexts: 'x/ci' is not a workflow file name", render=False
+        )
+
+    def test_gates_get_distinct_contexts(self):
+        product = dataclasses.replace(STUB)
+        object.__setattr__(
+            product,
+            "ci",
+            dataclasses.replace(
+                STUB.ci, gates=("lint", "list"), check_context="ci / {gate[1]}"
+            ),
+        )
+        self.assertProblem(
+            product,
+            "ci.check_context gives two gates the same required context",
+            render=False,
+        )
+
+    def kit_copy(self, **ci):
+        product = product_copy(KIT, Path(self.tmp.name))
+        if ci:
+            product = self.ci(product, **ci)
+        return product
+
+    def edit_ci_yml(self, product, old, new):
+        path = product.data_root / "templates" / ".github" / "workflows" / "ci.yml.j2"
+        text = path.read_text()
+        self.assertIn(old, text)
+        path.write_text(text.replace(old, new))
+
+    def test_the_workflow_must_run_on_push(self):
+        product = self.kit_copy()
+        self.edit_ci_yml(
+            product, "  push:\n    branches: [{{ branches.integration }}]\n", ""
+        )
+        self.assertProblem(
+            product,
+            "fixture bundle x develop+series: .github/workflows/ci.yml does not run on"
+            " push: the bump commit gets no required checks",
+        )
+
+    def test_on_push_to_the_integration_branch(self):
+        product = self.kit_copy()
+        self.edit_ci_yml(product, "[{{ branches.integration }}]", "[main]")
+        self.assertProblem(
+            product,
+            "fixture workspace x develop+series: .github/workflows/ci.yml runs on push"
+            " to ['main'], not to develop",
+        )
+
+    def test_every_context_workflow_is_written(self):
+        product = self.kit_copy(contexts=(("ci / lint", "lint.yml"),))
+        self.assertProblem(
+            product,
+            "fixture bundle x develop+series: .github/workflows/lint.yml is not"
+            " written, but ci names it",
+        )
+
+    def test_only_post_merge_bump_branchings_are_rendered(self):
+        self.assertEqual(conformance._ci_push(STUB), [])
+        self.assertEqual(conformance._ci_push(without_fixtures(KIT)), [])
+
+    def test_push_problem(self):
+        branch = "develop"
+        for text, want in (
+            ("on: push\n", None),
+            ("on: [push, pull_request]\n", None),
+            ("on:\n  push:\n", None),
+            ("on:\n  push:\n    branches: [develop]\n", None),
+            ("on:\n  push:\n    branches: ['dev*']\n", None),
+            ("on:\n  push:\n    branches: develop\n", None),
+            ("on:\n  push:\n    tags: ['v*']\n", None),
+            ("on: pull_request\n", "does not run on push"),
+            ("name: x\n", "does not run on push"),
+            (
+                "on:\n  push:\n    branches-ignore: [x]\n",
+                "filters push branches",
+            ),
+            ("on:\n  push: [x]\n", "has an unreadable on.push"),
+            (
+                "on:\n  push:\n    branches: [main]\n",
+                "runs on push to ['main'], not to develop",
+            ),
+            ("on: [\n", "is not YAML"),
+        ):
+            with self.subTest(text=text):
+                got = conformance.push_problem(text, branch)
+                if want is None:
+                    self.assertIsNone(got)
+                else:
+                    self.assertIn(want, got or "")
 
 
 if __name__ == "__main__":
