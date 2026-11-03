@@ -299,10 +299,16 @@ class TestPostInitRules(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 self.refused(
-                    "message must format exactly",
+                    "message must format only",
                     first_opt_in=(replace(one, message=message),),
                 )
-        product(first_opt_in=(replace(one, message="{diff}{hint}{name}{path}"),))
+        for message in (
+            "{diff}{hint}{name}{path}",
+            # A hint and a name written inline, as a product keeping its old text does.
+            "{path} is the unit's own: keep yours elsewhere. The replacement:\n{diff}",
+        ):
+            with self.subTest(message=message):
+                product(first_opt_in=(replace(one, message=message),))
 
     def test_all_problems_are_named(self):
         message = self.refused(

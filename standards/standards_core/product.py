@@ -254,7 +254,7 @@ class FirstOptIn:
     hint: str  # where the checkout's own content goes instead (printed with the diff)
     # texts replaced silently
     legacy: Callable[[str, Checkout], list[str]] = lambda current, checkout: []
-    # format fields {path}, {name} (identity.name), {hint}, {diff}
+    # format fields: {diff}, and any of {path}, {name} (identity.name), {hint}
     message: str = FIRST_OPT_IN_MESSAGE
 
 
@@ -598,10 +598,13 @@ class Product:
         if len(set(paths)) != len(paths):
             out.append("first_opt_in lists a path twice")
         for item in self.first_opt_in:
-            if _format_fields(item.message) != _OPT_IN_FIELDS:
+            # A product may write its hint or name inline (DESIGN §5.9), but never
+            # leave the replacement out.
+            fields = _format_fields(item.message)
+            if fields is None or not fields <= _OPT_IN_FIELDS or "diff" not in fields:
                 out.append(
-                    f"first_opt_in {item.path!r}: message must format exactly"
-                    " {path}, {name}, {hint} and {diff}"
+                    f"first_opt_in {item.path!r}: message must format only"
+                    " {path}, {name}, {hint} and {diff}, and {diff} at least"
                 )
         return out
 

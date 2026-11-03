@@ -12,7 +12,7 @@ The frappe-nix checkout is read only: its tools are imported from
 
 It builds the core's stub product with frappe-nix's identity and markers (the
 ``Product`` frappe-nix will build when it moves onto the core) and compares, for what
-the core ships so far (DESIGN §12: stage 3):
+the core ships so far (DESIGN §12: stages 3 and 4):
 
 - **header lines**: ``render.header`` for every header kind, with and without a local
   region, with and without a note, byte for byte;
@@ -21,10 +21,15 @@ the core ships so far (DESIGN §12: stage 3):
 - **sync --check --format json**: on a directory that is no checkout, the whole error
   report; on an opted-in fixture, the key order of the document and of each file;
 - **profile show --format json**: the key order of the document, the ``profile``
-  table, and the order of the ``config`` keys both products have.
+  table, and the order of the ``config`` keys both products have;
+- **first-opt-in refusal**: an opted-in fixture with its own ``flake.nix`` and
+  ``.envrc``; for each, ``sync --check --format json``'s file entry (path, strategy,
+  module, exit) and its problem text up to the replacement diff, byte for byte, and the
+  diff's header lines (the diffs themselves differ: the two products render different
+  files).
 
 It prints one line per comparison and exits 1 when any differs. The later stages add
-the first-opt-in text (4), ``repo-policy`` (8) and ``--help`` (9).
+``repo-policy`` (8) and ``--help`` (9).
 """
 
 from __future__ import annotations
@@ -62,12 +67,26 @@ def _imports(frappe_nix: Path) -> None:
         sys.path.insert(0, str(path))
 
 
+# frappe-nix's first-opt-in text (its engine's ``_first_opt_in``) as the core's message
+# template: the command it names is not ``identity.name``, so it is written inline.
+FRAPPE_OPT_IN_MESSAGE = (
+    "{path} is the app's own and differs from what frappe-init --app writes: sync would"
+    " replace it with the managed file. {hint} then pass --force to replace it. The"
+    " replacement:\n{diff}"
+)
+FRAPPE_OPT_IN_HINT = (
+    "Keep custom inputs in the flake.nix `inputs` local region, outputs in"
+    " nix/local.nix, systems and caches in [tool.frappe-nix.dev-shell] (direnv lines in"
+    " the .envrc `envrc` region),"
+)
+
+
 def frappe_product():
     """The stub product with frappe-nix's string values."""
     import frappe_nix_tools
     from frappe_nix_tools import cli as frappe_cli
     from frappe_nix_tools.common import pyproject as frappe_pyproject
-    from standards_core.product import Identity, Markers
+    from standards_core.product import FirstOptIn, Identity, Markers
     from stub_nix_tools.product import PRODUCT as STUB
 
     docs_url = frappe_cli.DOCS
@@ -94,7 +113,13 @@ def frappe_product():
         html_begin="<!-- frappe-nix:begin {name} -->",
         html_end="<!-- frappe-nix:end {name} -->",
     )
-    return dataclasses.replace(STUB, identity=identity, markers=markers)
+    first_opt_in = tuple(
+        FirstOptIn(path=path, hint=FRAPPE_OPT_IN_HINT, message=FRAPPE_OPT_IN_MESSAGE)
+        for path in ("flake.nix", ".envrc")
+    )
+    return dataclasses.replace(
+        STUB, identity=identity, markers=markers, first_opt_in=first_opt_in
+    )
 
 
 class Results:
@@ -199,10 +224,14 @@ major = 16
 """
 
 
-def _fixture(root: Path, text: str, *, frappe: bool) -> Path:
+def _fixture(
+    root: Path, text: str, *, frappe: bool, files: dict[str, str] | None = None
+) -> Path:
     root.mkdir(parents=True)
     _git(root, "init", "-q", "-b", "develop")
     (root / "pyproject.toml").write_text(text)
+    for rel, body in (files or {}).items():
+        (root / rel).write_text(body)
     if frappe:
         (root / "demo_app").mkdir()
         (root / "demo_app" / "__init__.py").write_text('__version__ = "16.0.0"\n')
@@ -275,6 +304,62 @@ def commands(results: Results, product, work: Path) -> None:
         )
 
 
+OWN_FILES = {
+    "flake.nix": '{\n  inputs.x.url = "github:example/x";\n  outputs = _: { };\n}\n',
+    ".envrc": "dotenv\nuse flake\n",
+}
+
+
+def first_opt_in(results: Results, product, work: Path) -> None:
+    from frappe_nix_tools import cli as frappe_cli
+    from standards_core import cli
+
+    def core_main(argv: list[str]) -> int:
+        return cli.main(product, argv)
+
+    profile = "recommended"
+    app = _fixture(
+        work / "frappe-own",
+        FRAPPE_APP.format(profile=profile),
+        frappe=True,
+        files=OWN_FILES,
+    )
+    unit = _fixture(
+        work / "core-own",
+        CORE_UNIT.format(profile=profile),
+        frappe=False,
+        files=OWN_FILES,
+    )
+    argv = ["sync", "--check", "--format", "json"]
+    code_c, out_c, err_c = _run(core_main, argv, unit)
+    code_f, out_f, err_f = _run(frappe_cli.main, argv, app)
+    results.same("first opt-in: sync --check exit", code_c, code_f)
+    try:
+        files_c = {f["path"]: f for f in json.loads(out_c)["files"]}
+        files_f = {f["path"]: f for f in json.loads(out_f)["files"]}
+    except (ValueError, KeyError):
+        results.same("first opt-in: sync --check json", out_c + err_c, out_f + err_f)
+        return
+    for path in OWN_FILES:
+        core, frappe = files_c.get(path), files_f.get(path)
+        if core is None or frappe is None:
+            results.same(f"first opt-in {path}: reported", core, frappe)
+            continue
+        results.same(
+            f"first opt-in {path}: entry",
+            (core["strategy"], core["module"]),
+            (frappe["strategy"], frappe["module"]),
+        )
+        text_c, _, diff_c = core["problem"].partition("The replacement:\n")
+        text_f, _, diff_f = frappe["problem"].partition("The replacement:\n")
+        results.same(f"first opt-in {path}: text", text_c, text_f)
+        results.same(
+            f"first opt-in {path}: diff header",
+            diff_c.splitlines()[:2],
+            diff_f.splitlines()[:2],
+        )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
@@ -293,6 +378,7 @@ def main(argv: list[str]) -> int:
     reports(results, product)
     with tempfile.TemporaryDirectory() as tmp:
         commands(results, product, Path(tmp))
+        first_opt_in(results, product, Path(tmp))
     print(f"{'FAIL' if results.failed else 'ok'}: {results.failed} difference(s)")
     return 1 if results.failed else 0
 

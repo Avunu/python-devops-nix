@@ -2349,6 +2349,31 @@ Deviations made while implementing, with the reason for each.
   the key order on an opted-in fixture) and `profile show --format json` (document keys, `profile`, the order of the
   shared `config` keys). Against frappe-nix-tools 2.2.1: no difference.
 
+### Stage 4
+
+- **No new core module.** History and `ever`, retract per handler, the retire rules, floors and the first-opt-in
+  refusal came with stage 3 (above). Stage 4 is the ported `test_standards.py` plus the one rule change below.
+- **First-opt-in message fields (§3.2).** "Formats with exactly the fields `path`, `name`, `hint`, `diff`" was read
+  in stage 1 as set equality, which refuses frappe's template: its text names `frappe-init --app`, not
+  `identity.name`, and §5.9 has it write its hint inline. The rule is now: the message formats only those four
+  fields, and `{diff}` at least (the replacement is always shown). `test_product.py` covers both an inline-hint
+  template and the refusals.
+- **`test_standards.py` on the stub.** The cases keep frappe's shapes with the stub's modules in place of its
+  JavaScript ones: `python-lint`/`tests` key groups in `pyproject.toml`, and `committed.toml`, `.editorconfig`,
+  `CONTRIBUTING.md` and the GitHub files as whole files. `--standards` uses a stub variant whose
+  `hooks.new_target_table` supplies the required `major` (frappe's `--frappe-version`). Command seeds
+  (`tools/uv.lock`) stay without a notice on turn-off, as in frappe. The origin-move case without `.github/` runs on
+  a checkout that never had one (an older commit with `.github/` marks every state as on GitHub, which would hide
+  the mark), and covers `paths.github_marks` both ways. The unmanaged-directory retire case uses a product copy
+  with `never_write = {node_modules, .venv}` and a `**/legacy.ini` rule. Not ported (Frappe-only): the
+  package.json/check-script cases, the third-party formatter, metadata parameters, siblings, the TypeScript preset,
+  branches and snapshots (stage 2's `test_profiles.py`/`test_scaffold.py` cover these), the org-profile and
+  untrusted-profile cases (`test_sync.py`/`test_profiles.py`). Added: an opt-out commit ends the history.
+- **Parity harness.** It now compares the first-opt-in refusal on an opted-in fixture with its own `flake.nix`
+  and `.envrc`: the file entry (path, strategy, module), the exit code, the problem text up to the replacement
+  diff byte for byte, and the diff's header lines. The frappe product passes frappe's text as `FirstOptIn.message`
+  with its hint as `hint`. Against frappe-nix-tools 2.2.1: no difference.
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.
