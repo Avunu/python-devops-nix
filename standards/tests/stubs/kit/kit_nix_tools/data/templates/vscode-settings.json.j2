@@ -1,0 +1,9 @@
+{
+  "set": {
+    "python.languageServer": "None",
+    "[python]": {"editor.defaultFormatter": "vendor.ruff"},
+    "ruff.path": ["${workspaceFolder}/tools/.venv/bin/ruff"]
+  },
+  "forbidden": [["Ide.serverConfigPath"]],
+  "never": [["Ide.selectedProfile"], {"prefix": "py-envs."}]
+}

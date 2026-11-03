@@ -46,6 +46,19 @@ def product(**changes) -> Product:
     return replace(STUB, **changes)
 
 
+def plain() -> Product:
+    """A product that sets only the required fields: every other one is its default."""
+    return Product(
+        identity=KIT.identity,
+        markers=KIT.markers,
+        engine=KIT.engine,
+        pins=Pins(".dev-dist/pins"),
+        modules=KIT.modules,
+        data_root=KIT.data_root,
+        hooks=Hooks(lambda r: r, lambda *a: {}, lambda *a: [], lambda *a: {}),
+    )
+
+
 class TestDefaults(unittest.TestCase):
     def test_every_dataclass_builds_with_its_defaults(self):
         built = [
@@ -91,7 +104,8 @@ class TestDefaults(unittest.TestCase):
             CiConfig().labels,
             CiConfig().arg_aliases,
             STUB.header_kinds,
-            KIT.handlers,
+            plain().handlers,
+            plain().fixtures,
             STUB.help,
         ):
             self.assertIsInstance(mapping, MappingProxyType)
@@ -125,7 +139,7 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(hooks.pr_checks(None), [])
         self.assertEqual(hooks.render_helpers({}, None), {})
         self.assertEqual(STUB.sync.passthrough(None, True), [])
-        self.assertEqual(KIT.pins.managed_inputs({}), ())
+        self.assertEqual(plain().pins.managed_inputs({}), ())
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertEqual(hooks.committed_argv(root), ["committed"])

@@ -1,0 +1,22 @@
+{
+  "$comment": "The kit's GitHub files (DESIGN §11.1): one Dependabot entry per (ecosystem, branch), and a CI workflow run on push to the integration branch.",
+  "entries": [
+    {
+      "path": ".github/dependabot.yml",
+      "template": ".github/dependabot.yml.j2",
+      "strategy": "whole",
+      "module": "dependabot",
+      "header": "yaml",
+      "local_regions": [
+        "updates"
+      ]
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "template": ".github/workflows/ci.yml.j2",
+      "strategy": "whole",
+      "module": "ci",
+      "header": "yaml"
+    }
+  ]
+}

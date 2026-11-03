@@ -327,38 +327,13 @@ def _one(product: Product, root: Path, label: str) -> list[str]:
     return out
 
 
-_TOML_HEADER = re.compile(r"^\s*\[\s*(?P<name>[^\]\[]+?)\s*\]\s*(#.*)?$", re.MULTILINE)
-
-
 def anchor_found(anchor: str, text: str) -> bool:
     """Whether ``text`` holds a sentinel ``anchor``: ``eof`` always; a ``nix-attrset``
-    path's attrsets opened (``name = {``) in order; a ``toml-array``'s ``key = [`` in its
-    table."""
-    kind, _, where = anchor.partition(" ")
-    if kind == "eof":
-        return True
-    if kind == "nix-attrset":
-        at = 0
-        for part in where.split("."):
-            m = re.compile(rf"(?<![\w'-]){re.escape(part)}\s*=\s*\{{").search(text, at)
-            if m is None:
-                return False
-            at = m.end()
-        return True
-    if kind == "toml-array":
-        table, _, key = where.rpartition(".")
-        body = text
-        if table:
-            heads = [m for m in _TOML_HEADER.finditer(text) if m["name"] == table]
-            if not heads:
-                dotted = rf"^\s*{re.escape(where)}\s*=\s*\["
-                return re.search(dotted, text, re.MULTILINE) is not None
-            start = heads[0].end()
-            nxt = _TOML_HEADER.search(text, start)
-            body = text[start : nxt.start() if nxt else len(text)]
-        pattern = rf"^\s*{re.escape(key)}\s*=\s*\["
-        return re.search(pattern, body, re.MULTILINE) is not None
-    return False
+    path's attribute sets, as the Nix scanner follows them; a ``toml-array``'s
+    ``key = [`` in its table (or dotted at the root)."""
+    from standards_core.scaffold import blocks
+
+    return blocks.anchor_found(anchor, text)
 
 
 def _seed_anchors(product: Product, root: Path, label: str) -> list[str]:

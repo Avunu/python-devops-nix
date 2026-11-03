@@ -8,8 +8,9 @@ registry plus ``Product.handlers``.
 
 The base class of each strategy implements the behaviour every product gets; a product
 handler subclasses one and overrides methods (a precheck before a whole file renders, a
-seed computed rather than rendered, a lock's own problem). ``toml-merge`` and
-``json-merge`` need the product's key groups, so a product registers a
+seed computed rather than rendered, a lock's own problem). ``jsonc-merge``
+(``scaffold.jsonc``) and ``sentinel`` (``scaffold.blocks``) serve their entries as they
+are. ``toml-merge`` and ``json-merge`` need the product's key groups, so a product registers a
 ``tomlmerge.TomlMergeHandler`` or ``jsonmerge.JsonGroupsHandler`` under a name of its
 own and its entries name it.
 """
@@ -581,6 +582,9 @@ class _Unserved(BaseHandler):
 
 def core_handlers() -> dict[str, Handler]:
     """The core's registry: a base handler per strategy name (``CORE_HANDLERS``)."""
+    from standards_core.scaffold.blocks import SentinelHandler
+    from standards_core.scaffold.jsonc import JsoncMergeHandler
+
     groups = "a {s} entry names the product's handler (registered in Product.handlers)"
     return {
         "whole": WholeHandler(),
@@ -590,9 +594,9 @@ def core_handlers() -> dict[str, Handler]:
         "blame-ignore-revs": BlameIgnoreRevsHandler(),
         "toml-merge": _Unserved("toml-merge", groups.format(s="toml-merge")),
         "json-merge": _Unserved("json-merge", groups.format(s="json-merge")),
-        "jsonc-merge": _Unserved("jsonc-merge", "no jsonc-merge handler is available"),
+        "jsonc-merge": JsoncMergeHandler(),
         "blocks": BlocksHandler(),
-        "sentinel": _Unserved("sentinel", "no sentinel handler is available"),
+        "sentinel": SentinelHandler(),
     }
 
 

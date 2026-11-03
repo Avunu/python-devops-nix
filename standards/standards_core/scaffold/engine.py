@@ -44,7 +44,7 @@ from standards_core.common.report import (
     EnvError,
     Finding,
 )
-from standards_core.scaffold import context, globs, manifest
+from standards_core.scaffold import context, globs, manifest, nixattrs
 from standards_core.scaffold import render as rendering
 
 if TYPE_CHECKING:
@@ -209,100 +209,13 @@ def read(product: Product, root: Path, path: str) -> str | None:
 
 # --- flake inputs ----------------------------------------------------------------------
 #
-# Regular expressions over the rendered flake's ``inputs`` attrset, as the first engine
-# reads it: four spaces deep, one input per line or block. ``scaffold/nixattrs.py``
-# replaces them with an indentation-inferring scanner (DESIGN §5.6.2, stage 5), with
-# the same results on these shapes.
+# Read with the Nix lexer of ``scaffold/nixattrs.py`` (DESIGN §5.6.2, §5.6.4): the direct
+# children of ``inputs = { … };`` at any indentation, ``self`` excluded.
 
-# An input's name: a Nix identifier, or a quoted one (render.nix_attr) such as "my.unit".
-_FLAKE_NAME = r"""(?:(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)|"(?P<quoted>[^"\\$]*)")"""
-_FLAKE_INPUT = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{")
-_FLAKE_ATTR = re.compile(
-    rf'^\s{{4}}{_FLAKE_NAME}\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";'
-)
-_FLAKE_INNER = re.compile(r'^\s{6}(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
-# An input written on one line: `core = { url = "github:…"; flake = false; };`.
-_FLAKE_INLINE = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{(?P<body>.*)\}};\s*$")
-_FLAKE_INLINE_ATTR = re.compile(
-    r'(?:^|[;{\s])(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";'
-)
-_NIX_COMMENT = re.compile(r'"(?:\\.|[^"\\])*"|#[^\n]*')
-_INPUTS = re.compile(r"\n  inputs = \{\n(?P<body>.*?)\n  \};\n", re.DOTALL)
-
-
-def _input_name(m: re.Match[str]) -> str:
-    return m["name"] if m["name"] is not None else m["quoted"]
-
-
-def strip_nix_comments(text: str) -> str:
-    """``text`` without its ``#`` comments (string literals kept)."""
-    return _NIX_COMMENT.sub(lambda m: m[0] if m[0].startswith('"') else "", text)
-
-
-def input_spec(attr: str, value: str) -> str:
-    """A flake input reference in one comparable form: ``follows:<a>/<b>``, or the URL
-    with a forge's owner and repository lower-cased (Nix matches them
-    case-insensitively)."""
-    if attr == "follows":
-        return f"follows:{value}"
-    forge = re.fullmatch(
-        r"(github|gitlab|sourcehut):([^/?]+)/([^/?]+)(?:/([^?]+))?", value
-    )
-    if not forge:
-        return value
-    kind, owner, repo_name, ref = forge.groups()
-    return f"{kind}:{owner.lower()}/{repo_name.lower()}" + (f"/{ref}" if ref else "")
-
-
-def locked_spec(lock: dict, ref: object) -> str | None:
-    """What a root input of ``flake.lock`` was locked from, in ``input_spec``'s form;
-    ``None`` when the lock records it in a form this can't compare."""
-    if isinstance(ref, list):
-        return "follows:" + "/".join(str(step) for step in ref)
-    node = lock["nodes"].get(ref) if isinstance(ref, str) else None
-    original = node.get("original") if isinstance(node, dict) else None
-    if not isinstance(original, dict):
-        return None
-    kind = original.get("type")
-    if kind == "git" and isinstance(original.get("url"), str):
-        url = original["url"]
-        if original.get("ref"):
-            url += ("&" if "?" in url else "?") + f"ref={original['ref']}"
-        return "git+" + url if not url.startswith("git+") else url
-    if kind not in ("github", "gitlab", "sourcehut"):
-        return None
-    tail = original.get("ref") or original.get("rev")
-    return input_spec(
-        "url",
-        f"{kind}:{original.get('owner')}/{original.get('repo')}"
-        + (f"/{tail}" if tail else ""),
-    )
-
-
-def flake_input_specs(text: str) -> dict[str, str | None]:
-    """Each input a rendered ``flake.nix`` declares (direct children of
-    ``inputs = { … };``), with its ``url`` or ``follows:<path>`` normalised by
-    ``input_spec``; ``None`` when it shows neither. ``self`` is never an input
-    (``self.submodules = true;``)."""
-    m = _INPUTS.search(text)
-    specs: dict[str, str | None] = {}
-    block = None
-    for line in m["body"].splitlines() if m else []:
-        if (one := _FLAKE_ATTR.match(line)) and not block:
-            specs[_input_name(one)] = input_spec(one["attr"], one["value"])
-        elif (inline := _FLAKE_INLINE.match(line)) and not block:
-            specs.setdefault(_input_name(inline), None)
-            for attr in _FLAKE_INLINE_ATTR.finditer(inline["body"]):
-                specs[_input_name(inline)] = input_spec(attr["attr"], attr["value"])
-        elif (opened := _FLAKE_INPUT.match(line)) and not block:
-            block = _input_name(opened)
-            specs.setdefault(block, None)
-        elif block and re.match(r"^\s{4}\};", line):
-            block = None
-        elif block and (inner := _FLAKE_INNER.match(line)):
-            specs[block] = input_spec(inner["attr"], inner["value"])
-    specs.pop("self", None)
-    return dict(sorted(specs.items()))
+flake_input_specs = nixattrs.flake_input_specs
+input_spec = nixattrs.input_spec
+locked_spec = nixattrs.locked_spec
+strip_nix_comments = nixattrs.strip_nix_comments
 
 
 # --- configuration ---------------------------------------------------------------------
@@ -1177,6 +1090,9 @@ def build(
         plan.notices += product.hooks.notices(plan)
     only_set = set(only) if only else None
     managed_paths: set[str] = set()
+    # Sentinel entries that share a path edit one text in entry order (DESIGN §5.6.3):
+    # the path's one item so far, whose ``wanted`` the next entry starts from.
+    chained: dict[str, Item] = {}
     for entry in entries:
         # The rendered path is what is read and written, so that is what must stay
         # inside the checkout: an [[extra-files]] path of "{{ '..' }}/x" passes any
@@ -1188,32 +1104,35 @@ def build(
             continue
         handler = handler_for(product, entry)
         module_on = any(ctx.modules.get(m) for m in entry.modules)
+        before = chained.get(path) if entry.strategy == "sentinel" else None
+        current = before.wanted if before is not None else read(product, root, path)
         items: list[Item] = []
         if handler.merged:
             # Its key groups are set or retracted on every run.
             if module_on:
                 check_uses(product, ctx, entry, path)
-            current = read(product, root, path)
             items = handler.render(plan, entry, path, current, templates)
         elif module_on and rendering.evaluate(entry.when, ctx):
             check_uses(product, ctx, entry, path)
-            current = read(product, root, path)
             items = handler.render(plan, entry, path, current, templates)
-        else:
-            current = read(product, root, path)
-            gone = None
-            if current is not None:
-                gone = (
-                    handler.absent(plan, entry, path, current)
-                    if module_on
-                    else handler.retract(plan, entry, path, current)
-                )
+        elif current is not None:
+            gone = (
+                handler.absent(plan, entry, path, current)
+                if module_on
+                else handler.retract(plan, entry, path, current)
+            )
             items = [gone] if gone is not None else []
         for it in items:
             it.module = it.module or ",".join(entry.modules)
             if it.entry is None:
                 it.entry = entry
-            plan.add(it)
+            if entry.strategy != "sentinel":
+                plan.add(it)
+            elif before is None:
+                chained[path] = before = it
+                plan.add(it)
+            else:
+                chain(before, it)
     if "b" in phases:
         for it in _retired(plan, managed_paths, only_set):
             plan.add(it)
@@ -1221,6 +1140,16 @@ def build(
             if only_set is None or it.path in only_set:
                 plan.add(it)
     return plan
+
+
+def chain(first: Item, then: Item) -> None:
+    """``first`` (a path's sentinel item so far) followed by ``then``, the next entry's
+    edit of the text ``first`` wanted: one item, its problems joined with ``"; "``."""
+    first.wanted = then.wanted
+    first.problem = "; ".join(p for p in (first.problem, then.problem) if p)
+    first.code = max(first.code, then.code)
+    modules = [*first.module.split(","), *then.module.split(",")]
+    first.module = ",".join(dict.fromkeys(m for m in modules if m))
 
 
 def check_handlers(product: Product) -> None:

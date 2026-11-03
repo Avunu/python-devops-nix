@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import KIT, STUB, product_copy
+from support import KIT, STUB, product_copy, without_fixtures
 
 from standards_core.common import repo
 from standards_core.product import CiConfig, Fixture, Modules
@@ -257,7 +257,7 @@ class TestRenderPart(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
 
     def test_a_product_without_fixtures_has_no_render_part(self):
-        self.assertEqual(conformance._render(KIT), [])
+        self.assertEqual(conformance._render(without_fixtures(KIT)), [])
 
     def test_anchors(self):
         flake = '{\n  inputs = {\n    a.url = "x";\n  };\n  outputs = { };\n}\n'

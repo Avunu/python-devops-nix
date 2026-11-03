@@ -2374,6 +2374,53 @@ Deviations made while implementing, with the reason for each.
   diff byte for byte, and the diff's header lines. The frappe product passes frappe's text as `FirstOptIn.message`
   with its hint as `hint`. Against frappe-nix-tools 2.2.1: no difference.
 
+### Stage 5
+
+- **Where the handlers live.** `SentinelHandler` is in `scaffold/blocks.py` and `JsoncMergeHandler` in
+  `scaffold/jsonc.py` (each beside the code it drives); `handlers.core_handlers()` imports them when called, since
+  both modules import `handlers`. `SentinelHandler` has three overridable methods: `body`, `seed` (the rendered
+  `seed_template`, the `BaseHandler.seed` signature) and `owned` (the block names of every sentinel entry for the
+  path).
+- **Several blocks in one file.** `engine.build` chains the sentinel entries that share a path: an entry after the
+  first gets the previous item's `wanted` as `current`, and `engine.chain` folds its item into the path's one item
+  (problems joined with `"; "`, the worst code, the modules united).
+- **`blocks.scan(text, product, comment, *, path, owned)`** takes the owned names: a marker of the owned shape whose
+  name no entry owns is read by the foreign recognizer (it matches `>>> … >>>`), so a block a retired entry left is
+  kept byte for byte. `Found` has `closed` (an unclosed foreign region runs past the end, so an `eof` insertion
+  after it is refused even when the file lacks a final newline). An owned end inside a foreign region is refused like
+  an owned begin.
+- **Layout details §5.6.2 leaves open.** A closer (`};` or `]`) that shares its line with other text is moved to a
+  line of its own before the block goes in. `toml-array` adds the comma the last item lacks (found with a TOML-aware
+  scan, so a comment after the item is not mistaken for it). Body lines keep the indentation of the block's begin
+  marker when the block is replaced in place.
+- **Texts.** A missing file is `"missing"` (seeded or created from the block); claims are `"<input> moves into the
+  managed <name> block"` (equal), `"<input> is replaced by the managed <name> block"` (`--force`), and, refused,
+  `"<path> defines <inputs> otherwise than the managed <name> block: … The replacement:\n<diff>"` before the first
+  opt-in and `"<path> defines <inputs> outside the managed <name> block (--force replaces …)"` after it.
+- **CR4 is in.** `absorb` also takes a comment paragraph whose other lines it all absorbed (`"line N goes with the
+  lines the <name> block holds"`), and the blank line that paragraph leaves.
+- **`nixattrs`.** `flake_input_specs` of a file the lexer cannot read is `{}` (nothing to compare); a top-level
+  `inputs.x.url = …` is not read, as the regular expressions never read it. The outermost set skips a function's
+  formals (`{ pkgs }: { … }`). `input_spec`, `locked_spec`, `strip_nix_comments` and `flake_input_specs` moved here;
+  `engine` keeps their names. `regions.check_redefinitions` reads the inputs with the scanner (inputs defined outside
+  the regions, at any depth and in any form) and falls back to the line expressions when the text does not lex.
+  `conformance.anchor_found` is `blocks.anchor_found`.
+- **`jsonc`.** Problems show a key path joined with `/`. An existing value written on one line (or any value in an
+  inline container) is replaced on one line with the file's separators: "never expands an inline container"
+  applied to replacement too. With no inline comma in the file, the item separator follows the key separator's
+  spacing (`{"a":1}` gives `[1,2]`). `retract` also removes an object the removal leaves empty (as `json-merge`).
+  Both `retract` and `absent` need the module on in history (`was_on`); only `retract` warns, and only on the run
+  that turns the module off (`on_at_head`), as `json-merge`. With several problems, the first item carries the
+  edited text and the others have `wanted == current`, so the diff is printed once.
+- **Kit stub.** Manifest and templates as §11.1, plus a second `.gitignore` block (`lint`, python-lint) for the
+  two-blocks case, `pyproject.toml`'s `units` block only in a `workspace`, `package.json` pins managed only when the
+  checkout tracks one, and the `unit-manifest` `ReleaseTool`. Fixtures `bundle` and `workspace`. Deferred: the
+  decision table (`submodules` → `relock`) waits for `ci.verdict.DecisionRule` (stage 7); the `bundle` table stays in
+  the root `pyproject.toml` until CR1's `kit/pyproject.toml` (stage 10).
+- **Earlier tests touched.** `test_scaffold.py` (sentinel and jsonc-merge are served now; the kit manifest has
+  entries), `test_product.py` (defaults read from a product that sets only the required fields) and
+  `test_conformance.py` (the no-render-part case uses `support.without_fixtures`, as the kit has fixtures now).
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.

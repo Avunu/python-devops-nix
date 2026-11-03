@@ -1,0 +1,12 @@
+{
+  description = {{ name | nix_string }};
+
+  inputs = {
+    self.submodules = true;
+    nixpkgs.follows = "kit-nix/nixpkgs";
+  };
+
+  outputs =
+    { kit-nix, ... }@inputs:
+    kit-nix.lib.mkFlake { inherit inputs; };
+}

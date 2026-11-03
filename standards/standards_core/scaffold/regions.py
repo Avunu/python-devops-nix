@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from standards_core.common.report import ConfigError
 from standards_core.product import header_kind
+from standards_core.scaffold import nixattrs
 
 if TYPE_CHECKING:
     from standards_core.product import Product
@@ -216,6 +217,31 @@ def _keys(lines: list[str], header: str | None) -> set[str]:
     return found
 
 
+def _flake_inputs(
+    text: str, region_lines: set[int], inside: list[str], outside: list[str]
+) -> tuple[set[str], set[str]]:
+    """The input names the regions define, and those defined outside them: the
+    direct children of ``inputs = { … };`` as ``nixattrs`` reads them, each on the
+    line it starts on. A text the lexer cannot follow is read line by line instead
+    (``name = {`` four spaces deep outside, any ``name =`` inside)."""
+    try:
+        found = nixattrs.scan(text)
+    except ConfigError:
+        found = None
+    attrset = nixattrs.inputs(found) if found is not None else None
+    if attrset is None:
+        defined = {m["name"] for line in inside if (m := _NIX_DEFINED.match(line))}
+        return defined, set(_NIX_INPUT.findall("\n".join(outside)))
+    defined: set[str] = set()
+    elsewhere: set[str] = set()
+    for child in attrset.children:
+        if child.name is None:
+            continue
+        line = nixattrs.line_of(text, child.start)
+        (defined if line in region_lines else elsewhere).add(child.name)
+    return defined, elsewhere
+
+
 def check_redefinitions(
     product: Product,
     path: str,
@@ -232,18 +258,21 @@ def check_redefinitions(
     pattern = marker(product, leader_of(product, header))
     inside: list[str] = []
     outside: list[str] = []
+    region_lines: set[int] = set()
     in_region = False
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), 1):
         m = pattern.match(line)
         if m:
             in_region = m["kind"] == "begin"
             continue
         (inside if in_region else outside).append(line)
+        if in_region:
+            region_lines.add(number)
 
     clash = sorted(_keys(inside, header) & _keys(outside, header))
     if header == "nix":
-        defined = {m["name"] for line in inside if (m := _NIX_DEFINED.match(line))}
-        managed = {*managed_inputs, *_NIX_INPUT.findall("\n".join(outside))}
+        defined, managed = _flake_inputs(text, region_lines, inside, outside)
+        managed |= set(managed_inputs)
         clash += [f"flake input {name}" for name in sorted(defined & managed)]
     if clash:
         raise ConfigError(

@@ -5,8 +5,14 @@ here (``config_required = False``), and managed JSON is written in prettier's fo
 Discovery is shape-dependent: a ``bundle`` holds units (``<unit>/__unit__.toml``) at its
 root, a ``workspace`` a ``core`` gitlink or a ``units.txt``. The series (``18.0``) comes
 from the units' versions, else ``.kit-series``, else a ``<n>.0`` branch name, and names
-the release branch under ``develop+series``. Its manifest and templates arrive with
-stage 5 (DESIGN §12).
+the release branch under ``develop+series``.
+
+Its files exercise what the core added for files a checkout owns: sentinel blocks in
+``flake.nix`` (claiming the inputs it defines, seeded in a ``bundle`` that has no flake),
+``pyproject.toml`` (a ``workspace``'s dependency array) and ``.gitignore`` (two blocks,
+absorbing); ``jsonc-merge`` leaves in ``.vscode/``; ``json-merge`` pins in
+``package.json``; one ``toml-merge`` entry for ``tools/pyproject.toml`` that two modules
+contribute to; and per-branch Dependabot entries.
 """
 
 from __future__ import annotations
@@ -21,10 +27,12 @@ from typing import Any
 
 from kit_nix_tools import __version__
 from standards_core.common import repo
-from standards_core.common.report import ConfigError, EnvError
+from standards_core.common.report import DRIFT, ConfigError, EnvError
 from standards_core.product import (
     Branching,
     Engine,
+    FirstOptIn,
+    Fixture,
     Hooks,
     Identity,
     JsonStyle,
@@ -33,8 +41,13 @@ from standards_core.product import (
     Modules,
     Pins,
     Product,
+    ReleaseUnit,
 )
+from standards_core.scaffold import floors
 from standards_core.scaffold.context import Checkout, default_load_checkout
+from standards_core.scaffold.engine import Item
+from standards_core.scaffold.jsonmerge import JsonGroups, JsonGroupsHandler
+from standards_core.scaffold.tomlmerge import TomlGroups, TomlMergeHandler
 
 IDENTITY = Identity(
     name="kit-nix",
@@ -77,7 +90,12 @@ ENGINE = Engine(
     init_app="kit-init",
 )
 
-PINS = Pins(dir=".dev-dist/pins")
+# The inputs block owns kit-nix and standards-profile; any other input (a workspace's
+# `core`) is the checkout's.
+PINS = Pins(
+    dir=".dev-dist/pins",
+    managed_inputs=lambda ctx: ("kit-nix", "standards-profile"),
+)
 
 MODULES = Modules(
     names=(
@@ -218,6 +236,7 @@ def discover(
         "shape": shape(checkout, _table(checkout)),
         "series": cfg.get("series") or series(checkout),
         "units": [p.split("/", 1)[0] for p in _units(checkout.tracked)],
+        "package_json": "package.json" in checkout.tracked,
     }
 
 
@@ -245,6 +264,298 @@ def derive(cfg: dict[str, Any], checkout: Checkout | None) -> None:
             cfg["series"] = found
 
 
+# --- package.json and tools/pyproject.toml: the managed keys -------------------------
+
+
+def _floors(ctx: Any, kind: str) -> dict[str, str]:
+    return dict(ctx.floors.get(kind, {}))
+
+
+def package_groups(ctx: Any) -> dict[str, list[tuple[tuple[str, ...], Any]]]:
+    pins = _floors(ctx, "npm")
+    return {
+        "editor": [
+            (("devDependencies", pkg), floors.caret(v))
+            for pkg, v in sorted(pins.items())
+        ]
+    }
+
+
+def package_on(ctx: Any, group: str) -> bool:
+    """The pins are managed in a ``package.json`` the checkout has."""
+    return bool(ctx.modules.get(group)) and bool(ctx.discover.get("package_json"))
+
+
+def package_reconcile(ctx: Any, path: tuple[str, ...], have: Any, rendered: Any) -> Any:
+    """A floor: a caret range at or above the rendered one stays."""
+    if not isinstance(have, str):
+        return rendered
+    return have if floors.range_ok(have, rendered.lstrip("^")) else rendered
+
+
+PACKAGE = JsonGroupsHandler(
+    "kit-package",
+    JsonGroups(groups=package_groups, on=package_on, reconcile=package_reconcile),
+)
+
+_PIN = re.compile(r"(?P<name>[A-Za-z0-9_.-]+)==(?P<version>\S+)")
+
+
+def tools_groups(ctx: Any) -> dict[str, list[tuple[tuple[str, ...], Any]]]:
+    pins = _floors(ctx, "uv")
+    deps = [f"ruff=={pins['ruff']}"]
+    if ctx.modules.get("tests"):
+        deps.append(f"pytest=={pins['pytest']}")
+    return {
+        "python-lint": [
+            (("project", "name"), "kit-tools"),
+            (("project", "version"), "0"),
+            (("project", "requires-python"), ">=3.11"),
+            (("project", "dependencies"), deps),
+            (("tool", "uv", "package"), False),
+        ],
+        "tests": [
+            (("tool", "coverage", "run", "branch"), True),
+            (("tool", "coverage", "report", "show_missing"), True),
+        ],
+    }
+
+
+def tools_on(ctx: Any, group: str) -> bool:
+    return bool(ctx.modules.get(group))
+
+
+def tools_reconcile(ctx: Any, path: tuple[str, ...], have: Any, rendered: Any) -> Any:
+    """The exact pins are floors: a pin raised by hand stays, per package."""
+    if path != ("project", "dependencies") or not isinstance(have, list):
+        return rendered
+    raised = {}
+    for dep in have:
+        m = _PIN.fullmatch(str(dep))
+        if m:
+            raised[m["name"]] = dep
+    out = []
+    for dep in rendered:
+        m = _PIN.fullmatch(dep)
+        mine = raised.get(m["name"]) if m else None
+        if mine and floors.at_least(_PIN.fullmatch(mine)["version"], m["version"]):
+            out.append(mine)
+        else:
+            out.append(dep)
+    return out
+
+
+def tools_seeds(ctx: Any, doc: dict) -> list[tuple[tuple[str, ...], Any]]:
+    """``fail_under`` from ``tests.coverage.initial-floor``, once."""
+    if not ctx.modules.get("tests"):
+        return []
+    floor = ctx.cfg["tests"]["coverage"]["initial-floor"]
+    return [(("tool", "coverage", "report", "fail_under"), floor)]
+
+
+TOOLS = TomlMergeHandler(
+    "kit-tools",
+    TomlGroups(
+        groups=tools_groups,
+        on=tools_on,
+        canon_tables=(
+            "project",
+            "tool.uv",
+            "tool.coverage.run",
+            "tool.coverage.report",
+        ),
+        reconcile=tools_reconcile,
+        seeds=tools_seeds,
+    ),
+)
+
+
+# --- whole-repo checks ----------------------------------------------------------------
+
+_SUBMODULE = re.compile(r"^\[submodule \"(?P<name>[^\"]+)\"\]\s*$")
+_BRANCH = re.compile(r"^\s*branch\s*=\s*(?P<branch>\S+)\s*$")
+
+
+def submodule_branches(text: str) -> dict[str, str]:
+    """Each submodule of a ``.gitmodules`` text and its ``branch`` (``""`` for none)."""
+    out: dict[str, str] = {}
+    name = None
+    for line in text.splitlines():
+        if m := _SUBMODULE.match(line):
+            name = m["name"]
+            out[name] = ""
+        elif name is not None and (m := _BRANCH.match(line)):
+            out[name] = m["branch"]
+    return out
+
+
+def checks(plan: Any) -> list[Item]:
+    """Under ``hygiene``: every unit has a ``README.md``; every submodule follows the
+    series (``branch = <series>``)."""
+    if not plan.ctx.modules.get("hygiene"):
+        return []
+    tracked = set(plan.checkout.tracked)
+    out = []
+    for unit in plan.ctx.discover["units"]:
+        if f"{unit}/README.md" not in tracked:
+            out.append(
+                Item(
+                    f"{unit}/README.md",
+                    "check",
+                    None,
+                    None,
+                    "missing: every unit has a README.md",
+                    DRIFT,
+                    module="hygiene",
+                )
+            )
+    if ".gitmodules" in tracked:
+        series_ = plan.ctx.discover["series"]
+        text = _read(plan.root, ".gitmodules")
+        for name, branch in sorted(submodule_branches(text).items()):
+            if branch != series_:
+                out.append(
+                    Item(
+                        ".gitmodules",
+                        "check",
+                        text,
+                        text,
+                        f"submodule {name} has branch = {branch or '(none)'}, not the"
+                        f" series {series_}",
+                        DRIFT,
+                        module="hygiene",
+                    )
+                )
+    return out
+
+
+# --- releases ---------------------------------------------------------------------------
+
+_UNIT_VERSION = re.compile(r'^version\s*=\s*"(?P<version>[^"]*)"', re.MULTILINE)
+
+
+class UnitManifest:
+    """``unit-manifest``: each unit's version is ``version = "…"`` in
+    ``<unit>/__unit__.toml``."""
+
+    name = "unit-manifest"
+    commit_subject = "chore(release): bump {units}"
+
+    def units(self, root: Path, ctx: Any) -> list[ReleaseUnit]:
+        tracked = repo.ls_files(root)
+        return [
+            ReleaseUnit(p.split("/", 1)[0], p.split("/", 1)[0] + "/", p)
+            for p in _units(tracked)
+        ]
+
+    def read_version(self, text: str, unit: ReleaseUnit) -> str | None:
+        m = _UNIT_VERSION.search(text)
+        return m["version"] if m else None
+
+    def write_version(self, text: str, unit: ReleaseUnit, version: str) -> str:
+        m = _UNIT_VERSION.search(text)
+        if m is None:
+            raise ConfigError(f"{unit.version_file} has no version")
+        return text[: m.start("version")] + version + text[m.end("version") :]
+
+    def exempt(self, unit: ReleaseUnit, path: str) -> bool:
+        rel = path.removeprefix(unit.path)
+        return rel == "README.md" or rel.startswith(("tests/", "i18n/"))
+
+
+# --- fixtures and first opt-in ---------------------------------------------------------
+
+WORKSPACE_FLAKE = """{
+  description = "a kit workspace";
+
+  inputs = {
+    self.submodules = true;
+    nixpkgs.follows = "kit-nix/nixpkgs";
+  };
+
+  outputs =
+    { kit-nix, ... }@inputs:
+    kit-nix.lib.mkFlake { inherit inputs; } {
+      scripts.serve = ''
+        port="''${PORT:-8069}"
+        exec serve --port "$port"
+      '';
+    };
+}
+"""
+
+WORKSPACE_PYPROJECT = """[project]
+name = "kit-workspace"
+version = "0.1.0"
+requires-python = ">=3.11"
+# The install set: generated from units.txt, never edited by hand.
+dependencies = [
+    # >>> kit-nix: install set (managed from units.txt) >>>
+    "kit-unit-alpha",
+    # <<< kit-nix: install set <<<
+]
+
+"""
+
+FIXTURES = MappingProxyType(
+    {
+        "bundle": Fixture(
+            table="",
+            files=MappingProxyType(
+                {
+                    "alpha/__unit__.toml": 'name = "alpha"\nversion = "18.0.1.0.0"\n',
+                    "alpha/__init__.py": "",
+                    "alpha/README.md": "# alpha\n",
+                }
+            ),
+        ),
+        "workspace": Fixture(
+            table="",
+            files=MappingProxyType(
+                {
+                    "pyproject.toml": WORKSPACE_PYPROJECT,
+                    "flake.nix": WORKSPACE_FLAKE,
+                    "units.txt": "alpha\n",
+                    ".kit-series": "18.0\n",
+                }
+            ),
+        ),
+    }
+)
+
+
+def write_fixture(root: Path, name: str, fixture: Fixture, profile: str) -> None:
+    """A fixture checkout: its files, with ``[tool.kit-nix]`` appended to its
+    ``pyproject.toml`` (a file holding only the table when the fixture has none)."""
+    files = dict(fixture.files)
+    config = files.pop("pyproject.toml", "")
+    (root / "pyproject.toml").write_text(
+        config + f'[tool.kit-nix]\nschema = 1\nprofile = "{profile}"\n' + fixture.table
+    )
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+
+
+# What kit-init wrote before the checkout opted in: replaced without --force.
+LEGACY_ENVRCS = (
+    "watch_file pyproject.toml uv.lock units.txt\nuse flake . --no-pure-eval\n",
+    "use flake . --no-pure-eval\n",
+)
+
+FIRST_OPT_IN = (
+    FirstOptIn(
+        path=".pre-commit-config.yaml",
+        hint="Keep your own hooks in the `hooks` local region.",
+    ),
+    FirstOptIn(
+        path=".envrc",
+        hint="Keep your own direnv lines in the .envrc `envrc` local region.",
+        legacy=lambda current, checkout: list(LEGACY_ENVRCS),
+    ),
+)
+
+
 PRODUCT = Product(
     identity=IDENTITY,
     markers=MARKERS,
@@ -258,9 +569,16 @@ PRODUCT = Product(
         gates=gates,
         template_globals=template_globals,
         derive=derive,
+        checks=checks,
         committed_argv=lambda root: ["committed"],
+        write_fixture=write_fixture,
     ),
     json_style=JsonStyle(indent="  ", width=80, trailing_commas="none"),
+    jsonc_globs=(".vscode/*.json",),
     branching=BRANCHING,
     version_schemes=MappingProxyType({"kit-series": KitSeries()}),
+    handlers=MappingProxyType({"kit-package": PACKAGE, "kit-tools": TOOLS}),
+    release_tool=UnitManifest(),
+    first_opt_in=FIRST_OPT_IN,
+    fixtures=FIXTURES,
 )

@@ -27,3 +27,16 @@ def product_copy(product, root: Path, **changes):
     data = root / "data"
     shutil.copytree(product.data_root, data)
     return dataclasses.replace(product, data_root=data, **changes)
+
+
+def without_fixtures(product):
+    """``product`` with no fixtures and no ``hooks.write_fixture`` (its render
+    conformance part and ``profile validate`` have nothing to run)."""
+    import dataclasses
+    from types import MappingProxyType
+
+    return dataclasses.replace(
+        product,
+        fixtures=MappingProxyType({}),
+        hooks=dataclasses.replace(product.hooks, write_fixture=None),
+    )

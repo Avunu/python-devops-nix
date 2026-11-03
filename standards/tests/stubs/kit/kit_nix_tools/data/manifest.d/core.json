@@ -1,0 +1,124 @@
+{
+  "$comment": "The kit's dev shell, editor, lint and test files (DESIGN §11.1): sentinel blocks in files the checkout owns, jsonc-merge leaves, json-merge and toml-merge key groups.",
+  "floors": {
+    "npm": {
+      "prettier": "3.3.0"
+    },
+    "uv": {
+      "ruff": "0.6.9",
+      "pytest": "8.3.0"
+    }
+  },
+  "entries": [
+    {
+      "path": "flake.nix",
+      "template": "flake-inputs.nix.j2",
+      "strategy": "sentinel",
+      "module": "dev-shell",
+      "block": "inputs",
+      "anchor": "nix-attrset inputs",
+      "claims": "nix-inputs",
+      "seed_template": "flake.nix.seed.j2",
+      "uses": [
+        "dev-shell.kit-nix-url"
+      ],
+      "phase": "a"
+    },
+    {
+      "path": ".envrc",
+      "template": "envrc.j2",
+      "strategy": "whole",
+      "module": "dev-shell",
+      "header": "shell",
+      "local_regions": [
+        "envrc"
+      ],
+      "phase": "a"
+    },
+    {
+      "path": ".gitignore",
+      "template": "gitignore-dev-shell.j2",
+      "strategy": "sentinel",
+      "module": "dev-shell",
+      "block": "dev-shell",
+      "anchor": "eof",
+      "absorb": true
+    },
+    {
+      "path": ".gitignore",
+      "template": "gitignore-lint.j2",
+      "strategy": "sentinel",
+      "module": "python-lint",
+      "block": "lint",
+      "anchor": "eof",
+      "absorb": true
+    },
+    {
+      "path": "pyproject.toml",
+      "template": "pyproject-units.j2",
+      "strategy": "sentinel",
+      "module": "dev-shell",
+      "when": "discover.shape == 'workspace'",
+      "block": "units",
+      "anchor": "toml-array project.dependencies"
+    },
+    {
+      "path": ".vscode/settings.json",
+      "template": "vscode-settings.json.j2",
+      "strategy": "jsonc-merge",
+      "module": "editor"
+    },
+    {
+      "path": ".vscode/extensions.json",
+      "template": "vscode-extensions.json.j2",
+      "strategy": "jsonc-merge",
+      "module": "editor",
+      "uses": [
+        "editor.extensions"
+      ]
+    },
+    {
+      "path": "package.json",
+      "strategy": "json-merge",
+      "module": "editor",
+      "handler": "kit-package"
+    },
+    {
+      "path": "tools/pyproject.toml",
+      "strategy": "toml-merge",
+      "module": [
+        "python-lint",
+        "tests"
+      ],
+      "uses": [
+        "python-lint.line-length",
+        "tests.coverage.initial-floor"
+      ],
+      "handler": "kit-tools"
+    },
+    {
+      "path": ".pre-commit-config.yaml",
+      "template": "pre-commit-config.yaml.j2",
+      "strategy": "whole",
+      "module": "python-lint",
+      "header": "yaml",
+      "local_regions": [
+        "hooks"
+      ]
+    }
+  ],
+  "retire": [
+    {
+      "paths": [
+        "setup.cfg"
+      ],
+      "rule": "a setup.cfg holding only the old lint sections: python-lint configures ruff",
+      "module": "python-lint",
+      "only_sections": [
+        "flake8",
+        "isort",
+        "pycodestyle"
+      ]
+    }
+  ]
+}

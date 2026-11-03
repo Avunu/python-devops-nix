@@ -11,17 +11,19 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from support import KIT, STUB
+from support import KIT, STUB, without_fixtures
 
 from standards_core.common.report import CLEAN, DRIFT, ConfigError, EnvError
 from standards_core.product import Fixture, HeaderKind, JsonStyle
 from standards_core.scaffold import (
+    blocks,
     context,
     engine,
     fixtures,
     floors,
     globs,
     handlers,
+    jsonc,
     jsonfmt,
     manifest,
     regions,
@@ -383,7 +385,10 @@ class TestManifest(unittest.TestCase):
         self.assertTrue(any(r.unmanaged and r.contains for r in rules.values()))
         self.assertTrue(manifest.ships(STUB, "committed.toml"))
         self.assertFalse(manifest.ships(STUB, "nope"))
-        self.assertEqual(manifest.load(KIT).entries, ())
+        # The kit's two .gitignore blocks share a path; any other path appears once.
+        kit = [(e.path, e.block) for e in manifest.load(KIT).entries]
+        self.assertIn((".gitignore", "dev-shell"), kit)
+        self.assertIn((".gitignore", "lint"), kit)
 
     def test_entry_rules(self):
         from standards_core.scaffold.manifest import ManifestError
@@ -911,6 +916,13 @@ class TestHandlers(unittest.TestCase):
             STUB, entry(strategy="toml-merge", handler="stub-pyproject")
         )
         self.assertTrue(merged.merged)
+        # The strategies stage 5 adds are served as they are.
+        sentinel = handlers.for_entry(
+            STUB, entry(strategy="sentinel", template="t", block="b", anchor="eof")
+        )
+        self.assertIsInstance(sentinel, blocks.SentinelHandler)
+        jsonc_merge = handlers.for_entry(STUB, entry(strategy="jsonc-merge"))
+        self.assertIsInstance(jsonc_merge, jsonc.JsoncMergeHandler)
 
     def test_refusals_are_product_bugs(self):
         cases = (
@@ -925,8 +937,14 @@ class TestHandlers(unittest.TestCase):
             (entry(strategy="toml-merge"), "names the product's handler"),
             (entry(strategy="json-merge"), "names the product's handler"),
             (
-                entry(strategy="sentinel", template="t", block="b", anchor="eof"),
-                "no sentinel handler",
+                entry(
+                    strategy="sentinel",
+                    template="t",
+                    block="b",
+                    anchor="eof",
+                    handler="jsonc-merge",
+                ),
+                "handler 'jsonc-merge' serves jsonc-merge, not sentinel",
             ),
         )
         for e, text in cases:
@@ -1315,7 +1333,7 @@ class TestFixtures(unittest.TestCase):
 
     def test_a_product_without_fixtures(self):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(RuntimeError):
-            fixtures.throwaway(KIT, Path(tmp), None, "x", Fixture(""))
+            fixtures.throwaway(without_fixtures(KIT), Path(tmp), None, "x", Fixture(""))
 
     def test_git_failures_are_environment_errors(self):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(EnvError):
