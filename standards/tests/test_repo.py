@@ -3,8 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from support import KIT, STUB
+
 from standards_core.common import repo
-from standards_core.common.report import EnvError
+from standards_core.common.report import ConfigError, EnvError
+from standards_core.scaffold.context import default_load_checkout
 
 
 def git(root, *args):
@@ -86,6 +89,72 @@ class TestRepo(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 self.assertEqual(repo.parse_remote(url), expected)
+
+
+class TestLoadCheckout(unittest.TestCase):
+    """The core's default checkout loader (DESIGN §3.3), which products wrap."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve() / "checkout-dir"
+        self.root.mkdir()
+        git(self.root, "init", "-q")
+        (self.root / "pyproject.toml").write_text('[project]\nname = "demo_unit"\n')
+        git(self.root, "add", "pyproject.toml")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def name(self, product=STUB):
+        return product.hooks.load_checkout(self.root).name
+
+    def test_fields(self):
+        checkout = STUB.hooks.load_checkout(self.root / ".")
+        self.assertEqual(checkout.root, self.root)
+        self.assertEqual(checkout.config, {"project": {"name": "demo_unit"}})
+        self.assertEqual(checkout.tracked, ["pyproject.toml"])
+        self.assertEqual(dict(checkout.extra), {})
+        self.assertEqual((checkout.name, checkout.hyphen), ("demo_unit", "demo-unit"))
+        self.assertEqual(default_load_checkout(STUB, self.root), checkout)
+
+    def test_name_order(self):
+        # [project].name first.
+        self.assertEqual(self.name(), "demo_unit")
+        # Then the name part of the table's repo, then origin's, never the directory
+        # while there is a remote.
+        git(
+            self.root,
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:example/from_origin.git",
+        )
+        (self.root / "pyproject.toml").write_text(
+            '[tool.stub-nix]\nschema = 1\nrepo = "example/from_table"\n'
+        )
+        self.assertEqual(self.name(), "from_table")
+        (self.root / "pyproject.toml").write_text("[tool.stub-nix]\nschema = 1\n")
+        self.assertEqual(self.name(), "from_origin")
+        # Only a checkout with no origin remote is named after its directory.
+        git(self.root, "remote", "remove", "origin")
+        self.assertEqual(self.name(), "checkout-dir")
+
+    def test_an_optional_config_file(self):
+        (self.root / "pyproject.toml").unlink()
+        git(self.root, "rm", "-q", "--cached", "pyproject.toml")
+        checkout = KIT.hooks.load_checkout(self.root)
+        self.assertEqual((checkout.config, checkout.name), ({}, "checkout-dir"))
+        with self.assertRaises(EnvError):
+            STUB.hooks.load_checkout(self.root)
+
+    def test_not_a_checkout(self):
+        with tempfile.TemporaryDirectory() as other, self.assertRaises(EnvError):
+            STUB.hooks.load_checkout(Path(other))
+        with self.assertRaises(EnvError):
+            STUB.hooks.load_checkout(self.root / "missing")
+        (self.root / "pyproject.toml").write_text("[project\n")
+        with self.assertRaises(ConfigError):
+            STUB.hooks.load_checkout(self.root)
 
 
 if __name__ == "__main__":

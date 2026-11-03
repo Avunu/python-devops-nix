@@ -1,0 +1,161 @@
+{
+  "$comment": "The stub's dev shell, editor, lint, test and hygiene files (DESIGN \u00a711.1); the format is standards_core.scaffold.manifest's.",
+  "floors": {
+    "uv": {
+      "ruff": "0.6.0",
+      "pytest": "8.0.0"
+    }
+  },
+  "entries": [
+    {
+      "path": "flake.nix",
+      "template": "flake.nix.j2",
+      "strategy": "whole",
+      "module": "dev-shell",
+      "uses": [
+        "dev-shell.systems",
+        "dev-shell.stub-nix-url"
+      ],
+      "header": "nix",
+      "local_regions": [
+        "inputs"
+      ],
+      "phase": "a"
+    },
+    {
+      "path": ".envrc",
+      "template": "envrc.j2",
+      "strategy": "whole",
+      "module": "dev-shell",
+      "header": "shell",
+      "local_regions": [
+        "envrc"
+      ],
+      "phase": "a"
+    },
+    {
+      "path": ".editorconfig",
+      "template": "editorconfig.j2",
+      "strategy": "whole",
+      "module": "editorconfig",
+      "uses": [
+        "editorconfig.indent",
+        "editorconfig.line-length"
+      ],
+      "header": "ini",
+      "local_regions": [
+        "editorconfig"
+      ]
+    },
+    {
+      "path": "committed.toml",
+      "template": "committed.toml.j2",
+      "strategy": "whole",
+      "module": "commits",
+      "uses": [
+        "commits.allowed-types",
+        "commits.subject-length"
+      ],
+      "header": "toml"
+    },
+    {
+      "path": "tools/pyproject.toml",
+      "template": "tools/pyproject.toml.j2",
+      "strategy": "whole",
+      "module": [
+        "python-lint",
+        "tests"
+      ],
+      "header": "toml"
+    },
+    {
+      "path": "tools/uv.lock",
+      "strategy": "seed",
+      "handler": "uv-lock",
+      "module": [
+        "python-lint",
+        "tests"
+      ],
+      "command": "uv lock --project tools",
+      "relock_when": [
+        "tools/pyproject.toml"
+      ],
+      "floors": "uv"
+    },
+    {
+      "path": "pyproject.toml",
+      "strategy": "toml-merge",
+      "module": [
+        "python-lint",
+        "tests"
+      ],
+      "uses": [
+        "python-lint.select",
+        "python-lint.ignore",
+        "python-lint.line-length",
+        "tests.coverage.initial-floor"
+      ]
+    },
+    {
+      "path": ".git-blame-ignore-revs",
+      "template": "git-blame-ignore-revs.j2",
+      "strategy": "seed",
+      "handler": "blame-ignore-revs",
+      "module": "hygiene"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "template": "CONTRIBUTING.md.j2",
+      "strategy": "whole",
+      "module": "hygiene",
+      "overridable": true,
+      "uses": [
+        "org.publisher?",
+        "org.dev-docs-url"
+      ]
+    }
+  ],
+  "retire": [
+    {
+      "paths": [
+        ".flake8"
+      ],
+      "rule": "flake8's own config: python-lint configures ruff in pyproject.toml",
+      "module": "python-lint"
+    },
+    {
+      "paths": [
+        "setup.cfg"
+      ],
+      "rule": "a setup.cfg holding only flake8's section: python-lint configures ruff",
+      "module": "python-lint",
+      "only_section": "flake8"
+    },
+    {
+      "paths": [
+        "setup.cfg"
+      ],
+      "rule": "a setup.cfg holding only the old lint and sort sections",
+      "module": "python-lint",
+      "only_sections": [
+        "lintcheck",
+        "sortcheck"
+      ]
+    },
+    {
+      "paths": [
+        "lint.config.{js,mjs}"
+      ],
+      "rule": "the old lint runner's config",
+      "module": "python-lint"
+    },
+    {
+      "paths": [
+        "requirements.txt"
+      ],
+      "rule": "requirements.txt: the dependencies are [project].dependencies",
+      "module": "python-lint",
+      "deps_in_project": true
+    }
+  ]
+}

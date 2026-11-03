@@ -1,30 +1,40 @@
-"""The kit stub product: identity, markers, engine and pins (the stage-1 skeleton).
+"""The kit stub product: the core's newer capabilities (DESIGN §11.1).
 
 A ``bundle`` checkout has no root ``pyproject.toml``, so the config file is optional
 here (``config_required = False``), and managed JSON is written in prettier's form.
-Its hooks arrive with later stages (DESIGN §12); until then each one says so.
+Discovery is shape-dependent: a ``bundle`` holds units (``<unit>/__unit__.toml``) at its
+root, a ``workspace`` a ``core`` gitlink or a ``units.txt``. The series (``18.0``) comes
+from the units' versions, else ``.kit-series``, else a ``<n>.0`` branch name, and names
+the release branch under ``develop+series``. Its manifest and templates arrive with
+stage 5 (DESIGN §12).
 """
 
+from __future__ import annotations
+
+import re
+import tomllib
+from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
 from kit_nix_tools import __version__
+from standards_core.common import repo
+from standards_core.common.report import ConfigError, EnvError
 from standards_core.product import (
-    CORE_MODULES,
+    Branching,
     Engine,
     Hooks,
     Identity,
     JsonStyle,
+    Level,
     Markers,
     Modules,
     Pins,
     Product,
 )
-
-
-def _not_yet(*args, **kwargs):
-    raise NotImplementedError("the kit product's hooks come with a later stage")
-
+from standards_core.scaffold.context import Checkout, default_load_checkout
 
 IDENTITY = Identity(
     name="kit-nix",
@@ -69,18 +79,188 @@ ENGINE = Engine(
 
 PINS = Pins(dir=".dev-dist/pins")
 
+MODULES = Modules(
+    names=(
+        "dev-shell",
+        "editor",
+        "python-lint",
+        "tests",
+        "hygiene",
+        "commits",
+        "releases",
+        "dependabot",
+        "ci",
+        "repo-policy",
+    ),
+    needs=MappingProxyType({"releases": ("commits",)}),
+    github_only=("ci", "releases", "dependabot", "repo-policy"),
+    app_only=("shape", "series"),
+)
+
+_UNIT = re.compile(r"[^/]+/__unit__\.toml")
+_SERIES = re.compile(r"\d+\.0")
+_SERIES_VERSION = re.compile(r"(\d+\.0)\.(\d+)\.(\d+)\.(\d+)")
+
+
+def _units(tracked: list[str]) -> list[str]:
+    return sorted(p for p in tracked if _UNIT.fullmatch(p))
+
+
+def shape(checkout: Checkout, table: Mapping[str, Any]) -> str:
+    """``bundle`` or ``workspace`` (``""`` when the tracked files say neither)."""
+    if table.get("shape"):
+        return str(table["shape"])
+    if _units(checkout.tracked):
+        return "bundle"
+    if "core" in checkout.tracked or "units.txt" in checkout.tracked:
+        return "workspace"
+    return ""
+
+
+def _read(root: Path, rel: str) -> str:
+    try:
+        return (root / rel).read_text()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def series(checkout: Checkout) -> str:
+    """The series: the units' versions, else ``.kit-series``, else a ``<n>.0`` branch."""
+    for rel in _units(checkout.tracked):
+        try:
+            version = tomllib.loads(_read(checkout.root, rel)).get("version", "")
+        except tomllib.TOMLDecodeError:
+            continue
+        m = _SERIES_VERSION.fullmatch(str(version))
+        if m:
+            return m[1]
+    if ".kit-series" in checkout.tracked:
+        text = _read(checkout.root, ".kit-series").strip()
+        if _SERIES.fullmatch(text):
+            return text
+    try:
+        branch = repo.git(checkout.root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    except EnvError:
+        return ""
+    return branch if _SERIES.fullmatch(branch) else ""
+
+
+def _table(checkout: Checkout) -> Mapping[str, Any]:
+    tool = checkout.config.get("tool", {})
+    table = tool.get("kit-nix") if isinstance(tool, dict) else None
+    return table if isinstance(table, dict) else {}
+
+
+class KitSeries:
+    """``kit-series``: ``<series>.x.y.z``; ``!`` raises x, feat y, fix and perf z."""
+
+    name = "kit-series"
+
+    def valid(self, version: str, cfg: Mapping[str, Any], facts: Mapping) -> str | None:
+        m = _SERIES_VERSION.fullmatch(version)
+        if not m:
+            return f"{version} is not <series>.<x>.<y>.<z>"
+        want = facts.get("series") or cfg.get("series")
+        if want and m[1] != want:
+            return f"{version} is not on series {want}"
+        return None
+
+    def bump(
+        self, version: str, level: Level, cfg: Mapping[str, Any], facts: Mapping
+    ) -> str:
+        m = _SERIES_VERSION.fullmatch(version)
+        if not m:
+            raise ConfigError(f"{version} is not <series>.<x>.<y>.<z>")
+        x, y, z = (int(g) for g in m.groups()[1:])
+        if level == "major":
+            x, y, z = x + 1, 0, 0
+        elif level == "minor":
+            y, z = y + 1, 0
+        else:
+            z += 1
+        return f"{m[1]}.{x}.{y}.{z}"
+
+    def message_problems(
+        self, text: str, cfg: Mapping[str, Any], facts: Mapping
+    ) -> list[str]:
+        return []
+
+    def tag_problem(
+        self, tag: str, cfg: Mapping[str, Any], facts: Mapping
+    ) -> str | None:
+        return None
+
+
+BRANCHING = MappingProxyType(
+    {
+        "develop+series": Branching(
+            name="develop+series",
+            flow="post-merge-bump",
+            integration=lambda cfg: "develop",
+            release_branch=lambda cfg, facts: (
+                facts.get("series") or cfg.get("series") or ""
+            ),
+            release_pattern="refs/heads/*.0",
+            release_label="*.0",
+        ),
+    }
+)
+
+
+def load_checkout(root: Path) -> Checkout:
+    return default_load_checkout(PRODUCT, root)
+
+
+def discover(
+    checkout: Checkout, cfg: Mapping[str, Any], modules: Mapping[str, bool]
+) -> dict[str, Any]:
+    return {
+        "shape": shape(checkout, _table(checkout)),
+        "series": cfg.get("series") or series(checkout),
+        "units": [p.split("/", 1)[0] for p in _units(checkout.tracked)],
+    }
+
+
+def gates(
+    modules: Mapping[str, bool], cfg: Mapping[str, Any], facts: Mapping[str, Any]
+) -> list[str]:
+    ci = modules.get("ci", False)
+    on = {
+        "pr-policy": ci and modules.get("commits", False),
+        "lint": ci,
+        "test": ci and modules.get("tests", False),
+    }
+    return [g for g in PRODUCT.ci.gates if on[g]]
+
+
+def template_globals(checkout: Checkout, resolved: Any, ctx: Any) -> dict[str, Any]:
+    return {"shape": ctx["discover"]["shape"], "series": ctx["discover"]["series"]}
+
+
+def derive(cfg: dict[str, Any], checkout: Checkout | None) -> None:
+    """The series default, from the same sources discovery reads."""
+    if "series" not in cfg and checkout is not None:
+        found = series(checkout)
+        if found:
+            cfg["series"] = found
+
+
 PRODUCT = Product(
     identity=IDENTITY,
     markers=MARKERS,
     engine=ENGINE,
     pins=PINS,
-    modules=Modules(names=CORE_MODULES),
+    modules=MODULES,
     data_root=Path(str(files("kit_nix_tools").joinpath("data"))),
     hooks=Hooks(
-        load_checkout=_not_yet,
-        discover=_not_yet,
-        gates=_not_yet,
-        template_globals=_not_yet,
+        load_checkout=load_checkout,
+        discover=discover,
+        gates=gates,
+        template_globals=template_globals,
+        derive=derive,
+        committed_argv=lambda root: ["committed"],
     ),
     json_style=JsonStyle(indent="  ", width=80, trailing_commas="none"),
+    branching=BRANCHING,
+    version_schemes=MappingProxyType({"kit-series": KitSeries()}),
 )

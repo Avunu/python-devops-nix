@@ -1,0 +1,81 @@
+# The stub's built-in profile `recommended@1.0`, its first `recommended` snapshot.
+# Frozen once released: a later minor that changes `recommended` adds
+# recommended@1.<minor>.toml instead of editing this file. Every value here is the
+# schema's default, so a module turned on over `minimal` gets the same.
+
+schema = 1
+name = "recommended"
+description = "Lint, tests, conventional commits, releases, dependabot and CI. Nothing that needs an organisation's values or repo admin."
+
+[org]
+publisher = ""
+email = ""
+copyright-holder = ""
+license = ""
+github-owner = ""
+website-url = ""
+docs-url = ""
+dev-docs-url = "https://example.org/stub-nix/docs"
+support-url = ""
+repo-url = "https://github.com/{repo}"
+
+[dev-shell]
+enable = true
+
+[editorconfig]
+enable = true
+indent = "space"
+line-length = 88
+
+[python-lint]
+enable = true
+tool = "ruff"
+select = ["F", "E", "W", "I"]
+ignore = ["E501"]
+line-length = 88
+
+[tests]
+enable = true
+
+[tests.coverage]
+enable = true
+target = 80
+initial-floor = 0
+
+[hygiene]
+enable = true
+max-file-kb = 1024
+
+[commits]
+enable = true
+tool = "committed"
+allowed-types = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"]
+subject-length = 100
+allow-stacked = true
+pr-allowed-bases = []
+
+[releases]
+enable = true
+tool = "release-please"
+branching = "develop+version"
+version-scheme = "semver"
+tag-prefix = "v"
+
+[dependabot]
+enable = true
+cadence = "weekly"
+cadence-overrides = {}
+auto-merge = true
+auto-merge-policy = "decision-table"
+update-branches = false
+
+[ci]
+enable = true
+nightly = true
+schedules = {}
+
+[repo-policy]
+enable = false
+
+[extras]
+enable = true

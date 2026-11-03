@@ -9,7 +9,7 @@ from pathlib import Path
 from support import KIT, STUB
 
 from standards_core.common.report import ConfigError
-from standards_core.product import JsonStyle
+from standards_core.product import HeaderKind, JsonStyle
 from standards_core.scaffold import floors, globs, jsonfmt, regions, semantic
 
 PRETTIER = JsonStyle(indent="  ", width=80, trailing_commas="none")
@@ -327,3 +327,476 @@ class TestUvFloors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _manifest(product, *entries, retire=(), floors=None):
+    from standards_core.scaffold import manifest
+
+    doc = {"entries": list(entries), "retire": list(retire)}
+    if floors:
+        doc["floors"] = floors
+    return manifest.parse(product, {"a.json": doc})
+
+
+class TestManifest(unittest.TestCase):
+    def test_the_stub_manifest(self):
+        from standards_core.scaffold import manifest
+
+        m = manifest.load(STUB)
+        self.assertIs(m, manifest.load(STUB))
+        paths = [e.path for e in m.entries]
+        # Fragments are united in file-name order: ci.json before core.json.
+        self.assertEqual(
+            paths[:2], [".github/dependabot.yml", ".github/workflows/ci.yml"]
+        )
+        self.assertIn("flake.nix", paths)
+        lock = next(e for e in m.entries if e.path == "tools/uv.lock")
+        self.assertEqual(lock.modules, ("python-lint", "tests"))
+        self.assertEqual(
+            (lock.relock_when, lock.floors), (("tools/pyproject.toml",), "uv")
+        )
+        self.assertEqual(m.floors["uv"]["ruff"], "0.6.0")
+        rules = {r.rule: r for r in m.retire}
+        sections = [r.only_sections for r in m.retire if r.paths == ("setup.cfg",)]
+        self.assertEqual(sections, [("flake8",), ("lintcheck", "sortcheck")])
+        braces = next(r for r in m.retire if "lint.config.js" in r.paths)
+        self.assertEqual(braces.paths, ("lint.config.js", "lint.config.mjs"))
+        self.assertTrue(any(r.unmanaged and r.contains for r in rules.values()))
+        self.assertTrue(manifest.ships(STUB, "committed.toml"))
+        self.assertFalse(manifest.ships(STUB, "nope"))
+        self.assertEqual(manifest.load(KIT).entries, ())
+
+    def test_entry_rules(self):
+        from standards_core.scaffold.manifest import ManifestError
+
+        whole = {"path": "a", "strategy": "whole", "module": "ci", "template": "a.j2"}
+        sentinel = {
+            "path": "f",
+            "strategy": "sentinel",
+            "module": "dev-shell",
+            "template": "b.j2",
+            "block": "inputs",
+            "anchor": "nix-attrset inputs",
+            "claims": "nix-inputs",
+        }
+        for bad, why in (
+            ({**whole, "nope": 1}, "unknown key"),
+            ({**whole, "strategy": "copy"}, "unknown strategy"),
+            ({**whole, "module": "nope"}, "unknown module"),
+            ({k: v for k, v in whole.items() if k != "template"}, "needs a template"),
+            ({**whole, "header": "md"}, "unknown header"),
+            ({**whole, "local_regions": ["x"]}, "local regions need"),
+            ({**whole, "phase": "c"}, "phase must be"),
+            ({**whole, "block": "x"}, "are sentinel keys"),
+            ({**sentinel, "block": "Inputs"}, "a block name"),
+            ({**sentinel, "anchor": "top"}, "needs an anchor"),
+            ({**sentinel, "anchor": "eof"}, "claims is nix-inputs"),
+            ({**sentinel, "comment": ";"}, "comment must be"),
+        ):
+            with self.subTest(why=why), self.assertRaisesRegex(ManifestError, why):
+                _manifest(STUB, bad)
+        m = _manifest(
+            STUB, {**whole, "header": "ini", "local_regions": ["x"]}, sentinel
+        )
+        self.assertEqual(m.entries[1].anchor, "nix-attrset inputs")
+        self.assertEqual(m.entries[1].comment, "#")
+        md = dataclasses.replace(STUB, header_kinds={"md": HeaderKind("<!--", "-->")})
+        self.assertEqual(
+            _manifest(md, {**whole, "header": "md"}).entries[0].header, "md"
+        )
+        with self.assertRaisesRegex(ManifestError, "local regions need"):
+            _manifest(md, {**whole, "header": "md", "local_regions": ["x"]})
+
+    def test_duplicates_are_keyed_on_path_and_block(self):
+        from standards_core.scaffold.manifest import ManifestError
+
+        sentinel = {
+            "path": ".gitignore",
+            "strategy": "sentinel",
+            "module": "dev-shell",
+            "template": "g.j2",
+            "block": "dev",
+            "anchor": "eof",
+        }
+        m = _manifest(
+            STUB, sentinel, {**sentinel, "block": "lint", "module": "python-lint"}
+        )
+        self.assertEqual([e.block for e in m.entries], ["dev", "lint"])
+        whole = {"path": ".gitignore", "strategy": "seed", "module": "ci"}
+        for entries in (
+            (sentinel, sentinel),
+            (sentinel, whole),
+            (whole, sentinel),
+            (whole, whole),
+        ):
+            with (
+                self.subTest(entries=[e["strategy"] for e in entries]),
+                self.assertRaisesRegex(ManifestError, "is listed in"),
+            ):
+                _manifest(STUB, *entries)
+
+    def test_retire_rules(self):
+        from standards_core.scaffold.manifest import ManifestError
+
+        rule = {
+            "paths": ["a.{x,y}"],
+            "rule": "r",
+            "module": "ci",
+            "except": ["b/{c,d}"],
+        }
+        (r,) = _manifest(STUB, retire=[rule]).retire
+        self.assertEqual((r.paths, r.unless), (("a.x", "a.y"), ("b/c", "b/d")))
+        for bad, why in (
+            ({**rule, "only_section": "x", "only_sections": ["x"]}, "exclusive"),
+            ({**rule, "nope": True}, "unknown key"),
+            ({**rule, "paths": ["a.{x"]}, "never closed"),
+            ({"paths": ["a"], "rule": "r"}, "needs paths, rule and module"),
+        ):
+            with self.subTest(why=why), self.assertRaisesRegex(ManifestError, why):
+                _manifest(STUB, retire=[bad])
+        with self.assertRaisesRegex(ManifestError, "set by two fragments"):
+            from standards_core.scaffold import manifest
+
+            manifest.parse(
+                STUB,
+                {
+                    "a.json": {"floors": {"uv": {"x": "1"}}},
+                    "b.json": {"floors": {"uv": {"x": "2"}}},
+                },
+            )
+
+    def test_profile_rules_and_extra_files(self):
+        from standards_core.scaffold import manifest
+
+        cfg = {
+            "retire": [{"paths": ["x.{a,b}"], "module": "ci", "contains": ["old"]}],
+            "extra-files": [
+                {
+                    "path": "S.md",
+                    "template": "S.md.j2",
+                    "strategy": "whole",
+                    "module": "hygiene",
+                },
+                {
+                    "path": "T",
+                    "template": "T.j2",
+                    "strategy": "seed",
+                    "module": "ci",
+                    "header": "yaml",
+                },
+            ],
+        }
+        (r,) = manifest.profile_retire(cfg)
+        self.assertEqual(
+            (r.paths, r.fragment, r.contains), (("x.a", "x.b"), "profile", ("old",))
+        )
+        extra = manifest.extra_entries(cfg)
+        self.assertEqual(
+            [(e.header, e.profile_template) for e in extra],
+            [("none", True), ("none", True)],
+        )
+        with self.assertRaisesRegex(ConfigError, "not a regular expression"):
+            manifest.profile_retire(
+                {"retire": [{"paths": ["a"], "module": "ci", "contains": ["("]}]}
+            )
+        with self.assertRaisesRegex(ConfigError, "never closed"):
+            manifest.profile_retire({"retire": [{"paths": ["a{"], "module": "ci"}]})
+
+
+class TestRender(unittest.TestCase):
+    def test_header(self):
+        from standards_core.scaffold import render
+        from standards_core.scaffold.globs import ManifestError
+
+        self.assertEqual(
+            render.header(STUB, "nix", True),
+            "# stub-nix:managed — generated by stub-nix (`stub-init --sync`); edit only"
+            " inside the stub-nix:local region.\n",
+        )
+        self.assertEqual(
+            render.header(KIT, "jsonc", False, "see docs"),
+            "// kit-nix:managed — generated by kit-nix (`kit-init --sync`); do not edit."
+            " see docs\n",
+        )
+        self.assertEqual(render.header(STUB, "none", False), "")
+        md = dataclasses.replace(STUB, header_kinds={"md": HeaderKind("<!--", "-->")})
+        self.assertEqual(
+            render.header(md, "md", False),
+            "<!-- stub-nix:managed — generated by stub-nix (`stub-init --sync`); do not"
+            " edit. -->\n",
+        )
+        with self.assertRaises(ManifestError):
+            render.header(STUB, "md", False)
+
+    def test_filters(self):
+        from standards_core.scaffold import render
+
+        def r(product, source, **ctx):
+            return render.render_string(product, source, ctx)
+
+        self.assertEqual(r(STUB, "{{ v | json }}", v={"a": 1}), '{\n\t"a": 1\n}\n')
+        self.assertEqual(r(KIT, "{{ v | json }}", v={"a": 1}), '{\n  "a": 1\n}\n')
+        self.assertEqual(r(STUB, "{{ v | nix_string }}", v='a"${b}'), '"a\\"\\${b}"')
+        self.assertEqual(r(STUB, "{{ v | nix_attr }}", v="my.unit"), '"my.unit"')
+        self.assertEqual(r(STUB, "{{ v | nix_attr }}", v="unit"), "unit")
+        self.assertEqual(r(STUB, "{{ v | yaml_json }}", v=["a'b"]), "'[\"a''b\"]'")
+        self.assertEqual(
+            r(STUB, "{{ v | glob_to_regex }}", v="a/*.ts"), "a/[^/]*\\.ts$"
+        )
+        self.assertEqual(
+            r(STUB, "{{ 'https://x/{repo}/' | org_url }}", repo="o/r"), "https://x/o/r/"
+        )
+
+    def test_url_placeholders_apply_in_order(self):
+        from standards_core.scaffold import render
+
+        hooks = dataclasses.replace(
+            STUB.hooks,
+            url_placeholders=lambda ctx: (
+                ("name_hyphen", ctx["name_hyphen"]),
+                ("name", ctx["name"]),
+            ),
+        )
+        product = dataclasses.replace(STUB, hooks=hooks)
+        ctx = {"name": "a_b", "name_hyphen": "a-b"}
+        self.assertEqual(
+            render.url_template(product, "{name_hyphen}.{name}/{repo}", ctx),
+            "a-b.a_b/{repo}",
+        )
+
+    def test_product_filters_and_helpers(self):
+        from standards_core.scaffold import render
+
+        product = dataclasses.replace(
+            STUB,
+            jinja_filters={"shout": lambda v: v.upper()},
+            hooks=dataclasses.replace(
+                STUB.hooks,
+                render_helpers=lambda ctx, current: {"gen": lambda: current or "-"},
+            ),
+        )
+        self.assertEqual(render.render_string(product, "{{ 'a' | shout }}", {}), "A")
+        self.assertEqual(
+            render.render(product, "envrc.j2", {}, None),
+            "use flake . --no-pure-eval\n# stub-nix:local-begin envrc\n# stub-nix:local-end envrc\n",
+        )
+        helpers = render.helpers(product, {}, "now")
+        self.assertEqual(
+            (sorted(helpers), helpers["gen"]()), (["gen", "pin", "rev"], "now")
+        )
+        shadow = dataclasses.replace(STUB, jinja_filters={"json": str})
+        with self.assertRaisesRegex(RuntimeError, "shadows the core filter"):
+            render.environment(shadow)
+        for extra in ({"rev": 1}, {"name": 1}):
+            bad = dataclasses.replace(
+                STUB,
+                hooks=dataclasses.replace(
+                    STUB.hooks, render_helpers=lambda c, cur, e=extra: e
+                ),
+            )
+            with (
+                self.subTest(extra=extra),
+                self.assertRaisesRegex(RuntimeError, "render_helpers shadows"),
+            ):
+                render.helpers(bad, {"name": "x"}, None)
+
+    def test_templates_come_from_the_roots_product_first(self):
+        from support import product_copy
+
+        from standards_core.scaffold import render
+
+        with tempfile.TemporaryDirectory() as tmp:
+            product = product_copy(STUB, Path(tmp))
+            (product.data_root / "templates" / "envrc.j2").write_text("own\n")
+            self.assertEqual(render.render(product, "envrc.j2", {}, None), "own\n")
+            # A product template's error is the product's bug, raised as is.
+            (product.data_root / "templates" / "bad.j2").write_text("{{ nope }}")
+            with self.assertRaises(Exception) as caught:
+                render.render(product, "bad.j2", {}, None)
+            self.assertNotIsInstance(caught.exception, ConfigError)
+
+    def test_profile_templates(self):
+        from standards_core.scaffold import render
+
+        with tempfile.TemporaryDirectory() as tmp:
+            templates = Path(tmp) / "templates"
+            templates.mkdir()
+            (templates / "S.md.j2").write_text("{{ name }}\n")
+            (templates / "bad.j2").write_text("{{ nope }}\n")
+            self.assertEqual(
+                render.render(
+                    STUB, "S.md.j2", {"name": "u"}, None, directory=templates
+                ),
+                "u\n",
+            )
+            with self.assertRaisesRegex(
+                ConfigError, "the org profile's templates/bad.j2 does not render"
+            ):
+                render.render(STUB, "bad.j2", {}, None, directory=templates)
+            (templates / "link.j2").symlink_to(templates / "S.md.j2")
+            with self.assertRaisesRegex(ConfigError, "templates/link.j2 is a symlink"):
+                render.template_files(templates)
+            with self.assertRaisesRegex(ConfigError, "templates/link.j2 is a symlink"):
+                render.profile_environment(STUB, str(templates)).get_template("link.j2")
+            with self.assertRaisesRegex(ConfigError, "sandbox refuses"):
+                render.render_string(STUB, "{{ cycler.__init__.__globals__ }}", {})
+
+    def test_evaluate(self):
+        from standards_core.scaffold.render import evaluate
+
+        ctx = {
+            "modules": {"ci": True, "tests": False},
+            "discover": {"units": ["a", "b"]},
+            "n": 2,
+        }
+        for expr, want in (
+            ("True", True),
+            ("modules.ci and not modules.tests", True),
+            ("modules['tests'] or n > 1", True),
+            ("len(discover.units) == 2", True),
+            ("'c' in discover.units", False),
+            ("any([modules.tests, modules.ci])", True),
+            ("-n < 0 <= n", True),
+            ("discover.units[0] is not None", True),
+        ):
+            with self.subTest(expr=expr):
+                self.assertIs(evaluate(expr, ctx), want)
+        for expr, why in (
+            ("nope", "not in the context"),
+            ("modules.__class__", "names starting with _"),
+            ("n.x", "not a table"),
+            ("open('x')", "only len, any, all"),
+            ("n + 1", "BinOp is not allowed"),
+            ("modules.nope", "no 'nope' there"),
+            ("(", "is not an expression"),
+        ):
+            with self.subTest(expr=expr), self.assertRaisesRegex(ConfigError, why):
+                evaluate(expr, ctx)
+
+
+class TestContext(unittest.TestCase):
+    def setUp(self):
+        from support import git
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        git(self.root, "init", "-q")
+        (self.root / "pyproject.toml").write_text(
+            '[project]\nname = "demo_unit"\n\n[tool.stub-nix]\nschema = 1\nmajor = 3\n'
+            'profile = "recommended"\n'
+        )
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "first")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def build(self, product=STUB, **kwargs):
+        from standards_core.common import config, pyproject
+        from standards_core.scaffold import context
+
+        checkout = product.hooks.load_checkout(self.root)
+        resolved = config.resolve(
+            product, pyproject.config_path(product, self.root), checkout=checkout
+        )
+        return context.build(product, checkout, resolved, floors={"uv": {}}, **kwargs)
+
+    def test_core_keys(self):
+        from standards_core.scaffold import context
+
+        ctx = self.build(
+            lock={"rev": "a" * 40, "owner": "fork", "repo": "stub-nix"},
+            options={"x": 1},
+        )
+        core = set(context.CORE_KEYS) - {"previous", "history"}
+        self.assertEqual(set(ctx), core | {"stub_nix", "major", "site"})
+        self.assertEqual((ctx.name, ctx.name_hyphen), ("demo_unit", "demo-unit"))
+        self.assertEqual(
+            ctx.branches, {"integration": "develop", "release": "version-3"}
+        )
+        self.assertEqual(ctx.gates, ["pr-policy", "lint", "test"])
+        self.assertEqual(
+            ctx.discover,
+            {
+                "gitmodules": False,
+                "github_workflows": False,
+                "tests_dir": False,
+                "requirements": False,
+            },
+        )
+        self.assertEqual(
+            ctx.engine,
+            {
+                "rev": "a" * 40,
+                "version": "1.0.0",
+                "major": 1,
+                "owner": "fork",
+                "name": "stub-nix",
+                "url": "github:example/stub-nix/release-1",
+            },
+        )
+        self.assertIs(ctx.stub_nix, ctx.engine)
+        self.assertEqual(ctx.options, {"force": False, "x": 1})
+        self.assertEqual(ctx.profile_input, "")
+        self.assertEqual((ctx.major, ctx.site), (3, "demo-unit.localhost"))
+        self.assertIsInstance(ctx.first_commit_year, int)
+        self.assertEqual(ctx.unmanaged_dirs, [])
+        # A table may name another engine URL.
+        (self.root / "pyproject.toml").write_text(
+            (self.root / "pyproject.toml").read_text()
+            + '\n[tool.stub-nix.dev-shell]\nstub-nix-url = "github:me/stub-nix"\n'
+        )
+        self.assertEqual(self.build().engine["url"], "github:me/stub-nix")
+
+    def test_the_release_branch_follows_the_facts(self):
+        """Under a series branching the release branch is the series the checkout's files name."""
+        (self.root / ".kit-series").write_text("18.0\n")
+        (self.root / "pyproject.toml").write_text(
+            '[tool.kit-nix]\nschema = 1\nprofile = "recommended"\n'
+        )
+        from support import git
+
+        git(self.root, "add", "-A")
+        ctx = self.build(KIT)
+        self.assertEqual(ctx.branches, {"integration": "develop", "release": "18.0"})
+        self.assertEqual((ctx.shape, ctx.series), ("", "18.0"))
+        self.assertIs(ctx.kit_nix, ctx.engine)
+
+    def test_shadowing_is_a_bug(self):
+        bad = dataclasses.replace(
+            STUB,
+            hooks=dataclasses.replace(
+                STUB.hooks, template_globals=lambda c, r, ctx: {"gates": []}
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "template_globals shadows"):
+            self.build(bad)
+        bad = dataclasses.replace(
+            STUB,
+            hooks=dataclasses.replace(
+                STUB.hooks, discover=lambda c, cfg, m: {"gitmodules": 1}
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "hooks.discover shadows"):
+            self.build(bad)
+
+    def test_repoconfig(self):
+        from standards_core.common import repoconfig
+
+        rc = repoconfig.load(STUB, self.root)
+        self.assertEqual(
+            (rc.name, rc.integration, rc.release_branch),
+            ("demo_unit", "develop", "version-3"),
+        )
+        self.assertEqual(rc.gates, ["pr-policy", "lint", "test"])
+        self.assertEqual(rc.facts["tests_dir"], False)
+        hooked = dataclasses.replace(
+            STUB,
+            hooks=dataclasses.replace(
+                STUB.hooks, release_branch=lambda cfg, modules, facts: "stable"
+            ),
+        )
+        self.assertEqual(repoconfig.load(hooked, self.root).release_branch, "stable")
+        self.assertEqual(
+            repoconfig.release_branch(STUB, rc.cfg, {"releases": False}, rc.facts), ""
+        )

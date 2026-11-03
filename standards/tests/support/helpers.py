@@ -16,3 +16,14 @@ def make_tree(root: Path) -> Path:
     (root / "empty").write_text("")
     (root / "emptydir").mkdir()
     return root
+
+
+def product_copy(product, root: Path, **changes):
+    """``product`` with its data root copied under ``root`` (and ``changes``): a test may
+    edit the copy's data, and the copy has caches of its own."""
+    import dataclasses
+    import shutil
+
+    data = root / "data"
+    shutil.copytree(product.data_root, data)
+    return dataclasses.replace(product, data_root=data, **changes)

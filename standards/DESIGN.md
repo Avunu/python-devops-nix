@@ -2226,3 +2226,58 @@ Deviations made while implementing, with the reason for each.
   pytest in a copy of `standards/tests` against the installed package, so the suite tests what products get.
 - **Version markers**: `standards/pyproject.toml` and `standards_core/__init__.py` carry release-please's
   `x-release-please-start-version`/`-end` block around the version, the form the generic updater reads.
+
+### Stage 2
+
+- **`default_load_checkout(product, root)`** takes the root as well: a product's `Hooks` are built before its
+  `Product`, so its `load_checkout` is `lambda root: default_load_checkout(PRODUCT, root)` (the stubs do this). The
+  checkout must be a git work tree (`ls_files`), else `EnvError`.
+- **The checkout reaches resolution.** `config.resolve_doc(product, doc, *, root, checkout, …)` and
+  `config.resolve(product, path, *, …, checkout)` take the `Checkout`, which `hooks.derive` gets and whose name is the
+  `repo` default's (`[project].name` without one). `root` defaults to `checkout.root`. `Resolved` gains a `product`
+  field (not compared, not printed) so `Resolved.get` can read the product's schemas and key sets, and `RepoConfig`
+  a `product` field for its `release_branch` property. `config` and `profile show` load the checkout when the
+  product can (a git work tree) and resolve without it otherwise, as frappe's `config` works outside git.
+- **Integration-branch default** with no `hooks.integration_default` and no `Branching` for `releases.branching`
+  (a product with no branching at all): `"main"`.
+- **`hooks.host_rules`** runs on every resolution, after the GitHub-only loop and before its notice, with the host
+  answer as its `gh` argument (a frappe rule checks `if not gh`; it adds no notice, so frappe's notice order holds).
+- **Composition.** `core.schema.json` is served per product with its product-dependent enums filled in
+  (`header-kind`, `releases.branching` with the first branching as default, `releases.version-scheme`,
+  `repo-policy.required-checks` items), and `releases.tool` is a plain string the product's module schema
+  narrows. Each composed document carries its own `$defs/org` and `$defs/modules`: a core module's merged schema is
+  inline (document-local `$ref`s of either source rewritten to `core.schema.json#…`/`modules.schema.json#…` by
+  `compose.rebase`), any other module is `{"$ref": "modules.schema.json#/$defs/modules/<m>"}`. A `$ref` to
+  `modules.schema.json` or `fleet-entry.schema.json` resolves to `Schemas.modules`/`Schemas.fleet_entry`. `extends`
+  is `^(minimal|recommended|<each snapshot>)$`. `schema.raw(product, name)` reads a file as shipped.
+- **Help keys.** `help_text(product, key, default)` takes and returns `str | None` (`None`: argparse's no text).
+  `build_parser` accepts `"<command>"`, `"<command> <flag>"` (a positional by its dest), and below a command group
+  `"<command> <subcommand>[ <flag>]"`. A command's one-line summary in the command list is neutral core text with no
+  key yet: the `--help` parity comparison arrives in stage 9, which adds a key form for it if frappe needs one.
+- **`CORE_COMMANDS`** is a module attribute built on first access (PEP 562 `__getattr__`): the command modules import
+  `help_text` from `standards_core.commands`, so they cannot be imported while it initialises. It holds `config`,
+  `data-path`, `pin-path` and `profile` now; the later stages add theirs. `profile` has `show` and `list`
+  (`<show|list>`); `validate` comes with stage 3.
+- **Manifest.** `Retire.only_section` is gone: `only_section: x` is stored as `only_sections = ("x",)` (the same test
+  for one section). The sentinel-only keys on another strategy, a `claims` without a `nix-attrset` anchor, a bad
+  `anchor`, `comment` or `phase` are `ManifestError`s at load. Handler names are checked by conformance (and by the
+  engine in stage 3), not at load. The stub's `pyproject.toml` `toml-merge` entry names no handler until stage 3
+  registers its `TomlGroups` handler.
+- **Render.** `org_url` stays a core filter (over `url_template`). `render.helpers(product, ctx, current)` builds the
+  per-render functions; `header` raises `ManifestError` for an unknown kind. `context.build` takes an optional
+  `facts` (callers that computed them already) and refuses a `template_globals` key that shadows a core key, including
+  `previous` and `history`. `first_commit_year` catches `EnvError` only (ruff 0.17's defaults refuse a blind
+  `except`). `History.MESSAGE` names "the config file" rather than `pyproject.toml`.
+- **Conformance, static part.** The variable rule scans the product's data root (templates, manifest, profiles, …)
+  and its `help` texts for `<X>_<core suffix>` (the `ENV_SUFFIXES` the core reads) and refuses any `<X>` other than
+  `env_prefix`. `lib.standards.conformance` names its check `<product>-standards-conformance-check`.
+- **Stubs.** Both stubs get working configuration hooks now (`load_checkout`, `discover`, `gates`,
+  `template_globals`, `derive`), their `Branching` values and minimal version schemes (`stub-major`, `kit-series`),
+  because resolution and the context need them. The kit's shape and series discovery (§11.1) is in place ahead of
+  stage 5, which completes its manifest and fixtures. The stub has a required checkout key `major` (frappe's
+  `frappe-major` analogue: `version-<major>` is its release branch), a derived `site`, and the profile-only list
+  `replace-units` (frappe's `replace-apps` analogue).
+- **Tests beyond the stage's list.** `test_repo.py` gains the `load_checkout` cases stage 1 deferred, and
+  `test_scaffold.py` gains manifest, render and context cases for the modules this stage adds (the engine-level rest
+  of `test_scaffold.py` stays with stage 3). `test_profiles.py` also covers `profile show/list` and the
+  changed-defaults warning (`scaffold/defaults.py`).

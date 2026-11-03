@@ -1,0 +1,435 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "modules.schema.json",
+  "title": "The stub product's modules",
+  "$defs": {
+    "module-name": {
+      "enum": [
+        "dev-shell",
+        "editorconfig",
+        "python-lint",
+        "tests",
+        "hygiene",
+        "commits",
+        "releases",
+        "dependabot",
+        "ci",
+        "repo-policy",
+        "extras"
+      ]
+    },
+    "modules": {
+      "dev-shell": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "flake.nix and .envrc. Required: enable = false is exit 2.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "systems": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "x86_64-linux",
+                "aarch64-linux",
+                "aarch64-darwin"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "default": [
+              "x86_64-linux",
+              "aarch64-linux"
+            ],
+            "x-app-only": true
+          },
+          "stub-nix-url": {
+            "type": "string",
+            "default": "",
+            "description": "\"\" means the engine's release branch; any flake URL otherwise.",
+            "x-app-only": true
+          }
+        }
+      },
+      "editorconfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": ".editorconfig.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "indent": {
+            "enum": [
+              "tab",
+              "space"
+            ],
+            "default": "space"
+          },
+          "line-length": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 88
+          }
+        }
+      },
+      "python-lint": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "ruff, in tools/pyproject.toml and pyproject.toml.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "tool": {
+            "enum": [
+              "ruff",
+              "none"
+            ],
+            "default": "ruff"
+          },
+          "select": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "F",
+              "E",
+              "W",
+              "I"
+            ]
+          },
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "E501"
+            ]
+          },
+          "line-length": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 88
+          }
+        }
+      },
+      "tests": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "pytest and coverage.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "setup": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enable": {
+                "type": "boolean",
+                "default": true
+              },
+              "target": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "default": 80
+              },
+              "initial-floor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "default": 0
+              },
+              "omit": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "default": [],
+                "x-app-only": true
+              }
+            }
+          }
+        }
+      },
+      "hygiene": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Repository hygiene: .git-blame-ignore-revs, CONTRIBUTING.md.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "max-file-kb": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1024
+          }
+        }
+      },
+      "commits": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "committed.toml and pr-policy.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "tool": {
+            "enum": [
+              "committed",
+              "none"
+            ],
+            "default": "committed"
+          },
+          "allowed-types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "default": [
+              "build",
+              "chore",
+              "ci",
+              "docs",
+              "feat",
+              "fix",
+              "perf",
+              "refactor",
+              "revert",
+              "style",
+              "test"
+            ]
+          }
+        }
+      },
+      "releases": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Releases. Needs commits.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "tool": {
+            "enum": [
+              "release-please",
+              "none"
+            ],
+            "default": "release-please"
+          },
+          "bootstrap-sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{7,40}$",
+            "x-app-only": true
+          }
+        }
+      },
+      "dependabot": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": ".github/dependabot.yml.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "cadence": {
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "default": "weekly"
+          },
+          "cadence-overrides": {
+            "type": "object",
+            "default": {},
+            "propertyNames": {
+              "enum": [
+                "github-actions",
+                "uv",
+                "nix"
+              ]
+            },
+            "additionalProperties": {
+              "enum": [
+                "daily",
+                "weekly",
+                "monthly"
+              ]
+            }
+          }
+        }
+      },
+      "ci": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The CI workflows.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "nightly": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "repo-policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Rulesets and repository settings.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "extras": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Extra GitHub-only files. Needs commits.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "browser": {
+            "type": "boolean",
+            "default": true,
+            "x-app-only": true
+          }
+        }
+      }
+    },
+    "org-extra": {
+      "properties": {
+        "dev-docs-url": {
+          "type": "string",
+          "default": "https://example.org/stub-nix/docs",
+          "description": "Where the standards are documented."
+        },
+        "repo-url": {
+          "type": "string",
+          "default": "https://github.com/{repo}",
+          "description": "A URL template with {repo}: the clone URL."
+        },
+        "website-url": {
+          "type": "string",
+          "default": "",
+          "description": "A URL template with {name}, {name_hyphen}."
+        }
+      }
+    },
+    "profile-extra": {
+      "properties": {
+        "replace-units": {
+          "type": "array",
+          "default": [],
+          "description": "Units the org renamed, from → to.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to"
+            ],
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "app-extra": {
+      "required": [
+        "major"
+      ],
+      "properties": {
+        "major": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The major the checkout's release branch follows (version-<major>)."
+        },
+        "site": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default: <name with - for _>.localhost."
+        },
+        "nightly-suites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "shell-checks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "untested": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "target",
+              "reason"
+            ],
+            "properties": {
+              "target": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

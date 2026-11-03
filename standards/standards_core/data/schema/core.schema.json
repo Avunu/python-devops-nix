@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "core.schema.json",
+  "title": "The definitions every product's profile, checkout table and fleet schemas share",
+  "$comment": "standards_core.common.compose builds profile.schema.json, app.schema.json and fleet.schema.json from these and the product's modules.schema.json (DESIGN §4.1). The enums that depend on the product (header-kind, releases.branching, releases.version-scheme, repo-policy.required-checks) are filled in per product when this file is loaded.",
+  "$defs": {
+    "org": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Organisation values. Every string defaults to \"\" (unset).",
+      "properties": {
+        "publisher": { "type": "string", "default": "", "description": "Who publishes the checkout's packages." },
+        "email": { "type": "string", "default": "", "description": "The publisher's contact address." },
+        "copyright-holder": { "type": "string", "default": "", "description": "\"\" means: use publisher." },
+        "license": { "type": "string", "default": "", "description": "An SPDX id." },
+        "github-owner": { "type": "string", "default": "", "description": "The default owner for repo when origin is unset." },
+        "docs-url": { "type": "string", "default": "", "description": "A URL template: the checkout's documentation." },
+        "dev-docs-url": { "type": "string", "default": "", "description": "Where the standards are documented." },
+        "support-url": { "type": "string", "default": "", "description": "\"\" means: the repository's issues." },
+        "repo-url": { "type": "string", "default": "", "description": "A URL template with {repo}: the clone URL." }
+      }
+    },
+    "retire-item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths", "module"],
+      "properties": {
+        "paths": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "contains": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "module": { "$ref": "modules.schema.json#/$defs/module-name" }
+      }
+    },
+    "extra-file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "template", "strategy", "module"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "template": { "type": "string", "minLength": 1 },
+        "strategy": { "enum": ["whole", "seed"] },
+        "module": { "$ref": "modules.schema.json#/$defs/module-name" },
+        "when": { "type": "string", "minLength": 1 },
+        "header": { "$ref": "#/$defs/header-kind" }
+      }
+    },
+    "header-kind": {
+      "enum": ["yaml", "toml", "shell", "ini", "nix", "jsonc", "ts", "none"]
+    },
+    "core-modules": {
+      "dev-shell": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The dev shell. Required: enable = false is exit 2.",
+        "properties": {
+          "enable": { "type": "boolean", "default": false }
+        }
+      },
+      "commits": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Conventional commits, checked by policy.",
+        "properties": {
+          "enable": { "type": "boolean", "default": false },
+          "allow-stacked": { "type": "boolean", "default": true },
+          "pr-allowed-bases": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "default": [],
+            "description": "Globs of extra base branches a pull request may target."
+          },
+          "subject-length": { "type": "integer", "minimum": 1, "default": 100 }
+        }
+      },
+      "releases": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The release flow: the branching, the version scheme and the tags.",
+        "properties": {
+          "enable": { "type": "boolean", "default": false },
+          "tool": { "type": "string", "minLength": 1, "description": "The release tool; \"none\" turns the module off." },
+          "branching": { "type": "string", "minLength": 1 },
+          "version-scheme": { "enum": ["semver"], "default": "semver" },
+          "tag-prefix": { "enum": ["v", ""], "default": "v" }
+        }
+      },
+      "dependabot": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Dependabot updates and their auto-merge.",
+        "properties": {
+          "enable": { "type": "boolean", "default": false },
+          "auto-merge": {
+            "type": "boolean",
+            "default": true,
+            "description": "Acts only where required checks protect the integration branch."
+          },
+          "auto-merge-policy": { "enum": ["decision-table", "all"], "default": "decision-table" },
+          "update-branches": { "type": "boolean", "default": false }
+        }
+      },
+      "ci": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The CI workflows and so every gate.",
+        "properties": {
+          "enable": { "type": "boolean", "default": false },
+          "github-app": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["app-id", "private-key"],
+            "description": "A GitHub App whose token the release and dependency workflows use. Names, never values.",
+            "properties": {
+              "app-id": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+              "private-key": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }
+            }
+          },
+          "schedules": {
+            "type": "object",
+            "default": {},
+            "description": "Cron expressions by workflow; \"\" means none.",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      },
+      "repo-policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Rulesets and repository settings, applied by repo apply.",
+        "properties": {
+          "enable": { "type": "boolean", "default": false },
+          "required-approvals": { "type": "integer", "minimum": 0, "default": 1 },
+          "require-code-owner-review": { "type": "boolean", "default": false },
+          "required-checks": {
+            "anyOf": [
+              { "const": "gates" },
+              { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+            ],
+            "default": "gates"
+          },
+          "release-bypass": {
+            "type": "string",
+            "pattern": "^(github-actions|user:[0-9]+|integration:[0-9]+)$",
+            "default": "github-actions"
+          },
+          "secret-scanning": { "type": "boolean", "default": true },
+          "merge-methods": {
+            "type": "array",
+            "items": { "enum": ["squash", "merge", "rebase"] },
+            "minItems": 1,
+            "uniqueItems": true,
+            "default": ["squash"]
+          },
+          "require-thread-resolution": { "type": "boolean", "default": true },
+          "delete-branch-on-merge": { "type": "boolean", "default": true },
+          "manage-default-branch": { "type": "boolean", "default": true },
+          "manage-features": { "type": "boolean", "default": true }
+        }
+      }
+    },
+    "profile-ref": {
+      "type": "string",
+      "pattern": "^(minimal|recommended(@[0-9]+\\.[0-9]+)?|github:.+|gitlab:.+|git\\+https://.+|\\./[^/].*)$",
+      "default": "minimal",
+      "description": "A built-in name (minimal, recommended or a snapshot recommended@<minor>), an org profile flake URL (github:, gitlab:, git+https://) or an in-repo profile ./<dir>. Absent means minimal."
+    },
+    "fleet-entry-core": {
+      "type": "object",
+      "properties": {
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "private": { "type": "boolean", "default": false },
+        "documentation": { "type": "string", "pattern": "^https://" },
+        "profile": { "type": "string", "minLength": 1 },
+        "integration_branch": { "type": "string", "minLength": 1 },
+        "branches": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

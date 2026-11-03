@@ -1,29 +1,33 @@
-"""The stub product: identity, markers, engine and pins (the stage-1 skeleton).
+"""The stub product: the general engine the core's tests run against (DESIGN §11.1).
 
-Its hooks arrive with the configuration and the engine (DESIGN §12, stages 2 and 3);
-until then each one says so when called.
+Its configuration hooks mirror a framework product's: a required ``major`` key that
+names the release branch (``version-<major>``), a derived ``site``, and a version scheme
+whose major is that key. Its engine hooks arrive with stage 3 (DESIGN §12).
 """
 
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
+from standards_core.common.report import ConfigError
 from standards_core.product import (
-    CORE_MODULES,
+    Branching,
     Engine,
     Hooks,
     Identity,
+    Level,
     Markers,
     Modules,
     Pins,
     Product,
 )
+from standards_core.scaffold.context import Checkout, default_load_checkout
 from stub_nix_tools import __version__
-
-
-def _not_yet(*args, **kwargs):
-    raise NotImplementedError("the stub product's hooks come with a later stage")
-
 
 IDENTITY = Identity(
     name="stub-nix",
@@ -77,17 +81,148 @@ PINS = Pins(
     ),
 )
 
+MODULES = Modules(
+    names=(
+        "dev-shell",
+        "editorconfig",
+        "python-lint",
+        "tests",
+        "hygiene",
+        "commits",
+        "releases",
+        "dependabot",
+        "ci",
+        "repo-policy",
+        "extras",
+    ),
+    needs=MappingProxyType({"releases": ("commits",), "extras": ("commits",)}),
+    github_only=("ci", "releases", "dependabot", "repo-policy", "extras"),
+    profile_only=("replace-units",),
+    app_only=("major", "site", "nightly-suites", "shell-checks", "untested"),
+    resolved_from_profile=("replace-units",),
+)
+
+BRANCHING = MappingProxyType(
+    {
+        "develop+version": Branching(
+            name="develop+version",
+            flow="tags",
+            integration=lambda cfg: "develop",
+            release_branch=lambda cfg, facts: f"version-{cfg['major']}",
+            release_pattern="refs/heads/version-*",
+            release_label="version-*",
+            tags=True,
+        ),
+        "main+tags": Branching(
+            name="main+tags",
+            flow="tags",
+            integration=lambda cfg: "main",
+            release_branch=lambda cfg, facts: "",
+            tags=True,
+        ),
+    }
+)
+
+_SEMVER = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+_BREAKING = re.compile(r"^[a-z]+(\([^)]*\))?!:|^BREAKING[ -]CHANGE:", re.MULTILINE)
+_RELEASE_AS = re.compile(r"^Release-As:\s*(\d+)\.", re.MULTILINE)
+
+
+class StubMajor:
+    """``stub-major``: the version's major is the checkout's ``major``, never bumped."""
+
+    name = "stub-major"
+
+    def valid(self, version: str, cfg: Mapping[str, Any], facts: Mapping) -> str | None:
+        m = _SEMVER.fullmatch(version)
+        if not m:
+            return f"{version} is not <major>.<minor>.<patch>"
+        if int(m[1]) != cfg["major"]:
+            return f"{version} is not on major {cfg['major']}"
+        return None
+
+    def bump(
+        self, version: str, level: Level, cfg: Mapping[str, Any], facts: Mapping
+    ) -> str:
+        m = _SEMVER.fullmatch(version)
+        if not m or level == "major":
+            raise ConfigError(f"stub-major cannot raise {version} by {level}")
+        major, minor, patch = (int(g) for g in m.groups())
+        if level == "minor":
+            return f"{major}.{minor + 1}.0"
+        return f"{major}.{minor}.{patch + 1}"
+
+    def message_problems(
+        self, text: str, cfg: Mapping[str, Any], facts: Mapping
+    ) -> list[str]:
+        out = []
+        if _BREAKING.search(text):
+            out.append("a breaking change: the major is the checkout's major key")
+        for m in _RELEASE_AS.finditer(text):
+            if int(m[1]) != cfg["major"]:
+                out.append(f"Release-As names major {m[1]}, not {cfg['major']}")
+        return out
+
+    def tag_problem(
+        self, tag: str, cfg: Mapping[str, Any], facts: Mapping
+    ) -> str | None:
+        return self.valid(tag.removeprefix("v"), cfg, facts)
+
+
+def load_checkout(root: Path) -> Checkout:
+    return default_load_checkout(PRODUCT, root)
+
+
+def discover(
+    checkout: Checkout, cfg: Mapping[str, Any], modules: Mapping[str, bool]
+) -> dict[str, Any]:
+    tracked = checkout.tracked
+    return {
+        "tests_dir": any(p.startswith("tests/") for p in tracked),
+        "requirements": "requirements.txt" in tracked,
+    }
+
+
+def gates(
+    modules: Mapping[str, bool], cfg: Mapping[str, Any], facts: Mapping[str, Any]
+) -> list[str]:
+    ci = modules.get("ci", False)
+    on = {
+        "pr-policy": ci and modules.get("commits", False),
+        "lint": ci,
+        "test": ci and modules.get("tests", False),
+    }
+    return [g for g in PRODUCT.ci.gates if on[g]]
+
+
+def template_globals(checkout: Checkout, resolved: Any, ctx: Any) -> dict[str, Any]:
+    cfg = resolved.cfg
+    return {
+        "major": cfg["major"],
+        "site": cfg.get("site") or f"{checkout.hyphen}.localhost",
+    }
+
+
+def derive(cfg: dict[str, Any], checkout: Checkout | None) -> None:
+    """``site`` from the checkout's name, as the framework product derives it."""
+    if "site" not in cfg and checkout is not None:
+        cfg["site"] = f"{checkout.hyphen}.localhost"
+
+
 PRODUCT = Product(
     identity=IDENTITY,
     markers=MARKERS,
     engine=ENGINE,
     pins=PINS,
-    modules=Modules(names=CORE_MODULES),
+    modules=MODULES,
     data_root=Path(str(files("stub_nix_tools").joinpath("data"))),
     hooks=Hooks(
-        load_checkout=_not_yet,
-        discover=_not_yet,
-        gates=_not_yet,
-        template_globals=_not_yet,
+        load_checkout=load_checkout,
+        discover=discover,
+        gates=gates,
+        template_globals=template_globals,
+        derive=derive,
     ),
+    branching=BRANCHING,
+    version_schemes=MappingProxyType({"stub-major": StubMajor()}),
 )

@@ -6,6 +6,11 @@
 #       commit it was built from is written to standards_core/_source.json,
 #       which standards_core.revision() reads for the version-skew row; a
 #       product passes rev = inputs.python-devops-nix.rev.
+#   conformance { pkgs, product, package, module }
+#       a check (named after `product`) that runs
+#       `python -m standards_core.testing.conformance <module>` with the
+#       product's Python `package` installed: module is the product object,
+#       "kit_nix_tools.product:PRODUCT". Any problem fails it.
 #   check { pkgs, interpreters ? <the presets' interpreters> }
 #       pytest standards/tests on every interpreter, with git on PATH and no
 #       global git configuration.
@@ -61,6 +66,23 @@ rec {
           > "$out/${python.sitePackages}/standards_core/_source.json"
       '';
     };
+
+  conformance =
+    {
+      pkgs,
+      product,
+      package,
+      module,
+    }:
+    let
+      checks = (import ./checks { inherit lib; }).mk { inherit pkgs product; };
+      env = package.pythonModule.withPackages (_: [ package ]);
+    in
+    checks.script "standards-conformance"
+      {
+        env.PYTHONDONTWRITEBYTECODE = "1";
+      }
+      "${env}/bin/python -m standards_core.testing.conformance ${lib.escapeShellArg module} | tee \"$out\"";
 
   check =
     {

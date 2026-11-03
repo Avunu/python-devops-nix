@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fleet-entry.schema.json",
+  "title": "One repository in a kit-nix fleet",
+  "type": "object",
+  "required": [
+    "repo"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "repo": {
+      "$ref": "core.schema.json#/$defs/fleet-entry-core/properties/repo"
+    },
+    "shape": {
+      "enum": [
+        "bundle",
+        "workspace"
+      ]
+    },
+    "branches": {
+      "$ref": "core.schema.json#/$defs/fleet-entry-core/properties/branches"
+    },
+    "private": {
+      "$ref": "core.schema.json#/$defs/fleet-entry-core/properties/private"
+    },
+    "documentation": {
+      "$ref": "core.schema.json#/$defs/fleet-entry-core/properties/documentation"
+    },
+    "integration_branch": {
+      "$ref": "core.schema.json#/$defs/fleet-entry-core/properties/integration_branch"
+    },
+    "profile": {
+      "$ref": "core.schema.json#/$defs/fleet-entry-core/properties/profile"
+    }
+  }
+}

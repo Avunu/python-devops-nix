@@ -1,0 +1,39 @@
+{
+  "$comment": "The stub's GitHub files (DESIGN \u00a711.1).",
+  "entries": [
+    {
+      "path": ".github/dependabot.yml",
+      "template": ".github/dependabot.yml.j2",
+      "strategy": "whole",
+      "module": "dependabot",
+      "uses": [
+        "dependabot.cadence"
+      ],
+      "header": "yaml",
+      "local_regions": [
+        "updates"
+      ]
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "template": ".github/workflows/ci.yml.j2",
+      "strategy": "whole",
+      "module": "ci",
+      "header": "yaml"
+    }
+  ],
+  "retire": [
+    {
+      "paths": [
+        ".github/workflows/*.yml",
+        ".github/workflows/*.yaml"
+      ],
+      "rule": "a workflow that runs the old checks the ci module's gates replace",
+      "module": "ci",
+      "contains": [
+        "stub-legacy-check"
+      ],
+      "unmanaged": true
+    }
+  ]
+}
