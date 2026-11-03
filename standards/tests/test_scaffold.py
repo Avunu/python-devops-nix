@@ -1,16 +1,35 @@
-"""The engine's leaves: globs (with braces), the formatter-shaped JSON, local regions."""
+"""The engine and its parts: globs (with braces), the formatter-shaped JSON, local
+regions, the manifest, rendering, the context, managed paths, handlers, the TOML key
+groups, flake inputs and fixture checkouts."""
 
 import dataclasses
 import json
+import os
+import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
 from support import KIT, STUB
 
-from standards_core.common.report import ConfigError
-from standards_core.product import HeaderKind, JsonStyle
-from standards_core.scaffold import floors, globs, jsonfmt, regions, semantic
+from standards_core.common.report import CLEAN, DRIFT, ConfigError, EnvError
+from standards_core.product import Fixture, HeaderKind, JsonStyle
+from standards_core.scaffold import (
+    context,
+    engine,
+    fixtures,
+    floors,
+    globs,
+    handlers,
+    jsonfmt,
+    manifest,
+    regions,
+    semantic,
+    tomlmerge,
+)
+from standards_core.scaffold.globs import ManifestError
+from standards_core.scaffold.tomlmerge import TomlGroups, TomlMergeHandler
 
 PRETTIER = JsonStyle(indent="  ", width=80, trailing_commas="none")
 
@@ -736,7 +755,7 @@ class TestContext(unittest.TestCase):
             },
         )
         self.assertIs(ctx.stub_nix, ctx.engine)
-        self.assertEqual(ctx.options, {"force": False, "x": 1})
+        self.assertEqual(ctx.options, {"force": False, "throwaway": False, "x": 1})
         self.assertEqual(ctx.profile_input, "")
         self.assertEqual((ctx.major, ctx.site), (3, "demo-unit.localhost"))
         self.assertIsInstance(ctx.first_commit_year, int)
@@ -800,3 +819,504 @@ class TestContext(unittest.TestCase):
         self.assertEqual(
             repoconfig.release_branch(STUB, rc.cfg, {"releases": False}, rc.facts), ""
         )
+
+
+# --- the engine's parts (stage 3) --------------------------------------------------------
+
+
+class TestInside(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.product = dataclasses.replace(
+            STUB,
+            paths=dataclasses.replace(STUB.paths, never_write=frozenset({".venv"})),
+        )
+
+    def refused(self, path, text, **kw):
+        with self.assertRaises(ConfigError) as caught:
+            engine.inside(self.product, self.root, path, **kw)
+        self.assertIn(text, str(caught.exception))
+
+    def test_paths_stay_inside(self):
+        self.assertEqual(engine.inside(STUB, self.root, "a/b"), self.root / "a/b")
+        self.refused("/etc/x", "must be relative")
+        self.refused("a/../b", "must be relative")
+        self.refused("", "must be relative")
+        self.refused("a\nb", "control character")
+
+    def test_directories_sync_never_writes(self):
+        self.refused(".git/config", "inside .git/")
+        self.refused(".GIT./config", "inside .GIT./")
+        self.refused("x/.venv/y", "inside .venv/")
+        engine.inside(STUB, self.root, ".venv/x")  # only the copy names it
+        self.assertEqual(engine.unmanaged_dir(self.product, "a/.Venv /b"), ".Venv ")
+        self.assertIsNone(engine.unmanaged_dir(self.product, "a/venv/b"))
+
+    def test_links(self):
+        (self.root / "real").mkdir()
+        (self.root / "dir").symlink_to(self.root / "real")
+        (self.root / "file").symlink_to(self.root / "real")
+        self.refused("dir/x", "dir is a symlink")
+        self.refused("file", "file is a symlink")
+        self.assertEqual(
+            engine.inside(STUB, self.root, "file", link_ok=True), self.root / "file"
+        )
+        self.refused("dir/x", "dir is a symlink", link_ok=True)
+
+    def test_read(self):
+        (self.root / "d").mkdir()
+        (self.root / "f").write_text("x")
+        self.assertEqual(engine.read(STUB, self.root, "f"), "x")
+        self.assertIsNone(engine.read(STUB, self.root, "d"))
+        self.assertIsNone(engine.read(STUB, self.root, "missing"))
+
+
+class TestItem(unittest.TestCase):
+    def test_diff_and_finding(self):
+        item = engine.Item("a", "whole", "x\n", "y\n", "differs", DRIFT, module="m")
+        self.assertTrue(item.changes)
+        self.assertIn("-x\n+y\n", item.diff())
+        finding = item.finding()
+        self.assertEqual(
+            (finding.path, finding.strategy, finding.problem, finding.module),
+            ("a", "whole", "differs", "m"),
+        )
+        same = engine.Item("a", "whole", "x", "x")
+        self.assertFalse(same.changes)
+        self.assertEqual(same.finding().diff, "")
+        self.assertEqual(engine.Item("a", "lock", None, None).diff(), "")
+        command = engine.Item("a", "seed", "x", "x", "missing", DRIFT, "uv lock")
+        self.assertTrue(command.changes)
+
+
+def entry(**raw):
+    raw.setdefault("path", "x")
+    raw.setdefault("module", "hygiene")
+    return manifest.parse(STUB, {"t.json": {"entries": [raw]}}).entries[0]
+
+
+class TestHandlers(unittest.TestCase):
+    def test_the_core_registry(self):
+        names = set(handlers.registry(STUB))
+        self.assertTrue(set(handlers.core_handlers()) <= names)
+        self.assertIn("stub-pyproject", names)
+        whole = handlers.for_entry(STUB, entry(strategy="whole", template="t"))
+        self.assertIsInstance(whole, handlers.WholeHandler)
+        self.assertFalse(whole.merged)
+        seed = handlers.for_entry(STUB, entry(strategy="seed", handler="uv-lock"))
+        self.assertIsInstance(seed, handlers.UvLockHandler)
+        merged = handlers.for_entry(
+            STUB, entry(strategy="toml-merge", handler="stub-pyproject")
+        )
+        self.assertTrue(merged.merged)
+
+    def test_refusals_are_product_bugs(self):
+        cases = (
+            (
+                entry(strategy="whole", template="t", handler="nope"),
+                "no handler 'nope'",
+            ),
+            (
+                entry(strategy="whole", template="t", handler="uv-lock"),
+                "handler 'uv-lock' serves seed, not whole",
+            ),
+            (entry(strategy="toml-merge"), "names the product's handler"),
+            (entry(strategy="json-merge"), "names the product's handler"),
+            (
+                entry(strategy="sentinel", template="t", block="b", anchor="eof"),
+                "no sentinel handler",
+            ),
+        )
+        for e, text in cases:
+            with self.subTest(text=text), self.assertRaises(ManifestError) as caught:
+                handlers.for_entry(STUB, e)
+            self.assertIn(text, str(caught.exception))
+        self.assertTrue(issubclass(ManifestError, RuntimeError))
+
+    def test_every_stub_entry_has_its_handler(self):
+        engine.check_handlers(STUB)
+
+    def test_the_base_handler_does_nothing(self):
+        base = handlers.BaseHandler()
+        e = entry(strategy="whole", template="t")
+        self.assertIsNone(base.retract(None, e, "x", ""))
+        self.assertIsNone(base.absent(None, e, "x", ""))
+        self.assertIsNone(base.whole_precheck(None, e, "x", None))
+        self.assertEqual(base.validate(None, e, "x", ""), [])
+        self.assertIsNone(base.seed(None, e, None))
+        self.assertIsNone(base.lock_argv(None, None, []))
+        with self.assertRaises(ManifestError):
+            base.render(None, e, "x", None, None)
+
+    def test_item_defaults(self):
+        e = entry(strategy="whole", template="t", phase="a")
+        missing = handlers.item(e, "x", None, "y")
+        self.assertEqual(
+            (missing.code, missing.problem, missing.phase), (DRIFT, "missing", "a")
+        )
+        self.assertIs(missing.entry, e)
+        differs = handlers.item(e, "x", "a", "b")
+        self.assertEqual(differs.problem, "differs from the rendered file")
+        self.assertEqual(handlers.item(e, "x", "a", "a").code, CLEAN)
+
+
+class _Plan:
+    """The parts of a plan the lock handlers read."""
+
+    def __init__(self, root, floors_):
+        self.root = root
+        self.ctx = context.ns({"floors": floors_, "tools": ["ruff"]})
+
+
+class TestLockHandlers(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+    def test_uv_lock(self):
+        plan = _Plan(self.root, {"uv": {"ruff": "0.6.0", "pytest": "8.0.0"}})
+        e = entry(path="tools/uv.lock", strategy="seed", handler="uv-lock", floors="uv")
+        item = engine.Item("tools/uv.lock", "seed", None, None, entry=e)
+        every = handlers.UvLockHandler()
+        self.assertEqual(
+            every.lock_argv(plan, item, []), ["uv", "lock", "--project", "tools"]
+        )
+        (self.root / "tools").mkdir()
+        (self.root / "tools/uv.lock").write_text(
+            'version = 1\n[[package]]\nname = "ruff"\nversion = "0.5.0"\n'
+        )
+        self.assertEqual(
+            every.lock_argv(plan, item, []),
+            [
+                "uv",
+                "lock",
+                "--project",
+                "tools",
+                "--upgrade-package",
+                "pytest",
+                "--upgrade-package",
+                "ruff",
+            ],
+        )
+        self.assertEqual(
+            every.lock_problem(plan, e, "tools/uv.lock"),
+            "below its floor or missing from the lock: pytest, ruff",
+        )
+        only_tools = handlers.UvLockHandler(packages=lambda ctx: ctx.tools)
+        self.assertEqual(only_tools.floors(plan, e), {"ruff": "0.6.0"})
+        root_lock = engine.Item("uv.lock", "seed", None, None, entry=e)
+        self.assertEqual(
+            only_tools.lock_argv(plan, root_lock, []), ["uv", "lock", "--project", "."]
+        )
+
+    def test_npm_lock(self):
+        npm = handlers.NpmLockHandler()
+        base = ["npm", "install", "--package-lock-only", "--ignore-scripts"]
+        base += ["--no-audit", "--no-fund"]
+        item = engine.Item("package-lock.json", "seed", None, None)
+        self.assertEqual(npm.lock_argv(None, item, []), base)
+        item = engine.Item("web/package-lock.json", "seed", None, None)
+        self.assertEqual(npm.lock_argv(None, item, []), [*base, "--prefix", "web"])
+
+    def test_blame_problems(self):
+        git(self.root, "init", "-q")
+        git(self.root, "commit", "-q", "--allow-empty", "-m", "one")
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        text = f"# skip\n\n{head}  # one\n{'f' * 40}  # gone\nnot a line\n"
+        self.assertEqual(
+            handlers.blame_problems(self.root, text),
+            [
+                "line 5 is not `<40-hex sha>  # <subject>`: not a line",
+                f"{'f' * 40} is not reachable from HEAD",
+            ],
+        )
+
+
+def git(root, *args):
+    return subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "-C",
+            str(root),
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull},
+    ).stdout
+
+
+def _groups(ctx):
+    return {
+        "lint": [
+            (("tool", "ruff", "line-length"), 88),
+            (("tool", "ruff", "lint", "select"), ["F", "E"]),
+        ],
+        "cov": [(("tool", "coverage", "report", "show_missing"), True)],
+        "meta": [
+            (("project", "requires-python"), ">=3.11"),
+            (("tool", "deps"), {"core": ">=1"}),
+        ],
+    }
+
+
+GROUPS = TomlGroups(
+    groups=_groups,
+    on=lambda ctx, group: bool(ctx.modules.get(group)),
+    canon_tables=("tool.ruff", "tool.ruff.lint", "tool.coverage.report"),
+    head_tables=("project", "build-system", "tool.deps"),
+    key_order={("project",): ("name", "requires-python", "dependencies")},
+)
+
+
+def tctx(*on, history=(), previous=None):
+    every = ("lint", "cov", "meta")
+    return context.ns(
+        {
+            "modules": {m: m in on for m in every},
+            "cfg": {},
+            "history": context.History(
+                context.ns({"modules": {m: True for m in h}, "cfg": {}})
+                for h in history
+            ),
+            "previous": context.ns({"modules": {m: True for m in previous}, "cfg": {}})
+            if previous is not None
+            else None,
+        }
+    )
+
+
+def _extra(doc, ctx):
+    """An in-place edit beyond the groups: a key in ``[tool.ruff]`` when it exists."""
+    ruff = doc.get("tool", {}).get("ruff")
+    if ruff is not None:
+        ruff["extra"] = True
+
+
+class TestTomlMerge(unittest.TestCase):
+    TEXT = (
+        '[project]\nname = "x"\ndependencies = []\n\n'
+        '[build-system]\nrequires = ["flit_core"]\n\n'
+        "# the checkout's own\n[tool.mine]\nkeep = 1 # comment\n"
+    )
+
+    def merge(self, text, ctx):
+        return tomlmerge.merge(GROUPS, text, ctx, "pyproject.toml")
+
+    def test_tables_go_in_their_places(self):
+        out = self.merge(self.TEXT, tctx("lint", "cov", "meta")).text
+        self.assertEqual(
+            out,
+            '[project]\nname = "x"\nrequires-python = ">=3.11"\ndependencies = []\n\n'
+            '[build-system]\nrequires = ["flit_core"]\n\n'
+            "# the checkout's own\n\n"
+            '[tool.deps]\ncore = ">=1"\n\n'
+            "[tool.mine]\nkeep = 1 # comment\n\n"
+            "[tool.ruff]\nline-length = 88\n\n"
+            '[tool.ruff.lint]\nselect = ["F", "E"]\n\n'
+            "[tool.coverage.report]\nshow_missing = true\n",
+        )
+
+    def test_off_and_on_again_restores_the_bytes(self):
+        on = self.merge(self.TEXT, tctx("lint", "cov", "meta")).text
+        off = self.merge(on, tctx("meta", history=[("lint", "cov", "meta")])).text
+        self.assertNotIn("tool.ruff", off)
+        self.assertNotIn("coverage", off)
+        again = self.merge(off, tctx("lint", "cov", "meta")).text
+        self.assertEqual(again, on)
+
+    def test_never_on_retracts_nothing_and_edits_warn_once(self):
+        text = "[tool.ruff]\nline-length = 88\n\n[tool.ruff.lint]\nselect = ['B']\n"
+        merged = self.merge(text, tctx(history=[()]))
+        self.assertEqual((merged.text, merged.warnings), (text, []))
+        merged = self.merge(text, tctx(history=[("lint",)], previous=("lint",)))
+        # [tool.ruff] still holds its lint table, so its header stays.
+        self.assertEqual(
+            merged.text, "[tool.ruff]\n\n[tool.ruff.lint]\nselect = ['B']\n"
+        )
+        self.assertEqual(
+            merged.warnings,
+            [
+                (
+                    "pyproject.toml tool.ruff.lint.select is the app's now that lint is off"
+                    " (it differs from what sync wrote)"
+                )
+            ],
+        )
+
+    def test_an_exact_table_holds_exactly_its_keys(self):
+        text = '[tool.deps]\ncore = ">=0"\nextra = "1"\n'
+        out = self.merge(text, tctx("meta")).text
+        self.assertEqual(tomllib.loads(out)["tool"]["deps"], {"core": ">=1"})
+
+    def test_reconcile_seeds_baseline_extra_and_view(self):
+        groups = dataclasses.replace(
+            GROUPS,
+            reconcile=lambda ctx, path, have, rendered: (
+                max(have, rendered) if path[-1] == "line-length" else rendered
+            ),
+            baseline=lambda ctx, path, have, rendered: path[-1] == "requires-python",
+            seeds=lambda ctx, doc: (
+                [(("tool", "coverage", "report", "fail_under"), 0)]
+                if ctx.modules.get("cov")
+                else []
+            ),
+            extra=_extra,
+            view_extra=lambda doc, ctx: {"seeded": "fail_under" in str(doc)},
+        )
+        text = "[tool.ruff]\nline-length = 120\n\n[tool.coverage.report]\nfail_under = 40\n"
+        out = tomlmerge.merge(groups, text, tctx("lint", "cov"), "p").text
+        doc = tomllib.loads(out)
+        self.assertEqual(doc["tool"]["ruff"]["line-length"], 120)
+        self.assertEqual(doc["tool"]["coverage"]["report"]["fail_under"], 40)
+        self.assertIs(doc["tool"]["ruff"]["extra"], True)
+        fresh = tomllib.loads(tomlmerge.merge(groups, "", tctx("cov"), "p").text)
+        self.assertEqual(fresh["tool"]["coverage"]["report"]["fail_under"], 0)
+        view = tomlmerge.managed_view(groups, doc, tctx("lint", "cov"))
+        self.assertEqual(view["tool.ruff.line-length"], 120)
+        self.assertTrue(view["seeded"])
+        kept = '[project]\nrequires-python = ">=3.11"\n'
+        off = tomlmerge.merge(groups, kept, tctx(history=[("meta",)]), "p")
+        self.assertEqual(off.text, kept)
+
+    def test_add_table(self):
+        text = '[project]\nname = "x"\n\n[tool.other]\na = 1\n\n[[bin]]\nb = 2\n'
+        out = tomlmerge.add_table(
+            STUB, text, {"schema": 1, "profile": "minimal", "x": [{"a": "b"}]}
+        )
+        self.assertEqual(
+            out,
+            '[project]\nname = "x"\n\n[tool.other]\na = 1\n\n'
+            '[tool.stub-nix]\nschema = 1\nprofile = "minimal"\nx = [{ a = "b" }]\n\n'
+            "[[bin]]\nb = 2\n",
+        )
+        self.assertEqual(
+            tomlmerge.add_table(STUB, "", {"schema": 1}),
+            "[tool.stub-nix]\nschema = 1\n",
+        )
+
+    def test_the_handler_reports_and_creates(self):
+        handler = TomlMergeHandler("t", GROUPS)
+        self.assertEqual((handler.strategies, handler.merged), (("toml-merge",), True))
+        self.assertFalse(handler.creates_table)
+
+
+FLAKE = """{
+  inputs = {
+    stub-nix.url = "github:Example/Stub-Nix/release-1";
+    nixpkgs.follows = "stub-nix/nixpkgs";
+    self.submodules = true;
+    core = { url = "github:example/core/18.0"; flake = false; };
+    "my.unit" = {
+      url = "git+https://git.example.org/u.git?ref=main";
+      flake = false;
+    };
+    bare = {
+      flake = false;
+    };
+    # stub-nix:local-begin inputs
+    extra.url = "path:/x";
+    # stub-nix:local-end inputs
+  };
+
+  outputs = inputs: { };
+}
+"""
+
+
+class TestFlakeInputs(unittest.TestCase):
+    def test_flake_input_specs(self):
+        self.assertEqual(
+            engine.flake_input_specs(FLAKE),
+            {
+                "bare": None,
+                "core": "github:example/core/18.0",
+                "extra": "path:/x",
+                "my.unit": "git+https://git.example.org/u.git?ref=main",
+                "nixpkgs": "follows:stub-nix/nixpkgs",
+                "stub-nix": "github:example/stub-nix/release-1",
+            },
+        )
+        self.assertEqual(engine.flake_input_specs("{ }"), {})
+
+    def test_locked_spec_and_stale_inputs(self):
+        lock = {
+            "root": "root",
+            "nodes": {
+                "root": {"inputs": {"a": "a", "b": ["a", "nixpkgs"], "g": "g"}},
+                "a": {
+                    "original": {
+                        "type": "github",
+                        "owner": "O",
+                        "repo": "R",
+                        "ref": "x",
+                    }
+                },
+                "g": {
+                    "original": {"type": "git", "url": "https://h/r.git", "ref": "m"}
+                },
+            },
+        }
+        self.assertEqual(engine.locked_spec(lock, "a"), "github:o/r/x")
+        self.assertEqual(
+            engine.locked_spec(lock, ["a", "nixpkgs"]), "follows:a/nixpkgs"
+        )
+        self.assertEqual(engine.locked_spec(lock, "g"), "git+https://h/r.git?ref=m")
+        self.assertIsNone(engine.locked_spec(lock, "missing"))
+        wanted = {
+            "a": "github:o/r/y",
+            "b": "follows:a/nixpkgs",
+            "c": None,
+            "g": None,
+        }
+        self.assertEqual(
+            engine.stale_inputs(lock, wanted),
+            ["a (locked from github:o/r/x, flake.nix has github:o/r/y)", "c (no node)"],
+        )
+        self.assertEqual(engine.stale_inputs(lock, wanted, skip=("a", "c")), [])
+
+    def test_strip_nix_comments(self):
+        self.assertEqual(
+            engine.strip_nix_comments('a = "#x"; # gone\nb = 1;'), 'a = "#x"; \nb = 1;'
+        )
+
+
+class TestFixtures(unittest.TestCase):
+    def test_throwaway(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            profile = work / "profile"
+            profile.mkdir()
+            (profile / "profile.toml").write_text("x = 1\n")
+            root = fixtures.throwaway(
+                STUB, work, profile, "with-extras", STUB.fixtures["with-extras"]
+            )
+            text = (root / "pyproject.toml").read_text()
+            self.assertIn('profile = "./.standards-profile"', text)
+            self.assertIn("extras.enable = true", text)
+            self.assertTrue((root / ".standards-profile/profile.toml").is_file())
+            self.assertTrue((root / "tests/test_unit.py").is_file())
+            log = git(root, "log", "--format=%an %s").split("\n")
+            self.assertEqual(log[0], "profile-validate with-extras")
+            self.assertEqual(git(root, "status", "--porcelain"), "")
+            other = fixtures.throwaway(
+                STUB, work, None, "plain", Fixture(""), profile="minimal"
+            )
+            self.assertNotEqual(other, root)
+            self.assertIn('profile = "minimal"', (other / "pyproject.toml").read_text())
+
+    def test_a_product_without_fixtures(self):
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(RuntimeError):
+            fixtures.throwaway(KIT, Path(tmp), None, "x", Fixture(""))
+
+    def test_git_failures_are_environment_errors(self):
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(EnvError):
+            fixtures.git(Path(tmp) / "missing", "status")

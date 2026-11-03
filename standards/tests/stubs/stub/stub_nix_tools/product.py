@@ -2,7 +2,9 @@
 
 Its configuration hooks mirror a framework product's: a required ``major`` key that
 names the release branch (``version-<major>``), a derived ``site``, and a version scheme
-whose major is that key. Its engine hooks arrive with stage 3 (DESIGN §12).
+whose major is that key. Its engine hooks: ``pyproject.toml``'s key groups (``[tool.ruff]``
+for python-lint, ``[tool.coverage.*]`` for tests, with a ``fail_under`` seed), two
+fixture checkouts, and the first-opt-in files ``flake.nix`` and ``.envrc``.
 """
 
 from __future__ import annotations
@@ -14,10 +16,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from standards_core.common.report import ConfigError
+from standards_core.common.report import INVALID, ConfigError
 from standards_core.product import (
     Branching,
     Engine,
+    FirstOptIn,
+    Fixture,
     Hooks,
     Identity,
     Level,
@@ -27,6 +31,7 @@ from standards_core.product import (
     Product,
 )
 from standards_core.scaffold.context import Checkout, default_load_checkout
+from standards_core.scaffold.tomlmerge import TomlGroups, TomlMergeHandler
 from stub_nix_tools import __version__
 
 IDENTITY = Identity(
@@ -79,6 +84,8 @@ PINS = Pins(
             "pilot": ("example", "pilot"),
         }
     ),
+    lock_paths=("tools/uv.lock",),
+    managed_inputs=lambda ctx: ("stub-nix", "nixpkgs", "standards-profile"),
 )
 
 MODULES = Modules(
@@ -169,6 +176,164 @@ class StubMajor:
         return self.valid(tag.removeprefix("v"), cfg, facts)
 
 
+# --- pyproject.toml: the managed keys -----------------------------------------------
+
+COVERAGE_OMIT = ["*/tests/*"]
+
+
+def _coverage_on(ctx: Any) -> bool:
+    tests = ctx.cfg.get("tests") or {}
+    coverage = tests.get("coverage") or {}
+    return bool(ctx.modules.get("tests")) and bool(coverage.get("enable", True))
+
+
+def toml_on(ctx: Any, group: str) -> bool:
+    """``python-lint`` while that module is on; ``tests`` with coverage enabled."""
+    if group == "tests":
+        return _coverage_on(ctx)
+    return bool(ctx.modules.get(group))
+
+
+def toml_groups(ctx: Any) -> dict[str, list[tuple[tuple[str, ...], Any]]]:
+    lint = ctx.cfg["python-lint"]
+    coverage = ctx.cfg["tests"]["coverage"]
+    return {
+        "python-lint": [
+            (("tool", "ruff", "line-length"), lint["line-length"]),
+            (("tool", "ruff", "lint", "select"), list(lint["select"])),
+            (("tool", "ruff", "lint", "ignore"), list(lint["ignore"])),
+        ],
+        "tests": [
+            (("tool", "coverage", "run", "omit"), [*COVERAGE_OMIT, *coverage["omit"]]),
+            (("tool", "coverage", "report", "show_missing"), True),
+        ],
+    }
+
+
+def toml_seeds(ctx: Any, doc: dict) -> list[tuple[tuple[str, ...], Any]]:
+    """``fail_under`` from ``tests.coverage.initial-floor``, once: the checkout's then."""
+    if not _coverage_on(ctx):
+        return []
+    floor = ctx.cfg["tests"]["coverage"]["initial-floor"]
+    return [(("tool", "coverage", "report", "fail_under"), floor)]
+
+
+def toml_view(doc: dict, ctx: Any) -> dict[str, Any]:
+    if not _coverage_on(ctx):
+        return {}
+    report = (doc.get("tool") or {}).get("coverage", {}).get("report", {})
+    return {"fail_under present": "fail_under" in report}
+
+
+def toml_baseline(ctx: Any, path: tuple[str, ...], have: Any, rendered: Any) -> bool:
+    """What a new unit's generator writes is the checkout's own: ``line-length = 88``."""
+    return path == ("tool", "ruff", "line-length") and have == 88
+
+
+def toml_problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
+    out: list[tuple[int, str]] = []
+    tool = doc.get("tool") or {}
+    if ctx.modules.get("python-lint"):
+        ruff = tool.get("ruff") or {}
+        for table, keys in (
+            ("[tool.ruff]", ruff),
+            ("[tool.ruff.lint]", ruff.get("lint") or {}),
+        ):
+            if "extend-select" in keys:
+                out.append(
+                    (
+                        INVALID,
+                        (
+                            f"{table}.extend-select is forbidden: change the rule set"
+                            " through [tool.stub-nix.python-lint]"
+                        ),
+                    )
+                )
+    if _coverage_on(ctx):
+        fail = (tool.get("coverage") or {}).get("report", {}).get("fail_under")
+        if fail is not None and (
+            isinstance(fail, bool)
+            or not isinstance(fail, int | float)
+            or not 0 <= fail <= 100
+        ):
+            out.append(
+                (
+                    INVALID,
+                    "[tool.coverage.report].fail_under must be a number from 0 to 100",
+                )
+            )
+    return out
+
+
+PYPROJECT = TomlMergeHandler(
+    "stub-pyproject",
+    TomlGroups(
+        groups=toml_groups,
+        on=toml_on,
+        canon_tables=(
+            "tool.ruff",
+            "tool.ruff.lint",
+            "tool.coverage.run",
+            "tool.coverage.report",
+        ),
+        head_tables=("project", "build-system"),
+        baseline=toml_baseline,
+        seeds=toml_seeds,
+        view_extra=toml_view,
+        problems=toml_problems,
+    ),
+    creates_table=True,
+)
+
+
+# --- fixtures and first opt-in -------------------------------------------------------
+
+FIXTURES = MappingProxyType(
+    {
+        "plain": Fixture(table=""),
+        "with-extras": Fixture(
+            table="extras.enable = true\n",
+            files=MappingProxyType(
+                {"tests/test_unit.py": "def test_unit():\n    pass\n"}
+            ),
+            requires=("commits",),
+        ),
+    }
+)
+
+
+def write_fixture(root: Path, name: str, fixture: Fixture, profile: str) -> None:
+    """A fixture checkout: ``pyproject.toml`` with the table (``major`` is required),
+    then the fixture's files."""
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "ctx_unit"\ndescription = "A fixture checkout"\n'
+        "dependencies = []\n\n"
+        f'[tool.stub-nix]\nschema = 1\nprofile = "{profile}"\nmajor = 16\n'
+        + fixture.table
+    )
+    for rel, text in fixture.files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+
+
+# What stub-init wrote before the checkout opted in: replaced without --force.
+LEGACY_FLAKE = '{\n  inputs.stub-nix.url = "github:example/stub-nix";\n  outputs = inputs: inputs.stub-nix.lib.mkFlake { inherit inputs; };\n}\n'
+LEGACY_ENVRC = "use flake . --no-pure-eval\n"
+
+FIRST_OPT_IN = (
+    FirstOptIn(
+        path="flake.nix",
+        hint="Keep custom inputs in the flake.nix `inputs` local region.",
+        legacy=lambda current, checkout: [LEGACY_FLAKE],
+    ),
+    FirstOptIn(
+        path=".envrc",
+        hint="Keep your own direnv lines in the .envrc `envrc` local region.",
+        legacy=lambda current, checkout: [LEGACY_ENVRC],
+    ),
+)
+
+
 def load_checkout(root: Path) -> Checkout:
     return default_load_checkout(PRODUCT, root)
 
@@ -222,7 +387,11 @@ PRODUCT = Product(
         gates=gates,
         template_globals=template_globals,
         derive=derive,
+        write_fixture=write_fixture,
     ),
     branching=BRANCHING,
     version_schemes=MappingProxyType({"stub-major": StubMajor()}),
+    handlers=MappingProxyType({"stub-pyproject": PYPROJECT}),
+    first_opt_in=FIRST_OPT_IN,
+    fixtures=FIXTURES,
 )

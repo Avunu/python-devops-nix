@@ -1,9 +1,12 @@
-"""Fakes and helpers for product test suites: a fake GitHub, an in-process CLI run, git.
+"""Fakes and helpers for product test suites: a fake GitHub, an in-process CLI run, git,
+and the locks an offline sync leaves to Nix and uv.
 
 ``FakeGitHub`` replaces ``standards_core.common.github``'s transport
 (``github.use(fake)``), so no test needs the network or ``gh``. ``run_cli`` runs a
 product's command line in-process and captures its output. ``git`` runs git in a
-throwaway repository as a fixed user, with no detached maintenance.
+throwaway repository as a fixed user, with no detached maintenance. ``flake_lock``
+builds a ``flake.lock`` for the inputs a rendered ``flake.nix`` declares, and
+``uv_lock`` a ``uv.lock`` holding given package versions.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -113,3 +117,68 @@ def git(root: Path, *args: str) -> str:
         capture_output=True,
         text=True,
     ).stdout
+
+
+REV = "a" * 40
+
+
+def _forge_node(kind: str, owner: str, name: str, ref: str | None, rev: str) -> dict:
+    original = {"type": kind, "owner": owner, "repo": name}
+    if ref:
+        original["ref"] = ref
+    return {
+        "locked": {
+            "type": kind,
+            "owner": owner,
+            "repo": name,
+            "rev": rev,
+            "narHash": "sha256-x",
+        },
+        "original": original,
+    }
+
+
+def flake_lock(flake_text: str, *, rev: str = REV) -> dict:
+    """A ``flake.lock`` that locks every input ``flake_text`` (a rendered ``flake.nix``)
+    declares, from the URL or ``follows`` it gives: what ``nix flake lock`` would leave,
+    each forge input at ``rev``."""
+    from standards_core.scaffold import engine
+
+    nodes: dict = {}
+    inputs: dict = {}
+    for name, spec in engine.flake_input_specs(flake_text).items():
+        if spec is not None and spec.startswith("follows:"):
+            inputs[name] = spec.removeprefix("follows:").split("/")
+            continue
+        forge = re.fullmatch(
+            r"(github|gitlab):([^/?]+)/([^/?]+)(?:/([^?]+))?", spec or ""
+        )
+        if forge:
+            nodes[name] = _forge_node(forge[1], forge[2], forge[3], forge[4], rev)
+        elif spec is not None and spec.startswith("git+"):
+            url = spec.removeprefix("git+")
+            nodes[name] = {
+                "locked": {
+                    "type": "git",
+                    "url": url,
+                    "rev": rev,
+                    "narHash": "sha256-x",
+                },
+                "original": {"type": "git", "url": url},
+            }
+        else:
+            nodes[name] = {
+                "locked": {"type": "path", "path": "/x", "narHash": "sha256-x"},
+                "original": {"type": "path", "path": "/x"},
+            }
+        inputs[name] = name
+    nodes["root"] = {"inputs": inputs}
+    return {"nodes": nodes, "root": "root", "version": 7}
+
+
+def uv_lock(packages: dict[str, str], requires_python: str = ">=3.11") -> str:
+    """A ``uv.lock`` locking ``packages`` (name → version), as ``uv lock`` lays one out."""
+    body = f'version = 1\nrevision = 3\nrequires-python = "{requires_python}"\n'
+    for name, version in sorted(packages.items()):
+        body += f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n'
+    return body

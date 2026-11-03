@@ -265,7 +265,13 @@ def build(
                 "url": engine_url(product, cfg),
             },
             "floors": dict(floors),
-            "options": {"force": bool(opts.pop("force", False)), **opts},
+            "options": {
+                "force": bool(opts.pop("force", False)),
+                # A fixture checkout's sync (profile validate, conformance): products
+                # may accept there what only a real lock run would settle.
+                "throwaway": bool(opts.pop("throwaway", False)),
+                **opts,
+            },
             "first_commit_year": first_commit_year(checkout.root),
             "unmanaged_dirs": list(product.paths.not_source),
         }

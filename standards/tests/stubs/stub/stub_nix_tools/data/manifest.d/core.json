@@ -94,7 +94,8 @@
         "python-lint.ignore",
         "python-lint.line-length",
         "tests.coverage.initial-floor"
-      ]
+      ],
+      "handler": "stub-pyproject"
     },
     {
       "path": ".git-blame-ignore-revs",

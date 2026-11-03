@@ -1,8 +1,14 @@
-"""``<cli> profile show|list``: profiles, resolved and listed.
+"""``<cli> profile show|validate|list``: profiles, resolved, checked and listed.
 
 ``show`` prints the checkout's resolved configuration and its module switches;
 ``--explain`` adds, per value, the layer that set it (``builtin:recommended@1.0``,
 ``org:<source>@<rev>``, ``app`` or ``default``), which answers "why is this gate on".
+
+``validate <profile.toml>`` checks an org profile on its own, before it is published:
+its schema, its ``extends``, its version range, and that the product's managed files and
+every template in its ``templates/`` render for each of the product's fixture
+checkouts (``Product.fixtures``), each a throwaway git repository using the profile
+in-repo.
 
 ``list`` prints ``minimal`` and every ``recommended@<minor>`` snapshot with its
 description, marking the one plain ``recommended`` means.
@@ -14,15 +20,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import tempfile
+import tomllib
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import jinja2
 import tomlkit
 
 from standards_core.commands import help_text
 from standards_core.commands.config import add_source_arguments, resolve_args
 from standards_core.common import config
-from standards_core.common.report import CLEAN, ConfigError
+from standards_core.common.report import CLEAN, ConfigError, EnvError
+from standards_core.scaffold import engine, fixtures
+from standards_core.scaffold import render as rendering
 
 if TYPE_CHECKING:
     from standards_core.product import Product
@@ -109,6 +122,72 @@ def show(args: argparse.Namespace) -> int:
     return CLEAN
 
 
+def validate(args: argparse.Namespace) -> int:
+    product = args.product
+    identity = product.identity
+    path = Path(args.file)
+    try:
+        doc = tomllib.loads(path.read_text())
+    except FileNotFoundError as e:
+        raise EnvError(f"{path} does not exist") from e
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path}: {e}") from e
+    label = f"profile {path}"
+    config.validate_profile(product, doc, label, org=True)
+    config.builtin_profile(product, doc["extends"])
+    config.check_requires(product, doc.get(identity.requires_key), label)
+    templates = Path(args.templates) if args.templates else path.parent / "templates"
+    options = {
+        "force": False,
+        "throwaway": True,
+        **product.sync.options(argparse.Namespace()),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        profile = work / "profile"
+        profile.mkdir()
+        (profile / "profile.toml").write_text(path.read_text())
+        if templates.is_symlink():
+            raise ConfigError(
+                f"{templates} is a symlink: a profile's templates are read only as"
+                " regular files"
+            )
+        if templates.is_dir():
+            # A link in it is refused here, as sync refuses it, rather than copied.
+            rendering.template_files(templates)
+            shutil.copytree(templates, profile / "templates", symlinks=True)
+        checkouts = work / "checkouts"
+        checkouts.mkdir()
+        plain: engine.Plan | None = None
+        for name, fixture in product.fixtures.items():
+            if fixture.requires and plain is not None:
+                # A fixture that needs modules the profile leaves off would be exit 2
+                # by design.
+                modules = plain.resolved.modules
+                if not all(modules.get(m) for m in fixture.requires):
+                    continue
+            root = fixtures.throwaway(product, checkouts, profile, name, fixture)
+            # Resolution checks the needs under the profile's own switches, and the
+            # plan checks [[extra-files]], every override's place and every [[retire]].
+            try:
+                plan = engine.build(product, root, options=options)
+            except ConfigError as e:
+                raise ConfigError(f"the {name} checkout: {e}") from e
+            plain = plain or plan
+            directory = profile / "templates"
+            files = rendering.template_files(directory) if directory.is_dir() else []
+            for file in files:
+                rel = file.relative_to(directory).as_posix()
+                try:
+                    rendering.render(product, rel, plan.ctx, None, directory=directory)
+                except (jinja2.TemplateError, ConfigError) as e:
+                    raise ConfigError(
+                        f"templates/{rel} does not render for the {name} checkout: {e}"
+                    ) from e
+    print(f"{path}: valid (extends {doc['extends']})")
+    return CLEAN
+
+
 def list_profiles(args: argparse.Namespace) -> int:
     """Each built-in with its description, marking the one plain ``recommended`` means."""
     product = args.product
@@ -128,11 +207,13 @@ def list_profiles(args: argparse.Namespace) -> int:
 def register(subparsers: argparse._SubParsersAction, product: Product) -> None:
     p = subparsers.add_parser(
         "profile",
-        help="show the resolved profile, list the built-ins",
+        help="show the resolved profile, validate an org profile, list the built-ins",
         description=help_text(product, "profile", __doc__ or ""),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    sub = p.add_subparsers(dest="profile_command", metavar="<show|list>", required=True)
+    sub = p.add_subparsers(
+        dest="profile_command", metavar="<show|validate|list>", required=True
+    )
     s = sub.add_parser(
         "show",
         help=help_text(
@@ -154,6 +235,28 @@ def register(subparsers: argparse._SubParsersAction, product: Product) -> None:
     )
     add_source_arguments(product, s, "profile show")
     s.set_defaults(func=show)
+    v = sub.add_parser(
+        "validate",
+        help=help_text(
+            product,
+            "profile validate",
+            "check an org profile before it is published",
+        ),
+    )
+    v.add_argument(
+        "file",
+        metavar="profile.toml",
+        help=help_text(product, "profile validate file", None),
+    )
+    v.add_argument(
+        "--templates",
+        help=help_text(
+            product,
+            "profile validate --templates",
+            "its template directory (default: templates/ beside the file)",
+        ),
+    )
+    v.set_defaults(func=validate)
     ls = sub.add_parser(
         "list", help=help_text(product, "profile list", "the built-in profiles")
     )

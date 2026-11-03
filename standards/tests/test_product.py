@@ -91,7 +91,7 @@ class TestDefaults(unittest.TestCase):
             CiConfig().labels,
             CiConfig().arg_aliases,
             STUB.header_kinds,
-            STUB.handlers,
+            KIT.handlers,
             STUB.help,
         ):
             self.assertIsInstance(mapping, MappingProxyType)
@@ -125,7 +125,7 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(hooks.pr_checks(None), [])
         self.assertEqual(hooks.render_helpers({}, None), {})
         self.assertEqual(STUB.sync.passthrough(None, True), [])
-        self.assertEqual(STUB.pins.managed_inputs({}), ())
+        self.assertEqual(KIT.pins.managed_inputs({}), ())
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertEqual(hooks.committed_argv(root), ["committed"])
@@ -267,12 +267,16 @@ class TestPostInitRules(unittest.TestCase):
         )
 
     def test_fixtures_and_write_fixture_go_together(self):
+        bare = replace(STUB.hooks, write_fixture=None)
         self.refused(
-            "fixtures and hooks.write_fixture", fixtures={"plain": Fixture("")}
+            "fixtures and hooks.write_fixture",
+            hooks=bare,
+            fixtures={"plain": Fixture("")},
         )
         hooks = replace(STUB.hooks, write_fixture=lambda *a: None)
-        self.refused("fixtures and hooks.write_fixture", hooks=hooks)
+        self.refused("fixtures and hooks.write_fixture", hooks=hooks, fixtures={})
         product(hooks=hooks, fixtures={"plain": Fixture("")})
+        product(hooks=bare, fixtures={})
 
     def test_data_root(self):
         self.refused("data_root", data_root=Path("/nonexistent/stub-data"))

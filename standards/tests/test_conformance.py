@@ -1,5 +1,5 @@
-"""The conformance check (DESIGN §11.4), static part: both stubs conform, and a broken
-copy of the stub fails each rule."""
+"""The conformance check (DESIGN §11.4), static and render parts: both stubs conform,
+and a broken copy of the stub fails each rule."""
 
 import contextlib
 import dataclasses
@@ -11,7 +11,9 @@ from pathlib import Path
 
 from support import KIT, STUB, product_copy
 
-from standards_core.product import CiConfig, Modules
+from standards_core.common import repo
+from standards_core.product import CiConfig, Fixture, Modules
+from standards_core.scaffold import handlers
 from standards_core.testing import conformance
 
 
@@ -161,6 +163,121 @@ class TestBrokenCopies(unittest.TestCase):
         )
         template.write_text("export STUB_NIX_ALLOW_SKEW=1\n")
         self.assertFalse([p for p in self.problems() if "core variable" in p])
+
+
+class Drifting(handlers.WholeHandler):
+    """Renders the commit it runs on: stable within one sync, changed by the next."""
+
+    name = "drifting"
+
+    def render(self, plan, entry, path, current, templates):
+        head = repo.git(plan.root, "rev-parse", "HEAD").strip()
+        return [handlers.item(entry, path, current, f"{head}\n")]
+
+
+class AlwaysShort(handlers.SeedHandler):
+    """A lock seed no lock satisfies: --write --offline leaves it, --check reports it."""
+
+    name = "always-short"
+
+    def lock_problem(self, plan, entry, path):
+        return "never enough"
+
+
+class TestRenderPart(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def copy(self, entries=(), **changes):
+        product = product_copy(STUB, Path(self.tmp.name), **changes)
+        if entries:
+            (product.data_root / "manifest.d" / "zz.json").write_text(
+                json.dumps({"entries": list(entries)})
+            )
+        return product
+
+    def assertProblem(self, product, text):
+        problems = conformance.check(product)
+        self.assertTrue(any(text in p for p in problems), problems)
+
+    def test_every_fixture_syncs(self):
+        fixtures = {**STUB.fixtures, "broken": Fixture(table="nope = 1\n")}
+        self.assertProblem(
+            self.copy(fixtures=fixtures),
+            "fixture broken x minimal: sync --write --offline exited 2",
+        )
+
+    def test_a_second_write_changes_nothing(self):
+        product = self.copy(
+            [
+                {
+                    "path": "DRIFT.md",
+                    "template": "CONTRIBUTING.md.j2",
+                    "strategy": "whole",
+                    "handler": "drifting",
+                    "module": "dev-shell",
+                }
+            ],
+            handlers={**STUB.handlers, "drifting": Drifting()},
+        )
+        self.assertProblem(
+            product, "fixture plain x minimal: a second sync --write changed DRIFT.md"
+        )
+
+    def test_check_is_clean_after_write(self):
+        product = self.copy(
+            [
+                {
+                    "path": "x.lock",
+                    "strategy": "seed",
+                    "handler": "always-short",
+                    "command": "make-lock",
+                    "module": "dev-shell",
+                }
+            ],
+            handlers={**STUB.handlers, "always-short": AlwaysShort()},
+        )
+        self.assertProblem(
+            product,
+            "fixture plain x minimal: sync --check after --write exited 1: x.lock"
+            " (seed): never enough",
+        )
+
+    def test_the_static_part_alone(self):
+        fixtures = {**STUB.fixtures, "broken": Fixture(table="nope = 1\n")}
+        self.assertEqual(
+            conformance.check(self.copy(fixtures=fixtures), render=False), []
+        )
+
+    def test_a_static_problem_skips_the_render_part(self):
+        product = self.copy(fixtures={"broken": Fixture(table="nope = 1\n")})
+        (product.data_root / "templates" / "envrc.j2").unlink()
+        problems = conformance.check(product)
+        self.assertEqual(len(problems), 1, problems)
+
+    def test_a_product_without_fixtures_has_no_render_part(self):
+        self.assertEqual(conformance._render(KIT), [])
+
+    def test_anchors(self):
+        flake = '{\n  inputs = {\n    a.url = "x";\n  };\n  outputs = { };\n}\n'
+        toml = '[project]\nname = "x"\ndependencies = [\n]\n\n[tool.x]\nlist = []\n'
+        for anchor, text, found in (
+            ("eof", "", True),
+            ("nix-attrset inputs", flake, True),
+            ("nix-attrset outputs", flake, True),
+            ("nix-attrset inputs.a", flake, False),
+            ("nix-attrset nope", flake, False),
+            ("toml-array project.dependencies", toml, True),
+            ("toml-array tool.x.list", toml, True),
+            ("toml-array project.optional", toml, False),
+            ("toml-array tool.y.list", toml, False),
+            ("toml-array .deps", "deps = [\n]\n", True),
+            ("toml-array project.dependencies", 'project.dependencies = ["a"]\n', True),
+            ("other x", toml, False),
+        ):
+            with self.subTest(anchor=anchor):
+                self.assertEqual(conformance.anchor_found(anchor, text), found)
 
 
 class TestModulesCheckUsesTheProductsNames(unittest.TestCase):

@@ -2281,3 +2281,220 @@ Deviations made while implementing, with the reason for each.
   `test_scaffold.py` gains manifest, render and context cases for the modules this stage adds (the engine-level rest
   of `test_scaffold.py` stays with stage 3). `test_profiles.py` also covers `profile show/list` and the
   changed-defaults warning (`scaffold/defaults.py`).
+
+
+### Stage 3
+
+- **The engine is ported whole.** History and `ever`, retract per handler, the retire rules (`only_sections`,
+  braces), floors and the first-opt-in refusal with its message template come with stage 3: they are branches of
+  the same frappe functions (`_entry_item`, `_retract`, `_absent`, `_retired`) the engine and the handlers are
+  built from, and the ported `test_sync.py` cases (retire, floors, local regions) need them. Stage 4 adds
+  `test_standards.py` over them.
+- **Flake inputs before `nixattrs.py`.** `input_spec`, `locked_spec`, `strip_nix_comments` and
+  `flake_input_specs` (frappe's regular expressions, plus `self` excluded, §5.6.4) live in `scaffold/engine.py`
+  so `--check`'s `lock_problems` works now; stage 5's scanner replaces them and they move to `nixattrs.py`.
+- **Offline phase A only.** Without `--offline`, phase A runs steps 1, 2, 4 and 7 as with `--skip-lock`; the
+  release-branch check, the lock, the rebuild against the locked profile and the re-exec are stage 6's. So are
+  `--expect-rev` and the skew rows: `sync` has no `--expect-rev` flag yet. `bootstrap.py` already has `handover`,
+  `override_url`, `nix_args`, `reentry_argv` and the lock-changed helpers, because `ensure_tools` needs them.
+- **`Item.entry`** (not compared, not printed): the manifest entry an item was rendered for, so phase B's lock step
+  finds the handler's `lock_argv` and the entry's `relock_when`. `Plan` carries `product`, `checkout` (frappe's
+  `app`) and `templates` (the org profile's `templates/`, which `retract` and `absent` read: their protocol
+  signatures have no `templates`). frappe's `Plan.version` is Frappe-only and dropped.
+- **Handler registry.** `handlers.core_handlers()` holds a base per strategy name; `toml-merge` and `json-merge`
+  map to a placeholder that refuses (a product registers its `TomlMergeHandler`/`JsonGroupsHandler` under its own
+  name), and so do `jsonc-merge` and `sentinel` until stage 5. `handlers.for_entry` also refuses a handler that does
+  not serve the entry's strategy; each refusal is a `ManifestError` (exit 3). `engine.check_handlers(product)` runs
+  it over the manifest. `SeedHandler` gains `lock_problem(plan, entry, path)` (what a command seed on disk lacks:
+  `UvLockHandler`'s floors) and `seed_text`. `NpmLockHandler.lock_argv` runs in the lock's directory through
+  `--prefix <dir>`.
+- **`tomlmerge.py`.** `merge(groups, text, ctx, path)`, `managed_view(groups, doc, ctx)` and
+  `add_table(product, text, values)`: `add_table` lives here (§2.3), not in `common/pyproject.py` (§2.5), with
+  the TOML text machinery it uses. `TomlGroups.on` is also asked about each committed state and about `previous`
+  (namespaces with `modules` and `cfg` only). `seeds` are written after every group, where missing. The turn-off
+  warning keeps §5.3's text ("the app's", with the entry's path), and `jsonmerge` uses the same text; the whole-file
+  and seed notices, which no parity output compares, say "the checkout's".
+- **`jsonmerge.py`.** `JsonGroupsHandler.merge(plan, doc, path)` is the point a product subclass extends (frappe's
+  scripts and retired steps). An emptied parent object is removed with its last managed key.
+- **Fixtures.** `fixtures.throwaway(product, root, profile_dir, name, fixture, *, profile=None)`: `profile` names a
+  built-in for a throwaway with no org profile directory (the conformance render part). `fixtures.commit` and
+  `fixtures.git` run git in the isolated environment.
+- **Conformance, render part.** `check(product, *, render=True)`; the render part runs only when the static part
+  found nothing. The locks an offline sync leaves are faked with `testing.fakes.flake_lock` (from the rendered
+  `flake.nix`) and, per command seed, `fakes.uv_lock` at a `UvLockHandler`'s floors (any other lock seed: an empty
+  file). The `seed_template` anchor rule is textual (`conformance.anchor_found`) until stage 5's scanners.
+- **`sync`.** Product flags in `passthrough` follow `--offline`. `profile validate` builds its plans with
+  `{"force": False, "throwaway": True, **sync.options(Namespace())}`.
+- **Stub.** The stub gains its stage-3 hooks: the `stub-pyproject` `TomlMergeHandler` (`[tool.ruff]` for
+  python-lint, `[tool.coverage.*]` for tests with a `fail_under` seed, a `line-length = 88` baseline, rules on
+  `extend-select` and `fail_under`), the `plain` and `with-extras` fixtures (`with-extras` requires `commits`) with
+  `write_fixture`, `first_opt_in` for `flake.nix` and `.envrc` with one legacy text each,
+  `pins.lock_paths = ("tools/uv.lock",)` and `pins.managed_inputs`. `test_product.py` asserts the defaults on the
+  kit where the stub now sets a value.
+- **§15 requests in the stage-3 code.** CR1: the engine and `sync` read the config file through
+  `engine.config_file(product, root)`, which wraps `pyproject.config_path` (history, committed states,
+  `entries_for`, the created-table item, the error path, `_create_table`, which creates the file only where its
+  directory exists); every resolution passes the checkout. `Identity.config_paths`, `Hooks.config_file` and
+  `config.resolve`'s root are stage 10's retrofit. CR2: `context.build` always sets `options.throwaway` (`False`),
+  `profile validate` and the conformance render part set it, the latter through a hidden `sync --throwaway`. CR5:
+  `Runner.unstaged` holds the tracked paths with unstaged changes when the run starts; sync writes them but never
+  stages them, and prints `"<path>: left unstaged: it had changes of yours"` at the end.
+- **Tests beyond the stage's list.** `test_scaffold.py` gains the engine's parts (managed paths, `Item`, handlers,
+  lock handlers, `TomlGroups`, flake inputs, fixtures); `test_profiles.py` covers `profile validate`; `test_sync.py`
+  also covers retraction, the shallow-clone exit 3, `--standards`, symlinks, the product sync hooks and flag slots,
+  `--phase`, the repo-settings notice, CR2 and CR5. Frappe-only cases are not ported (package.json, init-py,
+  discovery, zizmor, node locks, sites).
+- **Parity harness.** `parity/frappe/check.py <frappe-nix checkout>` (run with Python 3.12: frappe-nix-tools needs
+  it) compares the header lines, the three report formats, `sync --check --format json` (outside a checkout, and
+  the key order on an opted-in fixture) and `profile show --format json` (document keys, `profile`, the order of the
+  shared `config` keys). Against frappe-nix-tools 2.2.1: no difference.
+
+## 15. Change requests from the first product plugin (odoo-nix-tools)
+
+These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.
+Stage 3 onwards: implement each request in any code the stage writes or touches. In particular, CR1: every read of the config file goes through `common/pyproject.config_path(product, root)` with an explicit checkout root; never derive the root from the config file's location.
+Stage 10, added after stage 9, retrofits whatever remains into the stage 1-2 code and adds the tests.
+
+
+Changes the core contract (`pdn-standards-core/standards/DESIGN.md`) must make for this design. Each names the
+core text it changes, the exact proposal and what odoo-nix does until it lands. CR1 is blocking for addon
+repositories; CR2 and CR3 have product fallbacks; CR4-CR6 are improvements with product fallbacks; CR7 is text
+only. None is applied here: the core is being implemented separately and is not edited from this repository.
+
+### 15.CR1: the config file is per checkout (blocking for addons mode)
+
+**Why.** The user decision puts `[tool.odoo-nix]` in odoo-nix's own uv project file: root `pyproject.toml` in a
+project, `nix/pyproject.toml` in addons mode; addon repositories have no root `pyproject.toml`. Core §4.4 and §13
+item 5 instead settled "`config_required = False`, and `--standards` creates the root file". The stage-1/2 core code
+reads one fixed path and also derives the checkout root from the file's location:
+
+- `common/pyproject.py:55` `config_path(product, root)` = `root / identity.config_file`;
+- `common/config.py:583` `resolve()` sets `root = config_path.resolve().parent` and (`:283`) the default lock to
+  `root / "flake.lock"`, so `nix/pyproject.toml` would resolve with root `nix/` and look for `nix/flake.lock`;
+- `commands/config.py:66` finds the file with `repo.find_up(identity.config_file)`, and its `--pyproject`/`--lock`
+  help says the lock is "beside the" config file.
+
+**Proposal.**
+
+1. `product.py`:
+   ```python
+   @dataclass(frozen=True)
+   class Identity:
+       ...
+       config_file: str = "pyproject.toml"  # the default file holding [tool.<table>], relative to the root
+       config_paths: tuple[str, ...] = ()  # every file the table may live in; () → (config_file,)
+       config_required: bool = True
+
+   @dataclass(frozen=True)
+   class Hooks:
+       ...
+       # root → the config file relative to the root, from tracked files and their text only (§3.4);
+       # None → identity.config_file. Must return one of identity.config_paths when those are set.
+       config_file: Callable[[Path], str] | None = None
+   ```
+2. `pyproject.config_path(product, root)` returns `root / (hooks.config_file(root) if hooks.config_file else
+   identity.config_file)`, and every core read and write of the table goes through it: `config_text`, `load`,
+   `context.default_load_checkout`, `repoconfig.load`, `sync` (`_create_table`/`add_table`: with
+   `config_required = False` it creates the *file* only when its directory exists; a product preflight may refuse
+   first), `rollout.set_profile_ref`, `fixtures.throwaway` (the commit holds what `write_fixture` wrote),
+   `targets.load` (the opted-in test on a clone), and the help texts of `config`/`profile` (`--pyproject`).
+3. `config.resolve(product, config_path, *, root: Path | None = None, lock_path=None, profile_dir=None,
+   checkout=None)`: `root` defaults to `config_path.resolve().parent` (unchanged for one-file products), and
+   the default lock is `root / "flake.lock"`. `repoconfig.load` and every caller that has a checkout pass
+   `root=checkout.root`.
+4. `commands/config.resolve_args` (and `profile show`): without `--pyproject`, the root is the nearest directory
+   `d` at or above the current directory, up to the work-tree root, for which `config_path(product, d)` is a file,
+   else the work-tree root; the file is `config_path(product, root)`. With `--pyproject F`, the root is the nearest
+   ancestor `d` of `F` with `config_path(product, d) == F`, else `F`'s parent. The `--lock` default is
+   `root / "flake.lock"` ("beside the checkout's flake.nix").
+5. `engine.history` walks commits that changed any of `identity.config_paths or (identity.config_file,)` (plus
+   `flake.lock` and an in-repo profile, as now). `_committed_doc(rev)` and the defaults' HEAD read
+   (`defaults.head_version`'s config read) take the first of those paths whose text at `rev` has the opt-in line,
+   else the current `config_path`.
+6. Text: §4.4 "`--standards <profile>` creates the table in `config_path(product, root)`, and the file when it is
+   missing, its directory exists and `identity.config_required` is false"; §13 item 5's resolution amended the same
+   way.
+7. Kit stub (§11.1): the `bundle` shape keeps its table in `kit/pyproject.toml` (a generated project file, as
+   odoo's `nix/pyproject.toml`), with `Identity.config_paths = ("pyproject.toml", "kit/pyproject.toml")` and a
+   `hooks.config_file`. `test_kit` adds: `config` and `profile show` from the root and from `kit/`, both resolving
+   the root and its `flake.lock`; `sync --check`; retraction after a commit (history reads `kit/pyproject.toml`);
+   `repo rollout`'s `set_profile_ref` on that file; `--standards` refused by the stub's preflight when `kit/` is
+   missing.
+
+**Until it lands:** `PRODUCT` sets neither field (§2.1), and the addons fixture and every addon-repository
+command are skipped or refused; no product-side workaround exists (two `Product` objects chosen per checkout
+would still hit `resolve()`'s root rule).
+
+### 15.CR2: `ctx.options["throwaway"]` in throwaway renders
+
+**Why.** `profile validate` and the conformance render part sync a throwaway checkout built from
+`product.fixtures` under profiles whose module sets are not known in advance, and cannot run `uv lock` offline.
+odoo-nix's stale-lock item (§3.4) must then accept a superset lock there, and only there.
+
+**Proposal.** `scaffold.fixtures.throwaway` and `testing.conformance` set `options["throwaway"] = True` in the
+sync they run (core §3.5 `options` row: `{"force": bool, "throwaway": bool, **sync.options(args)}`); it is
+`False` in every other sync. Lock handlers keep their behaviour; products may read the flag.
+
+**Until it lands:** the stale-lock item compares `rendered ⊆ locked` everywhere.
+
+### 15.CR3: no integration bypass without a release branch
+
+**Why.** Core §7.3 renders `integration_bypass` = the release-bypass actor whenever `releases` is on and the flow
+is `post-merge-bump`. A project inherits `releases` (on) from the Avunu profile and has no release branch
+(`release_branch` is `""`), so turning `repo-policy` on there would let the App bypass the pull-request and
+status-check rules on `main`/`master`.
+
+**Proposal.** §7.3 `integration_bypass` row: "`bypass_actors(release_bypass)` when `releases` is on, the
+`Branching.flow` is `post-merge-bump` **and the checkout's release branch is non-empty** (the condition that adds
+`release-branch.json`), else `[]`". `test_repo_policy` adds the empty-release-branch case.
+
+**Until it lands:** `hooks.repo_policy_values` returns `integration_bypass: []` when `cfg["shape"] == "project"`
+(§2.2).
+
+### 15.CR4: `absorb` takes a comment paragraph its lines leave empty (improvement)
+
+**Why.** Absorbing the addon repositories' `.gitignore` lines leaves their comment paragraphs ("# odoo-nix addons
+mode: links the dev shell makes …") with nothing under them (core §5.6.3: comments are never absorbed).
+
+**Proposal.** §5.6.3 `absorb`: "a paragraph (lines between blank lines, outside every block and foreign region)
+whose non-comment lines were all absorbed loses its comment lines too; `--check` reports them with the absorbed
+lines". `test_blocks` adds it.
+
+**Until it lands:** a product notice names the emptied paragraphs (§3.4), and the adoption commit deletes them.
+
+### 15.CR5: sync does not stage a file that had the user's changes (improvement)
+
+**Why.** Core §6.3 stages every touched path. In a dirty tree (the real ruckus checkout: 26 changed entries,
+`.vscode/settings.json` among them) that stages the user's own edits together with sync's.
+
+**Proposal.** §6.3: "paths with unstaged changes when the run starts (`git diff --name-only`) are written but not
+staged; the final report lists them as 'left unstaged: it had changes of yours'". `test_sync` adds it.
+
+**Until it lands:** a product notice (§3.4), and the adoption steps commit or stash first (§8.1).
+
+### 15.CR6: a bump push rejected because the branch moved is not a failure (improvement)
+
+**Why.** Core §8.2 step 6 makes a rejected `git push origin HEAD:<integration>` exit 1. Under the
+`post-merge-bump` flow the new integration head that caused the rejection triggers its own release run, which
+recomputes the bump, so the red run reports nothing actionable.
+
+**Proposal.** §8.2 step 6: "a push rejected as non-fast-forward is exit 0 with `bumped` empty and the notice
+'<integration> moved since <sha>; the run for its new head bumps'; any other push failure stays exit 1".
+`test_bump` adds it.
+
+**Until it lands:** `odoo-release.yml` checks out `ref: <integration>` (not `github.sha`) under a non-cancelling
+`release` concurrency group, which leaves only the seconds between checkout and push (§6.4).
+
+### 15.CR7: text corrections in the core contract
+
+- §2.5 `repo/rollout.py`: "(Frappe value `[["nix","run","--no-pure-eval",".#relock"]]`; odoo `[]`)" → odoo also
+  sets the relock step (§0.2 C3: a new odoo-nix can change the install set).
+- §5.6.2 "A product whose checkouts may lack the file (odoo addon repositories have no `flake.nix`) ships a
+  `seed_template`": odoo-nix ships none and refuses such a checkout in preflight (§3.1 dev-shell); keep the sentence
+  for the kit stub without naming odoo.
+- §5.3 and §4.3: odoo's `tools/pyproject.toml` entry is `module: TOOLS_MODULES` (every module that contributes a
+  tool, §3.1), not `["python-lint", "tests"]`, and its `[project].dependencies` is one group (`deps`) reconciled by
+  package name.
+- §4.1 `fleet-entry-core`: unchanged; the odoo fleet uses `branches` (C2 withdrawn).
+
+---

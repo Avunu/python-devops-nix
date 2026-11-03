@@ -251,7 +251,7 @@ class TestProfileCommands(unittest.TestCase):
     def test_profile_needs_a_subcommand(self):
         code, _, err = self.run_cli("profile")
         self.assertEqual(code, 2)
-        self.assertIn("<show|list>", err)
+        self.assertIn("<show|validate|list>", err)
 
     def test_profile_show_not_opted_in(self):
         (self.root / "pyproject.toml").write_text('[project]\nname = "demo_unit"\n')
@@ -262,3 +262,97 @@ class TestProfileCommands(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProfileValidate(unittest.TestCase):
+    """``profile validate``: an org profile checked against every fixture checkout."""
+
+    def setUp(self):
+        from support.checkouts import write_profile
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = write_profile(Path(tmp.name), "org")
+        self.file = self.dir / "profile.toml"
+        os_env = {"GIT_CONFIG_GLOBAL": "/dev/null"}
+        import os
+        from unittest import mock
+
+        patch = mock.patch.dict(os.environ, os_env)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def validate(self, *extra):
+        return run_cli(STUB, "profile", "validate", str(self.file), *extra)
+
+    def test_a_valid_profile(self):
+        code, out, err = self.validate()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, f"{self.file}: valid (extends recommended@1.0)\n")
+
+    def test_a_template_that_does_not_render(self):
+        (self.dir / "templates" / "SECURITY.md.j2").write_text("{{ nope }}\n")
+        code, _, err = self.validate()
+        self.assertEqual(code, 2, err)
+        self.assertIn(
+            "the plain checkout: the org profile's templates/SECURITY.md.j2 does not"
+            " render: UndefinedError",
+            err,
+        )
+        # Rendered by the validation itself where no live entry renders it.
+        self.file.write_text(self.file.read_text() + "\n[hygiene]\nenable = false\n")
+        code, _, err = self.validate()
+        self.assertEqual(code, 2, err)
+        self.assertIn(
+            "templates/SECURITY.md.j2 does not render for the plain checkout", err
+        )
+
+    def test_a_template_that_overrides_nothing(self):
+        (self.dir / "templates" / "flake.nix.j2").write_text("{}\n")
+        code, _, err = self.validate()
+        self.assertEqual(code, 2, err)
+        self.assertIn("the plain checkout: the profile's templates/flake.nix.j2", err)
+
+    def test_an_override_renders(self):
+        (self.dir / "templates" / "CONTRIBUTING.md.j2").write_text("# {{ name }}\n")
+        self.assertEqual(self.validate()[0], 0)
+
+    def test_a_fixture_needing_modules_the_profile_leaves_off_is_skipped(self):
+        text = self.file.read_text().replace(
+            'extends = "recommended@1.0"', 'extends = "minimal"'
+        )
+        text = text.split("[[retire]]")[0]
+        self.file.write_text(text)
+        (self.dir / "templates" / "SECURITY.md.j2").unlink()
+        code, out, err = self.validate()
+        self.assertEqual(code, 0, out + err)
+
+    def test_schema_and_file_errors(self):
+        self.file.write_text(self.file.read_text() + "\n[nope]\nx = 1\n")
+        self.assertEqual(self.validate()[0], 2)
+        self.file.write_text("x = ")
+        self.assertEqual(self.validate()[0], 2)
+        self.file.unlink()
+        self.assertEqual(self.validate()[0], 3)
+
+    def test_the_fixture_syncs_are_throwaway(self):
+        import dataclasses
+
+        seen = []
+        product = dataclasses.replace(
+            STUB,
+            hooks=dataclasses.replace(
+                STUB.hooks,
+                notices=lambda plan: seen.append(plan.ctx.options["throwaway"]) or [],
+            ),
+        )
+        code, _, err = run_cli(product, "profile", "validate", str(self.file))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(seen, [True, True])
+
+    def test_templates_elsewhere(self):
+        other = self.dir.parent / "elsewhere"
+        other.mkdir()
+        (other / "SECURITY.md.j2").write_text("# s\n")
+        code, _, err = self.validate("--templates", str(other))
+        self.assertEqual(code, 0, err)
