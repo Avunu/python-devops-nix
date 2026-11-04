@@ -1,0 +1,74 @@
+name: Pull request policy
+description: >-
+  The pr-policy gate: runs `<cli> policy --pr`, which checks the pull request's base
+  branch, its title and every commit (committed, the version scheme's rules and the
+  product's own checks), from the event the workflow runs on.
+
+# A product's pr-policy job (standards/DESIGN.md §8.5), after standards-install and a
+# checkout with the whole history (`fetch-depth: 0`): the policy walks base..head. The
+# product's `committed` must be on PATH or in its tools project (hooks.committed_argv).
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-pr-policy@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       integration: develop
+#
+# On `pull_request` the event names the pull request; on `workflow_dispatch` the policy
+# looks it up by the run's branch. The token reads the pull request (`pull-requests:
+# read`). `major-free` is an engine repository's own policy: no table, no version
+# scheme, and a major only through a `Release-As: <N>.0.0` footer.
+
+inputs:
+  cli:
+    description: The product's console script (`kit-nix`).
+    required: true
+  integration:
+    description: The integration branch, the base a pull request targets.
+    required: true
+  token:
+    description: "A token with `pull-requests: read`."
+    default: ${{ github.token }}
+  major-free:
+    description: "`true`: the engine repository's own rules (`policy --pr --major-free`)."
+    default: "false"
+  base-branch:
+    description: The integration branch under `major-free`.
+    default: main
+  working-directory:
+    description: The checkout.
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CLI: ${{ inputs.cli }}
+        MAJOR_FREE: ${{ inputs.major-free }}
+        BASE_BRANCH: ${{ inputs.base-branch }}
+        GH_TOKEN: ${{ inputs.token }}
+        INTEGRATION: ${{ inputs.integration }}
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        set -euo pipefail
+        [[ "$CLI" =~ ^[a-z][a-z0-9-]*$ ]] || {
+          echo "::error title=standards-pr-policy::cli must be a console script name, not '$CLI'"
+          exit 1
+        }
+        args=(policy --pr)
+        case "$MAJOR_FREE" in
+          true) args+=(--major-free --base-branch "$BASE_BRANCH") ;;
+          false) ;;
+          *)
+            echo "::error title=standards-pr-policy::major-free must be true or false, not '$MAJOR_FREE'"
+            exit 1
+            ;;
+        esac
+        "$CLI" "${args[@]}"

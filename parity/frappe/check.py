@@ -34,17 +34,31 @@ the core ships so far (DESIGN §12: stages 3, 4 and 8):
   gate sets and documentation URLs: the settings, the labels and every ruleset, equal
   as data; and ``bypass_actors`` for frappe's two forms.
 
-It prints one line per comparison and exits 1 when any differs. The later stage adds
-``--help`` (9).
+- **--help** (stage 9): the frappe product built with frappe-nix's help texts (each
+  description, flag help and command-list line of frappe's parser, as
+  ``Product.help``), frappe's own extra commands (``Command`` entries over its other
+  command modules, sorted by module name) and its sync flags (``sync.add_arguments``
+  after ``--only``): ``<cli> --help`` and the ``--help`` of every core command and
+  subcommand frappe has, byte for byte. ``repo --help`` is compared without the core's
+  new ``targets`` line and ``ci --help`` without its new ``bump`` line. The ``ci``
+  steps take new flags (``--engine-repo``, ``--param``, ``--set``), so for each step
+  frappe has the comparison is that the core has it and accepts every one of frappe's
+  flags (through ``ci.arg_aliases``), the contract its reusable workflows need.
+
+It prints one line per comparison and exits 1 when any differs.
 """
 
 from __future__ import annotations
 
+import argparse
 import contextlib
+import copy
 import dataclasses
+import importlib
 import io
 import json
 import os
+import pkgutil
 import re
 import subprocess
 import sys
@@ -478,6 +492,170 @@ def repo_policy(results: Results, product) -> None:
         )
 
 
+# frappe-nix's old ci flags, as the frappe product names them (DESIGN §8.1).
+FRAPPE_ARG_ALIASES = {
+    "--frappe-nix-repo": "--engine-repo",
+    "--docs-patterns": "--param docs-patterns",
+    "--frappe-major": "--set frappe-major",
+}
+# frappe-nix's ci flags with no alias form, which its shims rewrite when it migrates
+# (DESIGN §14, stage 7): `--pilot-assets` is `--dispatch-after assets.yml`.
+FRAPPE_CI_FLAGS_REPLACED = {"fast-forward": {"--pilot-assets"}}
+# The core's sync flags around which frappe-nix adds its own (DESIGN §6.2).
+FRAPPE_SYNC_FLAGS = ("--init-listing", "--frappe-version", "--site")
+
+
+def _subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction | None:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action
+    return None
+
+
+def _walk(parser: argparse.ArgumentParser, prefix: str = ""):
+    """``(path, parser, summary)`` for every subcommand below ``parser``."""
+    sub = _subparsers(parser)
+    if sub is None:
+        return
+    summaries = {pseudo.dest: pseudo.help for pseudo in sub._choices_actions}
+    for name, child in sub.choices.items():
+        path = f"{prefix} {name}".strip()
+        yield path, child, summaries.get(name)
+        yield from _walk(child, path)
+
+
+def frappe_help_product(product):
+    """The frappe product with frappe-nix's ``--help`` texts, its sync flags, and its
+    other commands as extra commands."""
+    from frappe_nix_tools import cli as frappe_cli
+    from frappe_nix_tools import commands as frappe_commands
+    from standards_core import cli
+    from standards_core.commands import CORE_COMMANDS, Command
+
+    frappe_parser = frappe_cli.build_parser()
+    frappe_sync = _subparsers(frappe_parser).choices["sync"]
+    sync_flags = [
+        a
+        for a in frappe_sync._actions
+        if set(a.option_strings) & set(FRAPPE_SYNC_FLAGS)
+    ]
+
+    def add_arguments(parser, after):
+        if after == "--only":
+            for action in sync_flags:
+                parser._add_action(copy.copy(action))
+
+    product = dataclasses.replace(
+        product,
+        sync=dataclasses.replace(product.sync, add_arguments=add_arguments),
+        ci=dataclasses.replace(product.ci, arg_aliases=FRAPPE_ARG_ALIASES),
+    )
+
+    core_names = {c.name for c in CORE_COMMANDS}
+    extra = []
+    for module in sorted(
+        m.name for m in pkgutil.iter_modules(frappe_commands.__path__)
+    ):
+        mod = importlib.import_module(f"frappe_nix_tools.commands.{module}")
+        scratch = argparse.ArgumentParser().add_subparsers()
+        mod.register(scratch)
+        names = list(scratch.choices)
+        if not names or set(names) & core_names:
+            continue
+        extra.append(
+            Command(names[0], lambda sp, _p, mod=mod: mod.register(sp), sort_key=module)
+        )
+
+    # Every key the core's parser takes, then frappe's text for each of them.
+    plain = cli.build_parser(product, extra)
+    known = {
+        key
+        for name, sub in _subparsers(plain).choices.items()
+        for key in cli._help_keys(name, sub)
+    }
+    texts: dict[str, str | None] = {}
+    for path, sub, summary in _walk(frappe_parser):
+        if path.split()[0] not in core_names:
+            continue
+        candidates = {path: sub.description, f"{path}{cli.SUMMARY}": summary}
+        for action in sub._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                continue
+            for flag in action.option_strings or [action.dest]:
+                candidates[f"{path} {flag}"] = action.help
+        texts.update({k: v for k, v in candidates.items() if k in known})
+    from types import MappingProxyType
+
+    return dataclasses.replace(product, help=MappingProxyType(texts)), extra
+
+
+def _help(parser: argparse.ArgumentParser, path: str) -> str:
+    for name in path.split():
+        parser = _subparsers(parser).choices[name]
+    return parser.format_help()
+
+
+def _without(text: str, name: str) -> str:
+    """``text`` without the command-list line of ``name`` and its continuation lines."""
+    out: list[str] = []
+    skipping = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if indent == 4 and stripped.split(" ", 1)[0].rstrip("\n") == name:
+            skipping = True
+            continue
+        if skipping and indent > 4 and stripped.strip():
+            continue
+        skipping = False
+        out.append(line)
+    return "".join(out)
+
+
+def help_texts(results: Results, product) -> None:
+    from frappe_nix_tools import cli as frappe_cli
+    from standards_core import cli
+
+    product, extra = frappe_help_product(product)
+    core = cli.build_parser(product, extra)
+    frappe = frappe_cli.build_parser()
+    results.same("--help", core.format_help(), frappe.format_help())
+    for path, _sub, _summary in _walk(frappe):
+        top = path.split()[0]
+        if top not in {
+            "config",
+            "data-path",
+            "pin-path",
+            "policy",
+            "profile",
+            "repo",
+            "sync",
+            "ci",
+        }:
+            continue
+        if top == "ci" and path != "ci":
+            core_ci = _subparsers(_subparsers(core).choices["ci"]).choices
+            step = path.split()[1]
+            if step not in core_ci:
+                results.same(f"ci {step}: a core step", None, step)
+                continue
+            frappe_flags = sorted(f for a in _sub._actions for f in a.option_strings)
+            replaced = FRAPPE_CI_FLAGS_REPLACED.get(step, set())
+            missing = [
+                f
+                for f in frappe_flags
+                if f not in core_ci[step]._option_string_actions and f not in replaced
+            ]
+            results.same(f"ci {step}: frappe's flags accepted", missing, [])
+            continue
+        text_c, text_f = _help(core, path), _help(frappe, path)
+        if path == "repo":
+            text_c = _without(text_c, "targets")
+        if path == "ci":
+            text_c = _without(text_c, "bump")
+        results.same(f"{path} --help", text_c, text_f)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__, file=sys.stderr)
@@ -489,12 +667,15 @@ def main(argv: list[str]) -> int:
     _imports(frappe_nix)
     for key in ("FRAPPE_NIX_ALLOW_SKEW", "FRAPPE_NIX_URL_OVERRIDE", "CI"):
         os.environ.pop(key, None)
+    # argparse wraps to the terminal: one width for both products.
+    os.environ["COLUMNS"] = "100"
     os.environ.update(GIT_ENV)
     product = frappe_product()
     results = Results()
     headers(results, product)
     reports(results, product)
     repo_policy(results, product)
+    help_texts(results, product)
     with tempfile.TemporaryDirectory() as tmp:
         commands(results, product, Path(tmp))
         first_opt_in(results, product, Path(tmp))

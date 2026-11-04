@@ -37,9 +37,13 @@ def description(product: Product) -> str:
     )
 
 
+SUMMARY = ":summary"
+
+
 def _help_keys(prefix: str, parser: argparse.ArgumentParser) -> Iterator[str]:
     """Every ``Product.help`` key ``parser`` (the command ``prefix``) can take."""
     yield prefix
+    yield prefix + SUMMARY
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             for name, sub in action.choices.items():
@@ -49,13 +53,30 @@ def _help_keys(prefix: str, parser: argparse.ArgumentParser) -> Iterator[str]:
             yield f"{prefix} {flag}"
 
 
+def _summaries(product: Product, prefix: str, parser: argparse.ArgumentParser) -> None:
+    """Each subcommand's line in its parent's command list from ``"<command>:summary"``
+    (``prefix`` names ``parser``; ``""`` is the top level)."""
+    for action in parser._actions:
+        if not isinstance(action, argparse._SubParsersAction):
+            continue
+        for pseudo in action._choices_actions:
+            path = f"{prefix} {pseudo.dest}".strip()
+            if path + SUMMARY in product.help:
+                pseudo.help = product.help[path + SUMMARY]
+        for name, sub in action.choices.items():
+            _summaries(product, f"{prefix} {name}".strip(), sub)
+
+
 def build_parser(
     product: Product, extra_commands: Sequence[Command] = ()
 ) -> argparse.ArgumentParser:
     """The command line: the core's commands and ``extra_commands``.
 
-    A duplicate command name, or a ``Product.help`` key that names no registered command
-    or flag, is a ``RuntimeError`` (a product bug).
+    ``Product.help`` keys are ``"<command>"`` (its description), ``"<command> <flag>"``
+    (a flag's help, a positional by its name) and ``"<command>:summary"`` (its line in
+    the command list above it), where ``<command>`` may name a subcommand (``"repo
+    audit"``). A duplicate command name, or a key that names no registered command or
+    flag, is a ``RuntimeError`` (a product bug).
     """
     from standards_core.commands import CORE_COMMANDS
 
@@ -88,6 +109,7 @@ def build_parser(
             raise RuntimeError(
                 f"Product.help names no command or flag: {', '.join(unknown)}"
             )
+        _summaries(product, "", parser)
     return parser
 
 

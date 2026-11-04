@@ -10,7 +10,8 @@ exits with its code.
 ``CORE_COMMANDS`` lists the core's. Descriptions and flag help go through
 ``help_text(product, key, default)``, so a product rewords any of them through
 ``Product.help`` (``"<command>"`` for a command's description, ``"<command> <flag>"``
-for a flag's help, and ``"<command> <subcommand>[ <flag>]"`` below a command group).
+for a flag's help, ``"<command>:summary"`` for its line in the command list, and
+``"<command> <subcommand>[ <flag>]"`` below a command group).
 """
 
 from __future__ import annotations

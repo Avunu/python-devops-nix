@@ -2582,6 +2582,60 @@ Deviations made while implementing, with the reason for each.
   branching makes and two documentation values, plus `bypass_actors`. Against frappe-nix-tools 2.2.1: no
   difference.
 
+### Stage 9
+
+- **`testing/pins.py`** takes, besides §10.2's `--root`, `--owner` and `--reachable URL`: `--input` (the root
+  flake input, default `python-devops-nix`), `--repo` (its GitHub name, default the input's), `--pyproject GLOB`
+  (repeatable, default `py/**/pyproject.toml`; hidden directories and `node_modules` are skipped) and `--branch`
+  (what `--reachable` reads, default `main`). It reads `standards-core @ …` in `[project].dependencies` and
+  `[project.optional-dependencies]`; at least one is required, each must be `git+https://github.com/<owner>/<repo>@
+  <40-hex>#subdirectory=standards`, and a `.github/**` reference on a comment line is not read (an action's usage
+  comment names `@<sha>`). Owners compare case-insensitively (GitHub's). `--reachable` makes a blobless bare clone
+  and asks `git for-each-ref --contains`. Exit 0, 1 (a problem), 2 (an argument), 3 (an unreadable lock, a failed
+  clone). `lib.standards.pins` takes `input ? "python-devops-nix"` and `pyprojects ? [ ]` to match, and names its
+  check `<product>-standards-core-pins-check`. Its tests are `test_pins_check.py` (`test_pins.py` is
+  `common/pins.py`'s).
+- **Action inputs beyond §8.5.** `working-directory` (default `.`) on every action that reads the checkout (all but
+  `standards-update-branches`): a product checkout in a subdirectory (frappe's `app-root`), and the selftest's
+  throwaway checkout. `standards-fleet-audit` has `env-prefix` (default: `cli` upper-cased, `-` → `_`), since it
+  sets `<P>_ISSUE_TOKEN` and §8.5 lists no prefix input. `standards-release-ff` also outputs `sha` (the commit the
+  branch moved, or is to move, to).
+- **`standards-release-ff` with `bump`.** The bump pushes with `token` through a `GIT_CONFIG_COUNT` extra header
+  for github.com (replacing what `actions/checkout` persisted), so the checkout needs no stored credentials. The
+  checkout must be at `sha`, with the whole history (a shallow one is unshallowed). `git-user` empty is the token's
+  own user when `gh api user` answers (a user token), else `github-actions[bot]`: an App installation token cannot
+  read its own bot user, so a product that wants the App's name passes `git-user`. A release branch that does not
+  exist yet (the first release) skips the bump with a notice and creates the branch at `sha`. A bump whose push was
+  refused because the integration branch moved (§15.CR6: `ci bump` exits 0 with `bumped` empty, leaving a local
+  commit) does not move the branch (`moved=false`): the new head's run bumps and moves it.
+- **`selftest-standards.yml`.** The stub gains a console script, `stub-nix` (`stub_nix_tools.product:main`), so
+  `standards-install` can install it. `standards-pr-policy` runs on the pull request with `major-free` (this
+  repository has no table: an engine repository's own rules), with `committed` 1.1.11 from PyPI on PATH.
+  `standards-release-ff` runs the tags flow as a dry run in a throwaway stub checkout under `$RUNNER_TEMP` (the
+  step reads the checkout's configuration), moving `standards-selftest/throwaway-<run id>` to the newest `v*` tag.
+  `standards-update-branches` runs against an integration branch no pull request targets
+  (`standards-selftest/no-pull-requests`), not another repository: nothing to update with a read-only token. The
+  recorded fetch-metadata cases are inline in the workflow.
+- **The `uv tool install` proof** is `tests/test_install.py`: a throwaway product (the stub with its core as a
+  `git+file://` URL dependency) installed from a git URL and from a path, and the stub as it is (an editable path
+  source, what `override` installs). Each must run, and `standards_core.revision()` must be the core's commit for
+  the first two (read from `direct_url.json`) and `None` for the override. It needs uv and the package index, so it
+  runs only with `STANDARDS_CORE_INSTALL_CHECK=1`, in the selftest's `install` job; `nix flake check` (no network
+  in the sandbox) skips it, where the plan's Verification lists it under `nix flake check`.
+- **`--help` parity and the summary key.** The command-list line of a command is `Product.help["<command>:summary"]`
+  (also below a group, `"repo audit:summary"`, and for extra commands), applied by `build_parser` after
+  registration; stage 2's `"profile show"` keys for the profile subcommands' lines still work. The parity harness
+  builds the frappe product's `help` from frappe-nix-tools' parser (every description, flag help and summary the
+  core has a key for), registers frappe's other command modules as extra commands (sort key = module name), adds
+  its three sync flags after `--only` through `sync.add_arguments`, and sets frappe's `ci.arg_aliases`. Against
+  frappe-nix-tools 2.2.1, `--help` and every core command's and subcommand's `--help` frappe has are byte-identical
+  (`repo --help` less the new `targets` line, `ci --help` less `bump`); each frappe `ci` step exists and takes
+  every frappe flag, except `fast-forward --pilot-assets` (stage 7: `--dispatch-after assets.yml`).
+- **Docs.** `docs/library.md` gains the Standards section and rule 6's exception; `docs/conventions.md` a Standards
+  section (exit codes, sync flags, the `<P>_*` variables, the actions and pins); `docs/releases.md` names the
+  release-please extra files, which `release-please-config.json` now lists (`generic`, over the existing
+  `x-release-please-start-version` markers).
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.

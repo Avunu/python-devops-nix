@@ -4,7 +4,7 @@ description: How python-devops-nix is versioned and released, what a breaking ch
 nav_title: Releases
 order: 3
 tags: [releases, versioning, ci]
-updated: 2026-10-28
+updated: 2026-11-03
 ---
 
 # Releases
@@ -13,7 +13,7 @@ python-devops-nix is released with [release-please](https://github.com/googleapi
 
 ## How a release is cut
 
-`.github/workflows/release.yml` runs on every push to `main`. release-please keeps one release pull request open, `chore(main): release X.Y.Z`, which moves `version.txt`, `.release-please-manifest.json` and `CHANGELOG.md`. Merging it tags `vX.Y.Z`, and `release.yml` fast-forwards the `release-<major>` branch to the tag (`release-1` for every `v1.*`). It never moves the branch any other way, and a new major starts a new branch.
+`.github/workflows/release.yml` runs on every push to `main`. release-please keeps one release pull request open, `chore(main): release X.Y.Z`, which moves `version.txt`, `.release-please-manifest.json` and `CHANGELOG.md`, and standards-core's version in `standards/pyproject.toml` and `standards/standards_core/__init__.py` (release-please's extra files), so the distribution a product installs from a release's commit carries that release's version. Merging it tags `vX.Y.Z`, and `release.yml` fast-forwards the `release-<major>` branch to the tag (`release-1` for every `v1.*`). It never moves the branch any other way, and a new major starts a new branch.
 
 The version comes from the commits merged since the last release:
 

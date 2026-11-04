@@ -10,6 +10,10 @@ description = "A stub product for the standards-core tests"
 requires-python = ">=3.11"
 dependencies = ["standards-core"]
 
+# The selftest workflow installs it with `uv tool install` (DESIGN §8.5).
+[project.scripts]
+stub-nix = "stub_nix_tools.product:main"
+
 [tool.uv.sources]
 standards-core = { path = "../../..", editable = true }
 

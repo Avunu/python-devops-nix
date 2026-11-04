@@ -11,6 +11,14 @@
 #       `python -m standards_core.testing.conformance <module>` with the
 #       product's Python `package` installed: module is the product object,
 #       "kit_nix_tools.product:PRODUCT". Any problem fails it.
+#   pins { pkgs, src, product, owner, input ? "python-devops-nix", pyprojects ? [ ] }
+#       the product's `standards-core-pins` check: `src`'s flake.lock locks the root
+#       input `input` at the commit its tools' pyproject.toml names in
+#       `standards-core @ git+https://github.com/<owner>/<input>@<sha>#subdirectory=standards`
+#       (`py/**/pyproject.toml`, or the `pyprojects` globs) and that every
+#       `<owner>/<input>/...@<sha>` in its .github/** uses
+#       (python -m standards_core.testing.pins). Reachability needs the network, so the
+#       product's CI runs the module with --reachable instead.
 #   check { pkgs, interpreters ? <the presets' interpreters> }
 #       pytest standards/tests on every interpreter, with git on PATH and no
 #       global git configuration.
@@ -83,6 +91,38 @@ rec {
         env.PYTHONDONTWRITEBYTECODE = "1";
       }
       "${env}/bin/python -m standards_core.testing.conformance ${lib.escapeShellArg module} | tee \"$out\"";
+
+  pins =
+    {
+      pkgs,
+      src,
+      product,
+      owner,
+      input ? "python-devops-nix",
+      pyprojects ? [ ],
+    }:
+    let
+      checks = (import ./checks { inherit lib; }).mk { inherit pkgs product; };
+      python = pkgs.python3;
+      env = python.withPackages (_: [ (package { inherit pkgs python; }) ]);
+      args = lib.escapeShellArgs (
+        [
+          "--root"
+          "${src}"
+          "--owner"
+          owner
+          "--input"
+          input
+        ]
+        ++ lib.concatMap (glob: [
+          "--pyproject"
+          glob
+        ]) pyprojects
+      );
+    in
+    checks.script "standards-core-pins" {
+      env.PYTHONDONTWRITEBYTECODE = "1";
+    } "${env}/bin/python -m standards_core.testing.pins ${args} | tee \"$out\"";
 
   check =
     {

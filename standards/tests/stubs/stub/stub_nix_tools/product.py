@@ -445,3 +445,10 @@ PRODUCT = Product(
     fixtures=FIXTURES,
     self_repo="example/stub-nix",
 )
+
+
+def main() -> int:
+    """The ``stub-nix`` console script: what a product's entry point is (DESIGN §6.1)."""
+    from standards_core import cli
+
+    return cli.main(PRODUCT)

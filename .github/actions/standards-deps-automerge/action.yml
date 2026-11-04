@@ -1,0 +1,115 @@
+name: Dependabot auto-merge by the decision table
+description: >-
+  Reads a Dependabot pull request's metadata and applies the product's verdict for it
+  with `<cli> ci automerge`: enables auto-merge under the safety rule (every enabled
+  gate is a required check of the integration branch), labels it for review, or
+  closes it.
+
+# A product's job on Dependabot's pull requests (standards/DESIGN.md §8.3, §8.5), after
+# standards-install, from a checkout of the integration branch (never the pull
+# request's: this job holds a write token):
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-deps-automerge@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       integration: develop
+#       engine-repo: example/kit-nix
+#       relock: ${{ needs.relock-plan.outputs.state }}
+#       moved: ${{ needs.relock-plan.outputs.moved }}
+#       token: ${{ steps.app-token.outputs.token }}
+#
+# The token needs Contents and Pull requests write. A GitHub App's token makes the
+# merge raise a push that starts the integration branch's workflows; GITHUB_TOKEN's
+# raises none.
+
+inputs:
+  cli:
+    description: The product's console script (`kit-nix`).
+    required: true
+  integration:
+    description: The integration branch the pull request targets.
+    required: true
+  gates:
+    description: The enabled gates, comma-separated. Empty reads them from the checkout.
+    default: ""
+  merge-method:
+    description: How auto-merge merges (`squash`, `merge` or `rebase`).
+    default: squash
+  policy:
+    description: "`decision-table`, or `all` (every update auto-merges unless a sticky rule holds it)."
+    default: decision-table
+  params:
+    description: Decision-table parameters, one `KEY=<JSON list>` per line (`$param:KEY`).
+    default: ""
+  engine-repo:
+    description: The `<owner>/<repo>` the checkout locks the engine from (`$engine`).
+    default: ""
+  relock:
+    description: >-
+      For a nix update, the relock plan's state: `empty`, `patch` or
+      `rollout-input-moved`. Empty for other ecosystems.
+    default: ""
+  moved:
+    description: With `rollout-input-moved`, the inputs it moves, comma-separated.
+    default: ""
+  token:
+    description: A token with Contents and Pull requests write.
+    default: ${{ github.token }}
+  working-directory:
+    description: The checkout of the integration branch.
+    default: "."
+
+outputs:
+  result:
+    description: "`merging`, `needs-review`, `wait` (a nix update waiting for its relock) or `closed`."
+    value: ${{ steps.automerge.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - id: meta
+      uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      with:
+        github-token: ${{ inputs.token }}
+
+    - id: automerge
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CLI: ${{ inputs.cli }}
+        GH_TOKEN: ${{ inputs.token }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        INTEGRATION: ${{ inputs.integration }}
+        GATES: ${{ inputs.gates }}
+        METHOD: ${{ inputs.merge-method }}
+        POLICY: ${{ inputs.policy }}
+        PARAMS: ${{ inputs.params }}
+        ENGINE_REPO: ${{ inputs.engine-repo }}
+        RELOCK: ${{ inputs.relock }}
+        MOVED: ${{ inputs.moved }}
+        ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+        GROUP: ${{ steps.meta.outputs.dependency-group }}
+        NAMES: ${{ steps.meta.outputs.dependency-names }}
+        DIRECTORY: ${{ steps.meta.outputs.directory }}
+      run: |
+        set -euo pipefail
+        [[ "$CLI" =~ ^[a-z][a-z0-9-]*$ ]] || {
+          echo "::error title=standards-deps-automerge::cli must be a console script name, not '$CLI'"
+          exit 1
+        }
+        args=(ci automerge --pr-url "$PR_URL" --integration "$INTEGRATION"
+          --merge-method "$METHOD" --policy "$POLICY"
+          --ecosystem "$ECOSYSTEM" --update-type "$UPDATE_TYPE"
+          --dependency-group "$GROUP" --dependency-names "$NAMES"
+          --directory "${DIRECTORY:-/}")
+        [ -z "$GATES" ] || args+=(--gates "$GATES")
+        [ -z "$ENGINE_REPO" ] || args+=(--engine-repo "$ENGINE_REPO")
+        while IFS= read -r param; do
+          [ -z "$param" ] || args+=(--param "$param")
+        done <<<"$PARAMS"
+        if [ -n "$RELOCK" ]; then
+          args+=(--relock "$RELOCK")
+          [ -z "$MOVED" ] || args+=(--moved "$MOVED")
+        fi
+        "$CLI" "${args[@]}"

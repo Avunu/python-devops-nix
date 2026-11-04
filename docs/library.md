@@ -1,15 +1,15 @@
 ---
 title: Library reference
-description: What python-devops-nix exports, from the secrets toolkit to the NixOS pieces and the reusable workflow, and the rules everything in it follows.
+description: What python-devops-nix exports, from the secrets toolkit to the NixOS pieces, standards-core and the reusable workflow, and the rules everything in it follows.
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-10-29
+updated: 2026-11-03
 ---
 
 # Library reference
 
-The flake has nixpkgs and flake-parts as its only inputs. Each output is read from one directory: `lib/<name>.nix` (or `lib/<name>/default.nix`) is `lib.<name>`, with a kebab-case file name as a camelCase attribute (`lib/db-nocow.nix` is `lib.dbNocow`), and `checks/<name>.nix` is `checks.<system>.<name>`. `flakeModules` is read from `modules/`, which is empty today. Python sits in `python/`, and the stub products and fixtures the checks run against sit in `tests/`.
+The flake has nixpkgs and flake-parts as its only inputs. Each output is read from one directory: `lib/<name>.nix` (or `lib/<name>/default.nix`) is `lib.<name>`, with a kebab-case file name as a camelCase attribute (`lib/db-nocow.nix` is `lib.dbNocow`), and `checks/<name>.nix` is `checks.<system>.<name>`. `flakeModules` is read from `modules/`, which is empty today. Python sits in `python/`, standards-core (a Python distribution of its own) in `standards/`, and the stub products and fixtures the checks run against sit in `tests/` (standards-core's in `standards/tests/`).
 
 Every function takes `pkgs` and the product's names (label, prefix, option path) as arguments, and none names a product. The `check` functions are the base's own tests, which a product can also build against its interpreters. Each takes `{ pkgs, product ? …, name ? …, interpreters ? … }` and runs on every interpreter a preset names.
 
@@ -130,6 +130,31 @@ Conventions: [Images](conventions.md#images).
 
 Conventions: [Tests](conventions.md#tests), [Repository files](conventions.md#repository-files), [CI](conventions.md#ci).
 
+## Standards
+
+standards-core (`standards/`, import `standards_core`) is the engine a product builds its standards tools on: managed files and their sync, profiles, the CI steps, policy and the fleet tools ([standards/DESIGN.md](https://github.com/Avunu/python-devops-nix/blob/main/standards/DESIGN.md)). The product supplies everything framework-specific through one `Product` object and owns the command line (`standards_core.cli.main(PRODUCT)`). It names no product: the `lib-standards-neutral` check greps for it.
+
+| Export | What it does |
+| --- | --- |
+| `lib.standards.package { pkgs, python ? pkgs.python3, rev ? null }` | standards-core as a Python package (flit, jinja2, tomlkit, packaging, pyyaml). With `rev` (a product passes `inputs.python-devops-nix.rev`), the commit is written to `standards_core/_source.json`, which `standards_core.revision()` and the version-skew row read. |
+| `lib.standards.pins { pkgs, src, product, owner, input ? "python-devops-nix", pyprojects ? [ ] }` | The product's `standards-core-pins` check: `src`'s `flake.lock` locks `input` at the commit its tools' `pyproject.toml` (`py/**/pyproject.toml`, or `pyprojects`) names in `standards-core @ git+https://github.com/<owner>/<input>@<sha>#subdirectory=standards`, and every `<owner>/<input>/…@<sha>` under `.github/` uses the same commit (`python -m standards_core.testing.pins`). The product's CI runs the module with `--reachable https://github.com/<owner>/<input>`, which also requires the commit on `main` or a `v*` tag. |
+| `lib.standards.conformance { pkgs, product, package, module }` | `python -m standards_core.testing.conformance <module>` with the product's package: the product meets the core's contract (its static, render and CI parts). |
+| `lib.standards.check { pkgs, interpreters ? … }` | standards-core's own suite, against its two stub products, on every interpreter a preset names. |
+| `standards_core.testing` | `conformance`, `pins`, and `fakes` (a fake GitHub transport, an in-process CLI run, git in a throwaway repository, fake locks) for a product's own tests. |
+| `checks.<system>.lib-standards`, `checks.<system>.lib-standards-neutral` | The suite, and the grep that no product or organisation is named under `standards/`, in the `standards-*` actions, `lib/standards.nix` or these checks. |
+| `.github/actions/standards-install` | Installs the product's tools with `uv tool install` at the engine revision `flake.lock` pins (`install-spec` with `{owner}`, `{repo}`, `{rev}`), or from an `override` path; exports `<P>_EXPECT_REV` (and `<P>_ALLOW_SKEW=1` with `override`, `<P>_FETCH_TOKEN` with `fetch-token`). Outputs `rev`, `version`. |
+| `.github/actions/standards-pr-policy` | `<cli> policy --pr` from the pull request event: base branch, title and every commit. |
+| `.github/actions/standards-release-ff` | Moves the release branch: to a release tag (tags flow), or, with `bump`, after `<cli> ci bump --push` to an integration head whose required checks passed (post-merge-bump flow). Outputs `moved`, `bumped`, `sha`. |
+| `.github/actions/standards-deps-automerge` | fetch-metadata, then `<cli> ci automerge`: the product's decision table under the auto-merge safety rule. Output `result`. |
+| `.github/actions/standards-update-branches` | `<cli> ci update-branches`: bot pull requests behind the integration branch brought up to date. Output `updated`. |
+| `.github/actions/standards-fleet-audit` | `<cli> repo audit --all --fleet …` into the job summary, with one scorecard issue per repository when `issue-repo` is set. |
+
+Every action names the product's command through its `cli` input, passes its inputs through `env:`, pins each `uses:` by SHA, and has a `working-directory` input where it reads the checkout (`standards-update-branches` reads none). The job graph stays in each product: these are composite actions, not reusable workflows. `.github/workflows/selftest-standards.yml` runs them on the stub product on every pull request that touches `standards/` or an action, and proves `uv tool install` of a product from a git URL, a path and an override (`standards/tests/test_install.py`).
+
+A product depends on standards-core two ways, both at one commit: `"standards-core @ git+https://github.com/<owner>/python-devops-nix@<sha>#subdirectory=standards"` in its tools' `[project].dependencies`, which `uv tool install` resolves with no Nix, and `lib.standards.package { inherit pkgs python; rev = inputs.python-devops-nix.rev; }` in its Nix package. `lib.standards.pins` keeps those and the actions' `@<sha>` equal.
+
+Conventions: [Standards](conventions.md#standards).
+
 ## Design rules
 
 Everything in this repository follows these rules.
@@ -139,7 +164,7 @@ Everything in this repository follows these rules.
 3.  **A small lock.** The base's own inputs are nixpkgs and flake-parts, and consumers `follows` both. Heavier dependencies (agenix-shell, pyproject-nix, uv2nix, pnpm2nix) are taken as arguments from the product, never as inputs here.
 4.  **Python versions follow from where the code runs.** See [Python versions](#python-versions).
 5.  **Logic is Python, glue is bash.** Anything that parses data, handles dates, JSON or more than a few flags, keeps an exit-code table or prompts is Python. Bash is kept for thin glue, built with `writeShellApplication` so shellcheck runs on it.
-6.  **Python is vendored at build time, not installed as a dependency.** Shared Python is copied into the product's package by Nix (the devguard core into `<p>_devguard/`), so a virtualenv gains no new distribution.
+6.  **Python is vendored at build time, not installed as a dependency, except standards-core.** Shared Python is copied into the product's package by Nix (the devguard core into `<p>_devguard/`), so a virtualenv gains no new distribution. standards-core is the exception: it is a real distribution (`standards/`), because no-Nix CI installs a product's standards tools with `uv tool install` from git, and the tools must find the engine as a dependency there. Its three pins (the flake input, the URL dependency and the actions) name one commit ([Standards](#standards)).
 7.  **No new reach into production.** Nothing here reaches a production virtualenv, service or container unless it is meant to (the journald core, the overrides, the hardening baseline). devguard is development-only, and each product checks that it is absent from production.
 8.  **Tests live with the code, and CI runs all of them.** The base tests what it ships against a stub product, and every check is built in CI on every pull request.
 

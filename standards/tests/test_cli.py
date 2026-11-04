@@ -154,8 +154,40 @@ class TestCli(unittest.TestCase):
         self.assertIn("where each value came from", show.format_help())
         self.assertIn("the extra command's flag", sub["gate"].format_help())
 
+    def test_summary_overrides(self):
+        product = dataclasses.replace(
+            STUB,
+            help=MappingProxyType(
+                {
+                    "config:summary": "one value, in the product's words",
+                    "repo audit:summary": "the product's scorecard",
+                    "profile show:summary": "the product's resolved profile",
+                    "gate:summary": "the extra command, reworded",
+                }
+            ),
+        )
+        parser = cli.build_parser(product, [extra("gate")])
+        top = parser.format_help()
+        self.assertIn("one value, in the product's words", top)
+        self.assertIn("the extra command, reworded", top)
+        self.assertNotIn("print a resolved configuration value", top)
+        sub = parser._subparsers._group_actions[0].choices
+        self.assertIn("the product's scorecard", sub["repo"].format_help())
+        self.assertIn("the product's resolved profile", sub["profile"].format_help())
+        # Without the key, each line is the core's own.
+        self.assertIn(
+            "print a resolved configuration value", cli.build_parser(STUB).format_help()
+        )
+
     def test_an_unknown_help_key_is_a_bug(self):
-        for key in ("nope", "config --nope", "profile nope", "gate --flag"):
+        for key in (
+            "nope",
+            "config --nope",
+            "profile nope",
+            "gate --flag",
+            "nope:summary",
+            "repo nope:summary",
+        ):
             product = dataclasses.replace(STUB, help=MappingProxyType({key: "x"}))
             with self.subTest(key=key), self.assertRaises(RuntimeError) as caught:
                 cli.build_parser(product)

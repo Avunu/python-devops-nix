@@ -1,0 +1,78 @@
+name: Keep bot pull requests up to date
+description: >-
+  Brings the bot maintenance pull requests (Dependabot's, and bots' on `standards/*`
+  branches) that are behind the integration branch up to date through the
+  update-branch API, with `<cli> ci update-branches`; never release-please's, nor a
+  fork's.
+
+# A product's job on every push to the integration branch and on a schedule
+# (standards/DESIGN.md §8.4, §8.5), after standards-install. It reads no checkout.
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-update-branches@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       integration: develop
+#       token: ${{ steps.app-token.outputs.token || github.token }}
+#       dispatch-ci: ${{ steps.app-token.outputs.token == '' }}
+#
+# A GitHub App's token makes each update a push that starts CI. GITHUB_TOKEN's update
+# raises no event, so with it set `dispatch-ci`: the step then dispatches the
+# workflows of `contexts` on each new head (the token needs Actions write too).
+
+inputs:
+  cli:
+    description: The product's console script (`kit-nix`).
+    required: true
+  integration:
+    description: The integration branch the pull requests target.
+    required: true
+  dispatch-ci:
+    description: "`true`: dispatch CI on each updated head (a GITHUB_TOKEN update raises no event)."
+    default: "false"
+  contexts:
+    description: >-
+      With `dispatch-ci`, the required checks and the workflows that report them, one
+      `CHECK=WORKFLOW` per line. Empty is the product's (`ci.contexts`).
+    default: ""
+  limit:
+    description: The most pull requests to update in one run.
+    default: "10"
+  token:
+    description: A token with Contents and Pull requests write.
+    default: ${{ github.token }}
+
+outputs:
+  updated:
+    description: "`<number>:<updated|refused>` for each pull request it acted on, comma-separated."
+    value: ${{ steps.update.outputs.updated }}
+
+runs:
+  using: composite
+  steps:
+    - id: update
+      shell: bash
+      env:
+        CLI: ${{ inputs.cli }}
+        GH_TOKEN: ${{ inputs.token }}
+        INTEGRATION: ${{ inputs.integration }}
+        DISPATCH_CI: ${{ inputs.dispatch-ci }}
+        CONTEXTS: ${{ inputs.contexts }}
+        LIMIT: ${{ inputs.limit }}
+      run: |
+        set -euo pipefail
+        fail() {
+          echo "::error title=standards-update-branches::$*"
+          exit 1
+        }
+        [[ "$CLI" =~ ^[a-z][a-z0-9-]*$ ]] || fail "cli must be a console script name, not '$CLI'"
+        [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]] || fail "limit must be a positive number, not '$LIMIT'"
+        args=(ci update-branches --integration "$INTEGRATION" --limit "$LIMIT")
+        case "$DISPATCH_CI" in
+          true) args+=(--dispatch-ci) ;;
+          false) ;;
+          *) fail "dispatch-ci must be true or false, not '$DISPATCH_CI'" ;;
+        esac
+        while IFS= read -r context; do
+          [ -z "$context" ] || args+=(--context "$context")
+        done <<<"$CONTEXTS"
+        "$CLI" "${args[@]}"
