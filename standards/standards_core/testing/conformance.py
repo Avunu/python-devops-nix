@@ -486,21 +486,70 @@ def push_problem(text: str, branch: str) -> str | None:
     return f"runs on push to {list(branches)}, not to {branch}"
 
 
-def _bump_fixture(fixture: Any, branching: str) -> Any:
-    """``fixture`` with ``releases`` and ``ci`` on under ``branching``."""
-    lines = [
-        ("releases.enable", "releases.enable = true"),
-        ("releases.branching", f'releases.branching = "{branching}"'),
-        ("ci.enable", "ci.enable = true"),
+def needed(product: Product, modules: tuple[str, ...]) -> list[str]:
+    """Every module ``modules`` need through ``modules.needs``, transitively, in
+    ``modules.names`` order (``modules`` themselves left out)."""
+    needs = product.modules.needs
+    seen: set[str] = set()
+    todo = list(modules)
+    while todo:
+        for name in needs.get(todo.pop(), ()):
+            if name not in seen:
+                seen.add(name)
+                todo.append(name)
+    return [m for m in product.modules.names if m in seen and m not in modules]
+
+
+# A subtable header in a fixture's table lines: ``[tool.<table>.<module>]``.
+_MODULE_HEADER = re.compile(r"\s*\[\s*tool\.[^].]+\.(?P<module>[^].\s]+)\s*\]\s*")
+
+
+def _with_key(table: str, key: str, value: str) -> str:
+    """The fixture's table lines (under ``[tool.<table>]``) with dotted ``key`` set to
+    ``value`` (TOML) unless they set it already: a dotted line first, or a line right
+    after the module's own ``[tool.<table>.<module>]`` header when it has one (a dotted
+    key would define that table twice). A dotted ``key`` counts only in the table's own
+    body, before its first header; ``leaf`` only under the module's header; lines under
+    any other header (a deeper table, an array of tables) count for neither."""
+    module, _, leaf = key.partition(".")
+    lines = table.splitlines(keepends=True)
+    # "": the table's own body; a module name: under its header; None: any other.
+    under: str | None = ""
+    header_at = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if m := _MODULE_HEADER.fullmatch(line):
+            under = m["module"]
+            if under == module and header_at is None:
+                header_at = i
+            continue
+        if stripped.startswith("["):
+            under = None
+            continue
+        if under == "" and re.match(re.escape(key) + r"\s*=", stripped):
+            return table
+        if under == module and re.match(re.escape(leaf) + r"\s*=", stripped):
+            return table
+    if header_at is None:
+        return f"{key} = {value}\n" + table
+    lines.insert(header_at + 1, f"{leaf} = {value}\n")
+    return "".join(lines)
+
+
+def _bump_fixture(product: Product, fixture: Any, branching: str) -> Any:
+    """``fixture`` with ``releases`` and ``ci`` on under ``branching``, and every module
+    they need (``modules.needs``, transitively) on: each key only where the fixture's
+    table does not set it itself (§11.4)."""
+    keys = [
+        ("releases.enable", "true"),
+        ("releases.branching", f'"{branching}"'),
+        ("ci.enable", "true"),
+        *((f"{m}.enable", "true") for m in needed(product, ("releases", "ci"))),
     ]
-    keep = [
-        line
-        for key, line in lines
-        if not any(t.strip().startswith(key) for t in fixture.table.splitlines())
-    ]
-    return dataclasses.replace(
-        fixture, table="".join(f"{line}\n" for line in keep) + fixture.table
-    )
+    table = fixture.table
+    for key, value in reversed(keys):
+        table = _with_key(table, key, value)
+    return dataclasses.replace(fixture, table=table)
 
 
 def _ci_push(product: Product) -> list[str]:
@@ -530,7 +579,7 @@ def _ci_push(product: Product) -> list[str]:
                         work,
                         None,
                         name,
-                        _bump_fixture(fixture, branching.name),
+                        _bump_fixture(product, fixture, branching.name),
                         profile=profile,
                     )
                     code, text = _sync(

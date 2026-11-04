@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from standards_core.commands import help_text
-from standards_core.common import config, repo
+from standards_core.common import config, pyproject
 from standards_core.common.report import CLEAN, ConfigError, EnvError, StandardsError
 
 if TYPE_CHECKING:
@@ -58,18 +58,32 @@ def checkout_or_none(product: Product, root: Path) -> Checkout | None:
         return None
 
 
+def source(product: Product, pyproject_arg: str | None) -> tuple[Path, Path]:
+    """The checkout root and its config file (DESIGN §15.CR1).
+
+    Without ``--pyproject``, the root is ``pyproject.checkout_root`` from the current
+    directory (the nearest directory at or above it, within the git work tree, whose
+    config file exists, preferring one whose file opens the table when the file differs
+    between checkouts; then the outermost directory up to the work tree's root whose
+    config file that is; else the work tree's root) and the file is its config file.
+    With ``--pyproject F``, the root is the outermost ancestor of ``F`` whose config file
+    ``F`` is (``pyproject.root_for``), else ``F``'s directory."""
+    if pyproject_arg:
+        path = Path(pyproject_arg)
+        return pyproject.root_for(product, path), path
+    root = pyproject.checkout_root(product)
+    return root, pyproject.config_path(product, root)
+
+
 def resolve_args(product: Product, args: argparse.Namespace) -> config.Resolved:
-    """The resolution ``--pyproject``, ``--lock`` and ``--profile-path`` ask for."""
-    if args.pyproject:
-        path = Path(args.pyproject)
-    else:
-        path = repo.find_up(product.identity.config_file)
-    checkout = (
-        checkout_or_none(product, path.resolve().parent) if path.is_file() else None
-    )
+    """The resolution ``--pyproject``, ``--lock`` and ``--profile-path`` ask for. The
+    default lock is the root's ``flake.lock``, beside the checkout's ``flake.nix``."""
+    root, path = source(product, args.pyproject)
+    checkout = checkout_or_none(product, root) if path.is_file() else None
     resolved = config.resolve(
         product,
         path,
+        root=checkout.root if checkout is not None else root,
         lock_path=Path(args.lock) if args.lock else None,
         profile_dir=Path(args.profile_path) if args.profile_path else None,
         checkout=checkout,
@@ -79,26 +93,44 @@ def resolve_args(product: Product, args: argparse.Namespace) -> config.Resolved:
     return resolved
 
 
+def pyproject_help(product: Product) -> str:
+    """``--pyproject``'s default help: the config file names, and how the checkout is
+    found without the flag."""
+    identity = product.identity
+    paths = pyproject.config_paths(product)
+    if len(paths) == 1 and product.hooks.config_file is None and "/" not in paths[0]:
+        name = paths[0]
+        return (
+            f"the {name} to read (default: the nearest {name} at or above the current"
+            " directory, within the git work tree)"
+        )
+    rule = (
+        "whose file opens the table"
+        if pyproject.per_checkout(product)
+        else f"where {paths[0]} exists"
+    )
+    return (
+        f"the config file holding [tool.{identity.table}] ({' or '.join(paths)} below"
+        " the checkout's root) to read (default: the checkout's, its root the nearest"
+        f" directory at or above the current one {rule}, within the git work tree)"
+    )
+
+
 def add_source_arguments(
     product: Product, parser: argparse.ArgumentParser, command: str
 ) -> None:
     """``--pyproject``, ``--lock`` and ``--profile-path``: where the configuration is."""
-    name = product.identity.config_file
     parser.add_argument(
         "--pyproject",
-        help=help_text(
-            product,
-            f"{command} --pyproject",
-            f"the {name} to read (default: the nearest {name} at or above the current"
-            " directory, within the git work tree)",
-        ),
+        help=help_text(product, f"{command} --pyproject", pyproject_help(product)),
     )
     parser.add_argument(
         "--lock",
         help=help_text(
             product,
             f"{command} --lock",
-            f"the flake.lock an org profile is pinned in (default: beside the {name})",
+            "the flake.lock an org profile is pinned in (default: the checkout root's,"
+            " beside its flake.nix)",
         ),
     )
     parser.add_argument(

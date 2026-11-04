@@ -222,13 +222,9 @@ strip_nix_comments = nixattrs.strip_nix_comments
 
 
 def config_file(product: Product, root: Path) -> str:
-    """The checkout's config file, relative to its root: ``pyproject.config_path``'s,
-    so a product that keeps the table elsewhere per checkout is read where it is."""
-    path = pyproject.config_path(product, root)
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return product.identity.config_file
+    """The checkout's config file, relative to its root (``pyproject.config_rel``), so a
+    product that keeps the table elsewhere per checkout is read where it is."""
+    return pyproject.config_rel(product, root)
 
 
 def with_table(product: Product, doc: dict, table: dict) -> dict:
@@ -445,12 +441,39 @@ def _has_github_dir(product: Product, root: Path, sha: str) -> bool:
         return False
 
 
-def _committed_doc(product: Product, root: Path, sha: str) -> dict | None:
-    """Commit ``sha``'s config file, parsed; ``None`` when it has none it can parse."""
-    path = config_file(product, root)
+def history_paths(product: Product, root: Path) -> list[str]:
+    """The config files a checkout's history is read from: every one of
+    ``pyproject.config_paths``, then the current one when it is not among them."""
+    paths = list(pyproject.config_paths(product))
+    current = config_file(product, root)
+    return paths if current in paths else [*paths, current]
+
+
+def _committed_text(root: Path, sha: str, path: str) -> str | None:
     try:
-        return tomllib.loads(repo.git(root, "show", f"{sha}:./{path}"))
-    except (EnvError, tomllib.TOMLDecodeError):
+        return repo.git(root, "show", f"{sha}:./{path}")
+    except EnvError:
+        return None
+
+
+def _committed_doc(product: Product, root: Path, sha: str) -> dict | None:
+    """Commit ``sha``'s config file, parsed; ``None`` when it has none it can parse.
+
+    It is the first of ``history_paths`` whose text at ``sha`` has the opt-in line, else
+    the current config file (DESIGN §15.CR1): a checkout that moved its table from one
+    file to another reads each commit's table where that commit kept it."""
+    paths = history_paths(product, root)
+    texts = {path: _committed_text(root, sha, path) for path in paths}
+    chosen = next(
+        (p for p in paths if texts[p] and pyproject.opt_in_line(product, texts[p])),
+        config_file(product, root),
+    )
+    text = texts.get(chosen)
+    if text is None:
+        return None
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
         return None
 
 
@@ -481,8 +504,8 @@ def previous(
     return _state(resolved)
 
 
-# How far back ``history`` reads: commits that changed the config file, flake.lock or an
-# in-repo profile, newest first.
+# How far back ``history`` reads: commits that changed a config file (``history_paths``),
+# flake.lock or an in-repo profile, newest first.
 HISTORY_DEPTH = 300
 
 
@@ -512,15 +535,15 @@ def history(
     ``truncated``, and a state whose locked profile can't be fetched makes the history
     ``unknown``: a question it can't answer fails (``context.ever``, exit 3)."""
     out = context.History()
-    config_rel = config_file(product, root)
+    config_paths = history_paths(product, root)
     try:
         edits = repo.git(
-            root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", config_rel
+            root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", *config_paths
         ).split()
     except EnvError:
         return out
     docs: dict[str, dict | None] = {}
-    paths = [config_rel, "flake.lock"]
+    paths = [*config_paths, "flake.lock"]
     for sha in edits:
         docs[sha] = doc = _committed_doc(product, root, sha)
         table = pyproject.tool_table(product, doc) if doc is not None else None
@@ -699,10 +722,12 @@ def entries_for(
     collide (nor name the config file)."""
     man = manifest.load(product)
     extra = manifest.extra_entries(cfg)
-    config_rel = (
-        config_file(product, root) if root is not None else product.identity.config_file
+    configs = (
+        {config_file(product, root)}
+        if root is not None
+        else set(pyproject.config_paths(product))
     )
-    taken = {e.path for e in man.entries} | {config_rel}
+    taken = {e.path for e in man.entries} | configs
     for e in extra:
         if _CONTROL.search(e.path):
             raise ConfigError(f"[[extra-files]] {e.path!r} holds a control character")

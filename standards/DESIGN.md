@@ -110,7 +110,7 @@ entry.
 | `schema.py` | frappe `common/schema.py` | the keyword subset and its error texts; `deref`, `_ecma`, `defaults`, `node_at`, the `x-app-only` keyword | `load(product, name)` goes through `DataRoots`, and composed documents are registered by name (§4.1). The `$ref` file part resolves through the roots (product first), so a core def can reference a product file and the other way round. The cache key is `(product, name)` |
 | `compose.py` | **new** | — | builds the effective `profile.schema.json`, `app.schema.json` and `fleet.schema.json` (§4.1) |
 | `config.py` | frappe `common/config.py` | `Resolved` (`source`, `get`); `_merge`, `_record`, `_fill_defaults`, `_switch`, `_app_turns_off`, `_modules` (needs loop, provisional rule, host-off rule); `read_profile_dir`, `org_profile_dir` (symlink refusals, prefix rule); `resolve_doc` and `resolve` | `MODULES`/`NEEDS`/`GITHUB_ONLY`/`PROFILE_ONLY`/`APP_ONLY`/`RESOLVED_FROM_PROFILE` → `product.modules.*` united with the core's own keys (§4.2). `__version__` → `product.identity.version`. `requires-frappe-nix` → `identity.requires_key`. The `listing.publish` special case → `hooks.host_rules`. The `site` default and the `integration-branch` default → `hooks.derive(cfg, checkout)` / `hooks.integration_default`, in frappe's order (integration branch, then derive, then `repo`: §4.4), so `cfg`'s key order is unchanged. `_repo` uses `org.github-owner` + `checkout name` (core). `snapshots` read `profiles/` through `DataRoots`. `NotOptedIn` takes the product's hint |
-| `pyproject.py` | frappe `common/pyproject.py` | `read`, `parse`, `load`, `project_name`; the opt-in line regex shape | `TABLE` → `identity.table`. `_OPT_IN_LINE` is compiled per product: `r"[ \t\n\v\f\r]*\[{1,2}tool\." + re.escape(table) + r"[].].*"`. `tool_frappe_nix` → `tool_table(product, doc)`. `OPT_IN_HINT` → `identity.opt_in_hint`. `load(product, root)`: a missing `identity.config_file` is `EnvError` (exit 3, frappe) when `identity.config_required`, else the empty document `{}`, which is "not opted in" (exit 2 with the hint) and which `--standards` creates |
+| `pyproject.py` | frappe `common/pyproject.py` | `read`, `parse`, `load`, `project_name`; the opt-in line regex shape | `TABLE` → `identity.table`. `_OPT_IN_LINE` is compiled per product: `r"[ \t\n\v\f\r]*\[{1,2}tool\." + re.escape(table) + r"[].].*"`. `tool_frappe_nix` → `tool_table(product, doc)`. `OPT_IN_HINT` → `identity.opt_in_hint`. `config_path(product, root)` is `root / (hooks.config_file(root) or identity.config_file)` (one of `identity.config_paths` when set), and every core read and write of the table goes through it; `checkout_root` and `root_for` find the checkout root without deriving it from the file's location (§15.CR1). `load(product, root)`: a missing config file is `EnvError` (exit 3, frappe) when `identity.config_required`, else the empty document `{}`, which is "not opted in" (exit 2 with the hint) and which `--standards` creates |
 | `repo.py` | frappe `common/repo.py` | `git`, `toplevel`, `find_up`, `ls_files`, `parse_remote`, `origin_repo`, `NO_AUTO_MAINTENANCE` | `app_name` (which checks for `hooks.py`) is dropped. `Product.hooks.load_checkout` names a checkout |
 | `flakelock.py` | frappe `common/flakelock.py` | `Pin`, `parse`, `load`, `node_at`, `locked_pin` validation, `locked_rev`, `PROFILE_INPUT = "standards-profile"` | `FRAPPE_NIX_PINS` → `product.pins.engine_pinned`. The `"frappe-nix"` node → `product.engine.flake_input`. `frappe_nix_rev` → `engine_rev(product, lock)`. New: `base_rev(product, lock)` = the rev at `[engine.flake_input, engine.base_input]` (§9.4) |
 | `nar.py` | frappe `common/nar.py` | all | — |
@@ -174,7 +174,7 @@ entry.
 | `repo/apply.py` | frappe `commands/repo/apply.py` | `SELF_REPO` → `product.self_repo`; `documentation_url` → `hooks.documentation_url`. The `BYPASS_FALLBACKS` text names `release_pattern` |
 | `repo/audit.py` | frappe `commands/repo/audit.py` | core rows A1, A2, A3, A4, A5, A9, A10, A11 are generic (§7.4). The product's `audit_rows` add to or replace them. `run_tool` uses `<PREFIX>_ALLOW_SKEW` and `engine.tool_python`; `tool_spec` → `hooks.tool_spec`; `<PREFIX>_ISSUE_TOKEN` |
 | `repo/doctor.py` | frappe `commands/repo/doctor.py` | core rows for releases, dependabot auto-merge, labels and the private profile fetch token. `hooks.doctor_rows` appends the rest (listing/registry rows are Frappe's) |
-| `repo/rollout.py` | frappe `commands/repo/rollout.py` | `nix flake update <engine.flake_input>`; the commit subject `f"chore(deps): {engine.flake_input} {to}"`; branches `standards/{engine.flake_input}-{to}`; `.#<engine.init_app> -- --sync`; `set_profile_ref` edits `[tool.<table>] profile`. The relock step comes from `sync.rollout_steps` (Frappe value `[["nix","run","--no-pure-eval",".#relock"]]`; odoo `[]`) |
+| `repo/rollout.py` | frappe `commands/repo/rollout.py` | `nix flake update <engine.flake_input>`; the commit subject `f"chore(deps): {engine.flake_input} {to}"`; branches `standards/{engine.flake_input}-{to}`; `.#<engine.init_app> -- --sync`; `set_profile_ref` edits `[tool.<table>] profile`. The relock step comes from `sync.rollout_steps` (Frappe value `[["nix","run","--no-pure-eval",".#relock"]]`; a product whose new engine release can change the checkout's install set sets the same step) |
 
 ### 2.6 `standards_core/testing/`, `data/`
 
@@ -263,8 +263,9 @@ class Identity:
     sync_command: str  # "kit-init --sync": the fix named in drift output
     opt_in_hint: str  # the NotOptedIn message (exit 2)
     docs_url: str  # printed by --help
-    config_file: str = "pyproject.toml"  # the file holding [tool.<table>], relative to the root
-    config_required: bool = True  # False: a missing config_file reads as {} (not opted in; --standards creates it)
+    config_file: str = "pyproject.toml"  # the default file holding [tool.<table>], relative to the root
+    config_paths: tuple[str, ...] = ()  # every file the table may live in; () → (config_file,) (§15.CR1)
+    config_required: bool = True  # False: a missing config file reads as {} (not opted in; --standards creates it)
     description: str = ""  # argparse description; "" → f"{name} standards tools. See {docs_url}."
 
     @property
@@ -443,6 +444,10 @@ class Hooks:
     checks: Callable[[Plan], list[Item]] = lambda plan: []  # whole-repo problem items engine.build adds (--check and phase B)
     committed_argv: Callable[[Path], list[str]] = default_committed_argv  # how policy runs `committed`
     new_target_table: Callable[[Path, Checkout, argparse.Namespace, str], dict[str, Any]] | None = None  # table --standards creates
+    # root → the config file relative to the root, from tracked files and their text only (§3.4); also
+    # asked about the directories below the root while the root is found (§14 Stage 10).
+    # None → identity.config_file. Must return one of identity.config_paths when those are set (§15.CR1).
+    config_file: Callable[[Path], str] | None = None
     semantic_compare: Callable[[NS], bool] = lambda ctx: False  # whole data files compared as data
     pr_checks: Callable[[PrContext], list[str]] = lambda pr: []  # extra pr-policy problems
     write_fixture: Callable[[Path, str, Fixture, str], None] | None = None  # profile validate's throwaway checkout
@@ -556,10 +561,12 @@ because the extra commands are only known there.
 
 - `load_checkout(root)`: returns a `Checkout` with:
   - `root`;
-  - `name`: the unit name used in context and messages. The core default reads, in order: `[project].name`; the
-    name part of `[tool.<table>] repo`; the name part of the origin remote (`repo.origin_repo`); and only for a
+  - `name`: the unit name used in context and messages. The core default reads, in order: `[project].name` of the
+    config file (`pyproject.config_path`, wherever §15.CR1 puts it); the name part of `[tool.<table>] repo`; the name part of the origin remote (`repo.origin_repo`); and only for a
     checkout with no origin remote (fixtures, throwaways), `root.name`. A checkout's name therefore never depends
-    on where it is checked out when it has a remote; fleet clones also land in `<tmp>/<repo name>` (§2.5);
+    on where it is checked out when it has a remote; fleet clones also land in `<tmp>/<repo name>` (§2.5). A
+    product whose config file's `[project]` names something else (a generated dev-shell project) replaces the
+    name in its own `load_checkout`;
   - `config`: the parsed config file (`{}` when it is missing and `identity.config_required` is false);
   - `tracked`: `repo.ls_files(root)`, sorted;
   - `extra`: a mapping for product data (Frappe value: `{"hooks": hooks.read(...)}`).
@@ -746,8 +753,9 @@ These live at `data/manifest.d/*.json` in the product root. The core ships none.
 
 `(path, block)` is unique across fragments: two `sentinel` entries may share a path with different blocks. A
 non-sentinel path still appears once. A file two modules contribute keys to is **one** merge entry whose `module`
-lists both, with one group per module (odoo's `tools/pyproject.toml`: python-lint's `[project]`/`[tool.uv]` groups
-and tests' `[tool.coverage.*]` group, §5.3).
+lists each, with the groups of each module (a tools project, `tools/pyproject.toml`: one entry whose `module` lists
+every module that contributes a tool; a key several of them contribute to, `[project].dependencies`, is one group
+reconciled by package name, §5.3).
 
 **Retire rule keys.** These are copied from frappe: `paths`, `rule`, `module`, `with`, `when`, `contains`, `except`,
 `unmanaged`, `only_section`, `deps_in_project`. New: `only_sections` (a list): the rule applies when the file's
@@ -787,8 +795,9 @@ Merge order, unchanged from frappe §8.4:
 `profile show --explain` prints each value's layer: `builtin:recommended@N.M`, `org:<source>@<rev>`, `app` or
 `default`.
 
-`--standards <profile>` creates the table, and the config file itself when it is missing and
-`identity.config_required` is false (a file holding only the table). The core calls `hooks.new_target_table`, prepends `schema` and `profile`,
+`--standards <profile>` creates the table in `config_path(product, root)`, and the file when it is missing, its
+directory exists and `identity.config_required` is false (a file holding only the table; a product preflight may
+refuse first, §15.CR1). The core calls `hooks.new_target_table`, prepends `schema` and `profile`,
 then adds `integration-branch` when `origin/HEAD` names a branch other than the default (frappe
 `with_integration_branch`).
 
@@ -955,11 +964,14 @@ The semantics are frappe's `merge` and `managed_view`:
 - `--check` compares `managed_view`, which is parsed values only, against the reconciled values;
 - a missing file starts as the empty document.
 
-`creates_table=True` marks the handler of `identity.config_file`. `plan.created_config` is then added with
-`add_table` (frappe's pyproject handler). Each group owns its keys, and each path is one entry (§4.3). Odoo's
-`tools/pyproject.toml` is one `toml-merge` entry with `module: ["python-lint", "tests"]` and one `TomlGroups`:
-python-lint's groups own `[project]` (the exact series pins, reconciled as floors) and `[tool.uv]`; the tests group
-owns `[tool.coverage.*]`, with `fail_under` seeded from `initial-floor` through `seeds`.
+`creates_table=True` marks the handler of the config file (`config_path(product, root)`, §15.CR1).
+`plan.created_config` is then added with `add_table` (frappe's pyproject handler). Each group owns its keys, and
+each path is one entry (§4.3). A tools project (`tools/pyproject.toml`) is one `toml-merge` entry whose `module`
+lists every module that contributes a tool, with one `TomlGroups`: `[project].dependencies`, which several modules
+contribute to, is one group (`deps`) whose `reconcile` merges the list by package name (the exact series pins
+reconciled as floors); `[tool.uv]` goes with that module set; a tests group owns `[tool.coverage.*]`, with
+`fail_under` seeded from `initial-floor` through `seeds`. (The kit stub keeps a smaller form: two modules, its
+python-lint group owning the dependency list.)
 
 **`json-merge` (`scaffold/jsonmerge.py`).** The same machinery over JSON:
 
@@ -1179,8 +1191,8 @@ Parsing (`blocks.scan(text, product, comment) -> list[Found]`):
 - **Missing file** (any anchor): when the entry has `seed_template`, the seed is rendered first and the block is
   inserted into it (the seed must contain the anchor; conformance renders it). Without `seed_template`, `eof`
   creates the file holding only the block, and the other anchors are exit 2: `"<path> does not exist: the <name>
-  block needs <anchor>"`. A product whose checkouts may lack the file (odoo addon repositories have no
-  `flake.nix`) ships a `seed_template`.
+  block needs <anchor>"`. A product whose checkouts may lack the file ships a `seed_template` (the kit stub's
+  `bundle` checkouts have no `flake.nix`), or refuses such a checkout in its preflight.
 
 `toml-array <t.k>`:
 
@@ -1259,8 +1271,10 @@ See §5.4. The template helpers are bound to the file being rendered.
   - seeds stay;
   - merged keys are removed only when they equal the rendered value and the module was on in history (`ever`). A
     shallow clone that cannot answer is exit 3.
-- **History.** `engine.history` walks commits that changed `identity.config_file`, `flake.lock` or an in-repo
-  profile, up to `HISTORY_DEPTH = 300`. It resolves each state against the profile committed beside it, and adds a
+- **History.** `engine.history` walks commits that changed any of `identity.config_paths or
+  (identity.config_file,)` (and the current config file), `flake.lock` or an in-repo profile, up to
+  `HISTORY_DEPTH = 300`. Each commit's table is read from the first of those files whose text at that commit has
+  the opt-in line, else from the current config file (§15.CR1). It resolves each state against the profile committed beside it, and adds a
   GitHub-hosted reading when `paths.github_marks` exist.
 - **Retire.** The rules are the product manifest's `retire` plus the org profile's `[[retire]]`
   (`profile_retire`), minus `retire-keep` paths and globs. Never in `never_write` dirs. A link is retired unread
@@ -1336,7 +1350,7 @@ def main(product: Product, argv: Sequence[str] | None = None, extra_commands: Se
 
 | Command | Flags (core) | Output | Exit |
 |---|---|---|---|
-| `config [KEY]` | `--json`, `--github-output modules`, `--pyproject`, `--lock`, `--profile-path` | one item per line; tables as JSON | 0/2/3 |
+| `config [KEY]` | `--json`, `--github-output modules`, `--pyproject`, `--lock`, `--profile-path` | one item per line; tables as JSON. `config` and `profile show` find the checkout root as §15.CR1 point 4 says, with the §14 Stage 10 amendments (`pyproject.checkout_root`); `--lock` defaults to the root's `flake.lock` | 0/2/3 |
 | `profile show` | `--explain`, `--format toml\|json`, `--pyproject`, `--lock`, `--profile-path` | `[profile]`, `[modules]`, `[config]` (with `# <layer>` under `--explain`) | 0/2/3 |
 | `profile validate FILE` | `--templates DIR` | `"<file>: valid (extends <x>)"` | 0/2/3 |
 | `profile list` | — | built-ins with descriptions; `(recommended)` marks the newest | 0 |
@@ -1344,7 +1358,7 @@ def main(product: Product, argv: Sequence[str] | None = None, extra_commands: Se
 | `pin-path INPUT` | `--lock`, `--writable` | directory | 0/2/3 |
 | `policy` | `--commit-msg-file F` \| `--pr`; `--major-free`; `--base-branch` | problems on stderr (`::error::` under Actions); `"<cli> policy: ok"` | 0/1/2 |
 | `ci <step>` | §8 | step text, plus `$GITHUB_OUTPUT` keys | 0/1/2/3 |
-| `sync` | `--write`\|`--check`, `--standards`, `--profile-path`, `--force`, `--dry-run`, `--skip-lock`, `--offline` (also `<PREFIX>_OFFLINE=1`), `--only PATH[,…]`, `--format text\|json\|github`, `--expect-rev`, `--phase all\|a\|b\|preflight` (hidden), plus `sync.add_arguments` (below) | §6.4 | 0/1/2/3 |
+| `sync` | `--write`\|`--check`, `--standards`, `--profile-path`, `--force`, `--dry-run`, `--skip-lock`, `--offline` (also `<PREFIX>_OFFLINE=1`), `--only PATH[,…]`, `--format text\|json\|github`, `--expect-rev`, `--phase all\|a\|b\|preflight` (hidden), plus `sync.add_arguments` (below) | §6.4. It acts on the checkout in the current directory; a directory whose config file is an outer checkout's (`pyproject.claimed_by`: `kit/` of a checkout keeping its table in `kit/pyproject.toml`) is refused, exit 2 "`<file>` belongs to the checkout at `<root>`: run `<sync_command>` there", in every `--format` | 0/1/2/3 |
 | `repo apply\|audit\|rollout\|doctor\|targets` | §7 | §7 | §7 |
 
 **Sync flag slots.** The core adds its sync flags in frappe's order. After each one it calls
@@ -1950,6 +1964,7 @@ it with Frappe string values (§11.3).
 | Area | Value |
 |---|---|
 | Identity | `kit-nix`, `KIT_NIX`, markers `# >>> kit-nix: {name} (managed) >>>`; `config_required = False` (a `bundle` checkout has no root `pyproject.toml` and no `flake.nix`) |
+| Config file (§15.CR1) | `config_paths = ("pyproject.toml", "kit/pyproject.toml")`; `hooks.config_file` is `kit/pyproject.toml` when the checkout tracks a `kit/` directory (a bundle's generated project file), else `pyproject.toml`. The `bundle` fixture keeps its table in `kit/pyproject.toml`; `hooks.preflight` refuses `--standards` on a bundle without `kit/` |
 | Shape-dependent discovery | `shape` from: the explicit `[tool.kit-nix] shape`; else root `*/__unit__.toml` → `bundle`; else a `core` gitlink or `units.txt` → `workspace`. `series` comes from unit versions, else the `.kit-series` file, else a `^\d+\.0$` branch name. `hooks.derive` reads the same sources (through the checkout) to set the cfg's series default; `Branching.release_branch(cfg, facts)` returns `facts["series"]` |
 | JSON style | `JsonStyle(indent="  ", width=80, trailing_commas="none")` (prettier's form) |
 | `jsonc-merge` | `.vscode/settings.json` (a forbidden key `Ide.serverConfigPath`; a `never` list with a `{"prefix": "py-envs."}` form) and `.vscode/extensions.json` (`recommendations`/`unwantedRecommendations` union), both fixtures in the target repositories' one-line, inline-array, no-final-newline shapes |
@@ -2055,7 +2070,11 @@ each part arrives with the code it exercises, so a product building on an early 
 - Every `DecisionRule` uses a verdict and an `update` value that exist.
 - `ci.gates` and `ci.labels` are consistent with `repo-policy` placeholders.
 - For every `Branching` with flow `post-merge-bump`: rendering each fixture under it, `ci.ci_workflow` and every
-  workflow in `ci.contexts` (YAML-parsed) have `on.push.branches` matching the integration branch (§8.2).
+  workflow in `ci.contexts` (YAML-parsed) have `on.push.branches` matching the integration branch (§8.2). The
+  render uses the newest `recommended` with `releases.enable`, `releases.branching = "<name>"`, `ci.enable` and
+  `<m>.enable = true` for every `m` in `modules.needs["releases"]` and `modules.needs["ci"]` (transitively)
+  prepended to the fixture's table (or under the module's own `[tool.<table>.<m>]` header when the table has one),
+  each only when the table does not set it (§15.CR8).
 
 ---
 
@@ -2071,6 +2090,7 @@ requests the plan's milestones name ("core PR 1–4"; plan "Workstreams" and B7)
 | PR 2 | 2 | B7.3: schemas, series data, built-ins, `profile show/list`, fixtures, discovery; the static conformance part |
 | PR 3 | 3, 4, 5, 6 | B7.4: templates and manifest entries, `sync`, `init --sync/--check`, both phases; the render conformance part |
 | PR 4 | 7, 8, 9 | B7.5 and the release: gates, workflows, policy, `repo apply\|audit\|rollout\|targets`, fleet audit, the actions; the CI conformance part |
+| PR 5 | 10 | the first product plugin's change requests (§15): a table kept in a per-checkout config file (addon repositories), the CI conformance part with the modules `releases` and `ci` need |
 
 1. **Skeleton and leaves** (PR 1).
    - Package and infrastructure: `standards/pyproject.toml`, `README.md`, `standards_core/__init__.py`,
@@ -2130,6 +2150,29 @@ requests the plan's milestones name ("core PR 1–4"; plan "Workstreams" and B7)
    - `docs/library.md` (rule 6, Standards section), `docs/conventions.md` (shared exit codes and sync flags, the
      `<P>_*` names the core reads), and the release-please extra-files for `standards/`.
    - A check that `uv tool install` works from a git URL, a path and an override (Verification, python-devops-nix).
+10. **Retrofit of the change requests** (PR 5, §15).
+    - Core: CR1 in full: `Identity.config_paths`, `Hooks.config_file`, `pyproject.config_path` through the hook
+      (with `config_paths`, `config_rel`, `checkout_root`, `root_for`) and every read and write of the table
+      through it; `config.resolve(…, root=)` with the root's `flake.lock` as the default lock;
+      `commands/config.resolve_args` and `profile show` root discovery and their `--pyproject`/`--lock` help;
+      `engine.history` over every config path and the first-path-with-the-opt-in-line rule; the §4.4 and §13 item 5
+      text. `scaffold/context.default_load_checkout` reads the table through `config_path` (the checkout's name is
+      still `[project].name` of that file first, §3.3); `commands/sync.refuse_claimed` (a directory an outer
+      checkout claims is refused, §14 Stage 10). CR7's text corrections. CR8 in `testing/conformance` (the CI
+      part's prepended table).
+    - Stubs: the kit's `config_paths`, `hooks.config_file`, `hooks.preflight` and `hooks.load_checkout` (a
+      checkout whose table is in `kit/pyproject.toml` is not named after that file's dev-shell project); its
+      `bundle` fixture keeps the table in `kit/pyproject.toml`.
+    - Test support: `tests/support/checkouts.py` (`nested_config_product`, `NestedConfigCase`) and
+      `tests/support/repos.py` (`kit_bundle(…, in_kit=True)`).
+    - Tests: `test_kit` (`config` and `profile show` from the root and from `kit/`, both resolving the root and its
+      `flake.lock`; `sync --check`; retraction after a commit, history reading `kit/pyproject.toml`, also across a
+      table moved into it; `rollout.set_profile_ref` on that file; `--standards` refused by the preflight when
+      `kit/` is missing); `test_conformance` (a kit whose `releases` needs a module off in every built-in
+      profile; a key the fixture sets is left to it); `test_pyproject`, `test_product` and `test_config` for the
+      new fields, the hook and the root rules; `test_repo` (the name from a config file below the root);
+      `test_sync` (a config file whose directory is missing), `test_repo_targets` and `test_repo_rollout` (a
+      clone keeping its table in `kit/pyproject.toml`).
 
 ---
 
@@ -2144,7 +2187,7 @@ repositories before it was resolved. All 31 were accepted, some with a refinemen
 | 2 | The bump push is refused by the integration ruleset | yes: `integration.json` `"bypass_actors": []`; `bypass_actors()` has only two forms | Accepted. Core `bypass_actors` gains `integration:<id>`; `integration.json` uses `{integration_bypass}` (`[]` except under `post-merge-bump`) (§2.2, §2.6, §4.2, §7.3, §8.2); tests in `test_repo_policy`/`test_bump` |
 | 3 | Series- and shape-dependent config cannot be computed | yes | Accepted. `derive(cfg, checkout)`, `Branching.release_branch(cfg, facts)`, `Hooks.release_branch(cfg, modules, facts)`, scheme methods take `facts`; `RepoConfig.facts`, `Target.facts` (§2.2, §3.1, §3.3, §7.1, §8.2, §11.1) |
 | 4 | `self.submodules = true;` breaks lock checks | yes: both flakes; frappe ignores it only by regex | Accepted. Explicit input rule with `self` excluded (§5.6.4); both flakes' shapes in `test_nixattrs` |
-| 5 | Addon repos have no root `pyproject.toml` / `flake.nix`; name from the directory | yes: `millrun/modules/*-addons` hold only `.github`, `.gitignore`, `LICENSE`, `.odoo-series`, `README.md` and addons; `pyproject.read` raises `EnvError`; clones land in `<tmp>/repo` | Accepted. `Identity.config_required` (frappe keeps exit 3; odoo reads `{}`, exit 2 with the hint, `--standards` creates the file) (§2.2, §3.1, §4.4); `seed_template` for sentinel entries (§4.3, §5.6.2); the name falls back to the table's `repo`, then origin, and to `root.name` only with no remote; clones go to `<tmp>/<repo name>` (§2.5, §3.3). Refinement: the directory is kept as the last resort for remote-less fixtures, which have no other name |
+| 5 | Addon repos have no root `pyproject.toml` / `flake.nix`; name from the directory | yes: `millrun/modules/*-addons` hold only `.github`, `.gitignore`, `LICENSE`, `.odoo-series`, `README.md` and addons; `pyproject.read` raises `EnvError`; clones land in `<tmp>/repo` | Accepted. `Identity.config_required` (frappe keeps exit 3; odoo reads `{}`, exit 2 with the hint, `--standards` creates the file). Amended by §15.CR1: `--standards` creates the table in `config_path(product, root)`, and the file when it is missing, its directory exists and `identity.config_required` is false; `Identity.config_paths` and `Hooks.config_file` let a product keep the table in a per-checkout file (§2.2, §3.1, §4.4); `seed_template` for sentinel entries (§4.3, §5.6.2); the name falls back to the table's `repo`, then origin, and to `root.name` only with no remote; clones go to `<tmp>/<repo name>` (§2.5, §3.3). Refinement: the directory is kept as the last resort for remote-less fixtures, which have no other name |
 | 6 | `tools/pyproject.toml` claimed by two strategies | yes: Amendments put coverage in the managed `tools/pyproject.toml` | Accepted. One `toml-merge` entry with groups per module (§4.3, §5.3); `TomlGroups.reconcile` for hand-raised pins (refinement of the suggested `accept`: it returns the value, so a list can be merged per item); the warning names the entry path (§2.3) |
 | 7 | `hooks.checks` runs only under `--check` | yes: frappe phase B's final report reads `after.problems` | Accepted. `engine.build` adds the items to the plan (§2.3, §3.3, §6.3) |
 | 8 | `check_state` never green on skipped or neutral | yes | Accepted. Green = success/neutral/skipped; failed list extended; newest run per name; conformance requires push triggers under `post-merge-bump` (§8.2, §11.4); `test_github` |
@@ -2636,6 +2679,158 @@ Deviations made while implementing, with the reason for each.
   release-please extra files, which `release-please-config.json` now lists (`generic`, over the existing
   `x-release-please-start-version` markers).
 
+### Stage 10
+
+- **What landed (§15.CR1, all seven points).** `Identity.config_paths` and `Hooks.config_file` (§3.1);
+  `__post_init__` refuses a config path that is empty, absolute, holds `..` or a backslash, a path listed twice, and
+  a `config_file` outside a non-empty `config_paths`. `common/pyproject.py` gains `config_paths(product)`
+  (`identity.config_paths or (identity.config_file,)`) and `config_rel(product, root)` (the hook's answer, else
+  `identity.config_file`; an answer outside a non-empty `config_paths` is a `ConfigError`, exit 2), and
+  `config_path` is `root / config_rel(…)`. `engine.config_file` is `config_rel`. The reads and writes CR1 point 2
+  lists all go through `config_path`: `config_text`, `load`, `context.default_load_checkout`, `repoconfig.load`,
+  `sync` (`_create_table` creates the file only where its directory exists, after the preflight), `targets.opted_in`
+  (stage 8), `rollout.set_profile_ref` (stage 8), `fixtures.throwaway` (its commit stages whatever `write_fixture`
+  wrote, so a file in a subdirectory is committed too) and `engine.entries_for` (with no root, every config path is
+  taken). `commands/config.source` gives `resolve_args` (and so `profile show`) its root and file, and
+  `config.resolve` gets `root=` (the loaded checkout's root, else the discovered one), so the default lock is
+  `root / "flake.lock"`. `engine.history` walks `engine.history_paths` (every config path, then the current one when
+  it is not among them), and `_committed_doc` (history, `previous`) reads each commit's first config path whose text
+  has the opt-in line, else the current one, so a table moved between files keeps its history. The §4.4, §5.3,
+  §5.8, §6.2 and §13 item 5 texts say so. A grep for `identity.config_file`, `find_up(` and a root taken from the
+  config file's directory finds only the defaults in `pyproject.py`, `config.resolve`'s documented default root and
+  `pin-path`'s `find_up("flake.lock")` (a lock, not the config file: unchanged, as in frappe).
+- **Deviation: the outermost directory claims a config file.** CR1 point 4 takes the nearest directory whose config
+  file exists (and, for `--pyproject F`, the nearest ancestor whose config file is `F`). From `kit/` of a checkout
+  whose table is in `kit/pyproject.toml`, `kit/` itself has a `pyproject.toml`, and a hook only sees the directory it
+  is asked about, so it answers `pyproject.toml` there and the nearest rule gives the root `kit/`. So
+  `pyproject.checkout_root` takes the nearest directory whose config file exists and then the outermost directory, up
+  to the work tree's root, whose config file is that same file; `pyproject.root_for(product, F)` (`--pyproject`) is
+  the outermost ancestor up to the work tree's root whose config file is `F`, else `F`'s directory. With one
+  root-level file (frappe's case), only `d` itself has `d/pyproject.toml` as its config file, so both answers are
+  CR1's; a nested checkout with a config file of its own is still its own root (`test_pyproject`).
+- **Amendment to CR1 point 4: an opted-in file wins.** The nearest directory whose config file merely exists is not
+  enough for a product whose config file differs between checkouts (`pyproject.per_checkout`: a `hooks.config_file`
+  or more than one `config_paths`). In addons mode every packaged addon directory has its own `pyproject.toml`
+  without the table; from inside one the hook answers `pyproject.toml` there, the nearest rule made the addon the
+  root and `config`, `profile show`, `policy`, `ci` and `repo doctor` exited 2 "not opted in" from every addon of an
+  addon repository (whose table is in `nix/pyproject.toml`). So for such a product `checkout_root` walks up to the
+  work tree's root and takes the nearest directory whose config file opens `[tool.<table>]` (`opt_in_line`), then
+  the outermost-owner rule above; only when no file opens the table is the nearest existing one taken (then the
+  owner rule), else the work tree's root. A one-file product with no hook keeps the nearest existing file, opted in
+  or not (frappe's `find_up`), so frappe's behaviour and the parity harness are unchanged. An addon that opts in
+  itself is still its own checkout.
+- **Sync refuses a claimed directory (§6.2).** Before stage 10 a subdirectory without the root file read as not
+  opted in; with a per-checkout file, `kit/` (or `nix/`) holds a `pyproject.toml` that opens the table, so `sync`
+  run there took `kit/` for a checkout and `--write` scaffolded a second tree inside it (`flake.nix`, `.envrc`, CI,
+  `.vscode/`, `tools/`) while `--check` reported that tree as drift. `sync` still acts on the current directory,
+  but `sync.refuse_claimed` (in `_run` before `--write` and in `check_reported` before `--check`, so `json` and
+  `github` get a report) refuses, exit 2, when `pyproject.claimed_by(product, cwd)` names an outer root whose config
+  file is the current directory's own (the outermost-owner rule): "`kit/pyproject.toml` belongs to the checkout at
+  `<root>`: run `kit-init --sync` there". `claimed_by` is `None` for a one-file product, and for a directory with a
+  config file of its own (an addon's `pyproject.toml`), whose sync is unchanged.
+- **The checkout's name: unchanged.** `context.default_load_checkout` keeps the §3.3 rule: `[project].name` of the
+  file `config_path` names, wherever it is, then the table's `repo`, then origin, then the directory. A product
+  whose config file names its addon set there (the first product's `nix/pyproject.toml`, whose `[project].name` is
+  the repository's) relies on it. A review draft of this stage took `[project].name` only from a root
+  `pyproject.toml`; no change request asked for that, it broke the first product's manifest checks for a clone with
+  no origin, and it was reverted. The kit stub, whose generated `kit/pyproject.toml` names a dev-shell project, sets
+  the name itself in `hooks.load_checkout` (the table's `repo`, else origin, else the directory) when its config
+  file is `kit/pyproject.toml`; §3.3 says a product may.
+- **`--pyproject` and a symlink.** `root_for` resolves the file's directory, not the file: a symlinked config file
+  belongs to the checkout the link is in (before stage 10, `path.resolve().parent`, the target's directory). Inside
+  and outside git alike. No test or parity output depended on the old answer.
+- **Help.** `--lock` defaults read "the checkout root's, beside its flake.nix" for every product. `--pyproject` keeps
+  its one-file text for a product with one root-level config file and no hook, and otherwise names the files
+  (`pyproject.toml or kit/pyproject.toml`) and the root rule: "whose file opens the table" when
+  `pyproject.per_checkout`, else "where `<file>` exists" (one config file with a directory part and no hook keeps
+  the nearest existing file, opted in or not). The parity harness passes frappe's own texts as `Product.help`, so its
+  `--help` comparison is unaffected.
+- **`pin-path` unchanged.** Its lock is still `--lock`, else `find_up("flake.lock")` from the current directory
+  (frappe's rule, which the parity harness compares). For a per-checkout product run from a subdirectory holding
+  its own `flake.lock` (`kit/flake.lock`), that file is read, where `config` and `profile show` read the root's.
+  Products call `pin-path` from the checkout's root (CI, the dev shell), so this is left; a product that needs
+  otherwise passes `--lock`.
+- **No change needed.** `defaults.head_version` reads only the caller workflows at `HEAD`, never the config file, so
+  CR1 point 5's "defaults' HEAD read" has nothing to route. `sync` still runs on the checkout in the current
+  directory (§6.2; CR1 names `config` and `profile show` only), except that a directory an outer checkout claims is
+  refused (above). §4.1 `fleet-entry-core` is unchanged (CR7).
+- **Kit stub.** `config_paths = ("pyproject.toml", "kit/pyproject.toml")`; `hooks.config_file(root)` is
+  `kit/pyproject.toml` when `git ls-files kit` is not empty, else `pyproject.toml` (also outside git). It keys on a
+  tracked `kit/` rather than on the `bundle` shape, because the shape can be the table's own `shape` key, which the
+  hook must find first; `hooks.preflight` refuses `--standards` on a bundle that tracks no `kit/` ("a bundle keeps
+  [tool.kit-nix] in kit/pyproject.toml, and this checkout has no kit/ directory: run kit-init --bundle first"). The
+  `bundle` fixture has `kit/pyproject.toml` (`BUNDLE_PYPROJECT`), where `write_fixture` appends the table, and
+  `test_kit`'s `KitCase` has no root `pyproject.toml`. Other tests' kit bundles with a root `pyproject.toml` and no
+  `kit/` (`support.repos.kit_bundle`, `test_bump`) keep reading the root file; `kit_bundle(…, in_kit=True)` is a
+  clone with the table in `kit/pyproject.toml` and no root file.
+- **CR7** applied neutrally: §2.5 `repo/rollout.py` (the relock step for a product whose engine release can change
+  the install set), §4.3 and §5.3 (a tools project is one entry listing every module that contributes a tool, its
+  `[project].dependencies` one group reconciled by package name), §5.6.2 (a seed template, or a preflight refusal).
+- **CR8.** `conformance.needed(product, modules)` is the transitive `modules.needs` closure in `modules.names`
+  order; `_bump_fixture(product, fixture, branching)` adds `releases.enable`, `releases.branching`, `ci.enable` and
+  each needed module's `enable`, each only where the fixture's table sets no such key (a dotted line in the
+  table's own body, before its first header, or the leaf under a `[tool.<table>.<module>]` header; a line under any
+  other header, a deeper table or an array of tables, is neither). A key whose module has its own header in the fixture's table goes under
+  that header rather than as a dotted line, which would define that table twice.
+- **Tests.** `test_kit`: `TestOptIn` (the table added to a generated `kit/pyproject.toml`; the file created in a
+  `kit/` holding other files; the preflight refusal, nothing written), `TestConfigInKit` (`config` and `profile show`
+  from the root and from `kit/` with an org profile pinned in the root's `flake.lock`, `--pyproject
+  kit/pyproject.toml`, a `kit/flake.lock` not read, the help text, `rollout.set_profile_ref` on `kit/pyproject.toml`),
+  `TestHistoryInKit` (a module turned off in a commit is retracted; a table moved from `pyproject.toml` into
+  `kit/pyproject.toml` keeps its history). `test_conformance`: a kit whose `releases` needs `commits`, which needs
+  `hygiene`, all three off in every built-in profile, conforms; a key the fixture sets is left to it, and a header
+  takes the leaf. `test_pyproject`, `test_product` and `test_config` (`TestNestedConfigCommand`: `config` and
+  `profile show` from the root and from `sub/`, the root's lock, `config.resolve(root=)`).
+  Added after review: `test_kit` `TestSyncFromKit` (`sync --check`, `--check --format json`, `--write` and `--write
+  --standards` from `kit/` are exit 2 with the refusal and write nothing; a unit directory with its own
+  `pyproject.toml` is not refused) and, in `TestConfigInKit`, `config`/`profile show` from a unit directory whose
+  own `pyproject.toml` has no table, and the checkout's name not taken from `kit/pyproject.toml`'s `[project]`;
+  `test_pyproject` (an opted-in `nix/pyproject.toml` wins over a nearer addon `pyproject.toml`, `claimed_by`, an
+  addon that opts in itself, the nearest-file fallback, a one-file product unchanged); `test_sync`
+  `TestConfigFileInAMissingDirectory` (`nested_config_product` with `config_required = False` and no `sub/`:
+  `--standards` is exit 2 "`sub/pyproject.toml` cannot be created: `sub/` does not exist", nothing written; with
+  `sub/` the file is created); `test_repo_targets` (`targets.load` on a clone keeping its table in
+  `kit/pyproject.toml`) and `test_repo_rollout` `TestProfileToInKit` (`repo rollout --profile-to` rewrites
+  `kit/pyproject.toml`, no root file created).
+  Added after the second review: `test_repo` `test_the_name_from_a_config_file_in_a_subdirectory` (the §3.3 rule
+  for `sub/pyproject.toml`); `test_kit`'s name test now checks the core default (`kit/pyproject.toml`'s
+  `[project].name`) and the stub's override; `test_config` `TestNestedConfigCommand` (the `--pyproject` help's
+  existing-file rule); `test_conformance` (a dotted line under a deeper table or an array of tables is not the
+  key).
+- **What a product sets to use CR1.** `Identity(config_file="<default file>", config_paths=("<default file>",
+  "<other file>", …), config_required=False)` (`config_file` must be one of `config_paths`; `config_required =
+  False` when a checkout may lack the file until `--standards` creates it) and `Hooks(config_file=<root → one of
+  config_paths>)`, deciding from tracked files and their text only (§3.4). The hook is also asked about every
+  directory from the current one up to the work tree's root (and outside git) while the root is found, and must
+  answer there without raising; the default file is the safe answer, because a directory whose file does not open
+  the table (an addon's own `pyproject.toml`) no longer stops the walk, and one whose file does is claimed by the
+  outer checkout when that checkout's config file is the same file. In particular a hook must not refuse a
+  directory where two of its files open the table: that is an error for the checkout's root only, which the
+  product's preflight or `load_checkout` can raise. Optionally `Hooks(preflight=…)` refuses `--standards` where the
+  file's directory is missing.
+- **Product follow-ups (odoo-nix-tools, not core changes).** In the odoo-nix commit that pins this core:
+  1. enable CR1: `Identity.config_paths = ("pyproject.toml", "nix/pyproject.toml")` and `Hooks.config_file =
+     discover.config_file`. A core with `Hooks.config_file` makes the product's `support.HAS_CR1` true, so
+     `ADDONS_PRODUCT` becomes `PRODUCT`; pinning this core without enabling CR1 in the same commit turns every
+     addons-fixture test red (71 in the review: 59 failures and 12 errors, in `test_blocks`, `test_check_cmds`,
+     `test_checks`, `test_fixtures_render`, `test_flake_block`, `test_fleet`, `test_foreign_blocks`, `test_gate`,
+     `test_policy`, `test_preflight_addons`, `test_profiles`, `test_release`). This is a hard coupling: the pin
+     and the two settings land in one commit;
+  2. delete the pre-CR1 fallbacks: `test_preflight_addons.OptIn.test_without_cr1_an_addon_repository_is_refused`,
+     `test_profiles` `test_addons_fixture_without_cr1_is_not_opted_in`,
+     `test_fleet.ApplyDryRun.test_a_not_opted_in_addon_repository_through_its_fleet_entry` (or rewrite it to
+     assert `opted_in` is true with the `nix/pyproject.toml` table) and `checks.py`'s refusal of an addon
+     repository;
+  3. drop the `ADDONS_PRODUCT` stand-in and `discover`'s `core_config` shim;
+  4. list the addons fixture in `fixtures.NAMES`, so conformance renders it;
+  5. make `discover.config_file` answer, not raise, in a directory where both files open the table: the core now
+     asks it about every ancestor while finding the root (above);
+  6. regenerate the `--help` snapshot (it already differs on the stage-9 core).
+  With the amendment above, the product's `Resolution.test_addons_fixture` (`config shape` from an addon directory)
+  passes without a hook that consults `git rev-parse --show-toplevel`. With the checkout-name rule kept (above), the
+  product's `test_check_cmds.Manifests` tests (the rendered `addon-manifest.website` of a clone with no origin) pass
+  without a product-side name override: `discover.load_checkout` keeps the core's name from `nix/pyproject.toml`.
+
 ## 15. Change requests from the first product plugin (odoo-nix-tools)
 
 These requests come from the odoo-nix-tools design. Each names a product, so read it as the product's needs, not core text; the neutrality rule still applies to code.
@@ -2646,7 +2841,8 @@ Stage 10, added after stage 9, retrofits whatever remains into the stage 1-2 cod
 Changes the core contract (`pdn-standards-core/standards/DESIGN.md`) must make for this design. Each names the
 core text it changes, the exact proposal and what odoo-nix does until it lands. CR1 is blocking for addon
 repositories; CR2 and CR3 have product fallbacks; CR4-CR6 are improvements with product fallbacks; CR7 is text
-only. None is applied here: the core is being implemented separately and is not edited from this repository.
+only; CR8 (added later) has a product fallback. None is applied here: the core is being implemented separately and
+is not edited from this repository.
 
 ### 15.CR1: the config file is per checkout (blocking for addons mode)
 
@@ -2783,5 +2979,21 @@ recomputes the bump, so the red run reports nothing actionable.
   tool, §3.1), not `["python-lint", "tests"]`, and its `[project].dependencies` is one group (`deps`) reconciled by
   package name.
 - §4.1 `fleet-entry-core`: unchanged; the odoo fleet uses `branches` (C2 withdrawn).
+
+### 15.CR8: the conformance CI part turns on what `releases` and `ci` need
+
+**Why.** §11.4's CI part renders each fixture with `releases.enable`, `releases.branching = "<name>"` and
+`ci.enable` prepended to its table (stage 7, `testing/conformance._bump_fixture`). A product whose `releases` needs
+another module (`modules.needs`: a release level that comes from conventional commits needs `commits`) which no
+built-in profile turns on gets exit 2 from that render ("module releases needs module commits, which is off"), and
+the part reports the product as non-conformant, though the product's own rule is what refused the render.
+
+**Proposal.** §11.4 CI part: "… with `releases.enable`, `releases.branching = "<name>"`, `ci.enable` and
+`<m>.enable = true` for every `m` in `modules.needs["releases"]` and `modules.needs["ci"]` (transitively) prepended to
+its table, each only when the table does not set it". `test_conformance` adds a stub whose `releases` needs a module
+off in every built-in profile.
+
+**Until it lands:** the product's shipped fixture table turns the needed module on itself (`commits.enable = true`),
+so every render of that fixture, under every profile and in the CI part, has it on.
 
 ---

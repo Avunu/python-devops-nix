@@ -94,6 +94,19 @@ class TestKitTargets(RepoCase):
         self.assertEqual(t.release_branch, "18.0")
         self.assertEqual(t.branches, ["develop"])
 
+    def test_a_clone_keeping_its_table_in_kit(self):
+        """§15.CR1: the opted-in test reads kit/pyproject.toml; there is no root file."""
+        root = kit_bundle(self.tmp / "bundle", in_kit=True)
+        self.assertFalse((root / "pyproject.toml").exists())
+        self.clones[(K, None)] = root
+        self.assertTrue(targets.opted_in(KIT, root))
+        t = targets.load(KIT, K, {}, {})
+        self.assertTrue(t.opted_in)
+        self.assertEqual(t.root, root)
+        self.assertEqual(t.cfg["repo"], K)
+        self.assertEqual(t.facts["shape"], "bundle")
+        self.assertEqual(t.facts["units"], ["alpha"])
+
     def test_fleet_table_carries_the_shape(self):
         root = self.tmp / "bare"
         root.mkdir()

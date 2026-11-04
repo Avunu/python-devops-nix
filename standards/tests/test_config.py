@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from support import KIT, STUB, run_cli
+from support.checkouts import NestedConfigCase, write_profile
 
 from standards_core.common import config
 from standards_core.common.report import ConfigError, EnvError
@@ -633,6 +634,79 @@ class TestConfigCommand(unittest.TestCase):
         code, out, err = self.config("modules.ci")
         self.assertEqual((code, out), (0, "false\n"))
         self.assertIn("notice: repository is not on GitHub", err)
+
+
+class TestNestedConfigCommand(NestedConfigCase):
+    """``identity.config_file = "sub/pyproject.toml"``: ``config`` and ``profile show``
+    resolve the checkout at the work tree's root, with its ``flake.lock``, from the root
+    and from ``sub/`` (§15.CR1)."""
+
+    def test_from_the_root_and_from_below_it(self):
+        root = self.root.resolve()
+        for cwd in (self.root, self.root / "sub"):
+            with self.subTest(cwd=cwd):
+                self.assertEqual(self.fn("config", "major", cwd=cwd), (0, "16\n", ""))
+                code, out, err = self.fn("profile", "show", "--format", "json", cwd=cwd)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out)["config"]["major"], 16)
+        # --pyproject names the file; the root is the directory whose config file it is.
+        code, out, err = self.fn(
+            "config", "repo", "--pyproject", str(root / "sub/pyproject.toml"), cwd=root
+        )
+        self.assertEqual(code, 0, err)
+        # An org profile is read from the root's flake.lock, never one beside the file.
+        self.write(
+            "sub/pyproject.toml",
+            self.read("sub/pyproject.toml").replace(
+                'profile = "recommended"', 'profile = "github:example/profile"'
+            ),
+        )
+        self.write(
+            "sub/flake.lock", '{"version": 7, "root": "root", "nodes": {"root": {}}}'
+        )
+        for cwd in (self.root, self.root / "sub"):
+            with self.subTest(cwd=cwd):
+                code, _, err = self.fn("config", "major", cwd=cwd)
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"{root / 'flake.lock'} does not exist", err)
+                code, _, err = self.fn(
+                    "config",
+                    "major",
+                    "--pyproject",
+                    str(root / "sub/pyproject.toml"),
+                    cwd=cwd,
+                )
+                self.assertIn(f"{root / 'flake.lock'} does not exist", err)
+
+    def test_the_help_names_the_existing_file_rule(self):
+        """One config file with a directory part and no hook: the root is the nearest
+        directory where that file exists, opted in or not."""
+        _, out, _ = self.fn("config", "--help")
+        out = " ".join(out.split())
+        self.assertIn("one where sub/pyproject.toml exists", out)
+        self.assertNotIn("opens the table", out)
+
+    def test_resolve_takes_the_root(self):
+        path = self.root / "sub/pyproject.toml"
+        resolved = config.resolve(self.product, path, root=self.root)
+        self.assertEqual(resolved.cfg["major"], 16)
+        # The default root is the file's directory (a one-file product's root).
+        self.write("sub/.standards-profile/profile.toml", "")
+        text = self.read("sub/pyproject.toml").replace(
+            'profile = "recommended"', 'profile = "./.standards-profile"'
+        )
+        self.write("sub/pyproject.toml", text)
+        with self.assertRaises(ConfigError):
+            config.resolve(self.product, path)  # sub/.standards-profile: empty, invalid
+        with self.assertRaises(ConfigError):
+            config.resolve(
+                self.product, path, root=self.root
+            )  # ./.standards-profile missing
+        write_profile(self.root)
+        self.assertEqual(
+            config.resolve(self.product, path, root=self.root).profile["name"],
+            "example-org",
+        )
 
 
 # The spellings of the table the dev shell's line match and TOML disagree on, beside the

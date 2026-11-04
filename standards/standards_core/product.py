@@ -8,7 +8,7 @@ import string
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from importlib.resources import files
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -117,8 +117,10 @@ class Identity:
     sync_command: str  # "kit-init --sync": the fix named in drift output
     opt_in_hint: str  # the NotOptedIn message (exit 2)
     docs_url: str  # printed by --help
-    # the file holding [tool.<table>], relative to the root
+    # the default file holding [tool.<table>], relative to the root
     config_file: str = "pyproject.toml"
+    # every file the table may live in, relative to the root; () → (config_file,)
+    config_paths: tuple[str, ...] = ()
     # False: a missing config_file reads as {} (not opted in; --standards creates it)
     config_required: bool = True
     # argparse description; "" → f"{name} standards tools. See {docs_url}."
@@ -384,6 +386,9 @@ class Hooks:
     new_target_table: (
         Callable[[Path, Checkout, argparse.Namespace, str], dict[str, Any]] | None
     ) = None
+    # root → the config file relative to the root, from tracked files and their text
+    # only (§3.4); None → identity.config_file. One of identity.config_paths when set.
+    config_file: Callable[[Path], str] | None = None
     # whole data files compared as data
     semantic_compare: Callable[[NS], bool] = lambda ctx: False
     # extra pr-policy problems
@@ -528,6 +533,19 @@ class Product:
         if not _REPORT_KEY.fullmatch(ident.report_key):
             out.append(
                 f"identity.report_key {ident.report_key!r} is not ^[a-z][a-z0-9_]*$"
+            )
+
+        paths = ident.config_paths
+        for rel in (ident.config_file, *paths):
+            pure = PurePosixPath(rel)
+            if not rel or pure.is_absolute() or ".." in pure.parts or "\\" in rel:
+                out.append(f"identity config file {rel!r} is not a relative POSIX path")
+        if len(set(paths)) != len(paths):
+            out.append("identity.config_paths lists a path twice")
+        if paths and ident.config_file not in paths:
+            out.append(
+                f"identity.config_file {ident.config_file!r} is not one of"
+                " identity.config_paths"
             )
 
         mods = self.modules

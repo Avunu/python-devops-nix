@@ -98,10 +98,11 @@ def _repo_name(value: object) -> str | None:
 def default_load_checkout(product: Product, root: Path) -> Checkout:
     """The checkout at ``root`` (DESIGN §3.3); not a git work tree is an ``EnvError``.
 
-    Its name is, in order: ``[project].name``; the name part of ``[tool.<table>] repo``;
-    the name part of the origin remote; and only for a checkout with no origin remote
-    (fixtures, throwaways), the directory's name. A product's ``load_checkout`` wraps
-    this (``lambda root: default_load_checkout(PRODUCT, root)``).
+    Its name is, in order: ``[project].name`` of the config file (``config_path``,
+    wherever it is); the name part of ``[tool.<table>] repo``; the name part of the
+    origin remote; and only for a checkout with no origin remote (fixtures,
+    throwaways), the directory's name. A product's ``load_checkout`` wraps this
+    (``lambda root: default_load_checkout(PRODUCT, root)``), and may replace the name.
     """
     root = Path(root).resolve()
     if not root.is_dir():

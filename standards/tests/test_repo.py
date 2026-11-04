@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from support import KIT, STUB
+from support.checkouts import nested_config_product
 
 from standards_core.common import repo
 from standards_core.common.report import ConfigError, EnvError
@@ -138,6 +139,20 @@ class TestLoadCheckout(unittest.TestCase):
         # Only a checkout with no origin remote is named after its directory.
         git(self.root, "remote", "remove", "origin")
         self.assertEqual(self.name(), "checkout-dir")
+
+    def test_the_name_from_a_config_file_in_a_subdirectory(self):
+        """``[project].name`` of whichever file ``config_path`` names (§3.3), even one
+        below the root (§15.CR1): a product that wants otherwise replaces the name in
+        its own ``load_checkout`` (the kit stub does)."""
+        nested = nested_config_product(STUB)
+        (self.root / "sub").mkdir()
+        (self.root / "sub/pyproject.toml").write_text(
+            '[project]\nname = "from_sub"\n\n[tool.stub-nix]\nschema = 1\n'
+        )
+        git(self.root, "add", "sub/pyproject.toml")
+        self.assertEqual(self.name(nested), "from_sub")
+        (self.root / "sub/pyproject.toml").write_text("[tool.stub-nix]\nschema = 1\n")
+        self.assertEqual(self.name(nested), "checkout-dir")
 
     def test_an_optional_config_file(self):
         (self.root / "pyproject.toml").unlink()

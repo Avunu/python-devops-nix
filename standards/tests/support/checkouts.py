@@ -175,15 +175,19 @@ class CheckoutCase(unittest.TestCase):
         }
 
 
-def nested_config_product(product, rel: str = "sub/pyproject.toml"):
+def nested_config_product(
+    product, rel: str = "sub/pyproject.toml", *, hooks: dict | None = None, **identity
+):
     """``product`` with its config file at ``rel`` below the checkout's root
-    (``identity.config_file`` holds a directory part, §15.CR1)."""
+    (``identity.config_file`` holds a directory part, §15.CR1); ``identity`` and
+    ``hooks`` replace further fields."""
     nested = dataclasses.replace(
         product,
-        identity=dataclasses.replace(product.identity, config_file=rel),
+        identity=dataclasses.replace(product.identity, config_file=rel, **identity),
         hooks=dataclasses.replace(
             product.hooks,
             load_checkout=lambda root: default_load_checkout(nested, root),
+            **(hooks or {}),
         ),
     )
     return nested

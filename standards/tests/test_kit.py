@@ -15,27 +15,33 @@ from pathlib import Path
 
 from kit_nix_tools import product as kit
 from support import KIT
-from support.checkouts import CheckoutCase
+from support.checkouts import CheckoutCase, write_profile
 
-from standards_core.common import config, repoconfig
+from standards_core.commands.repo import rollout
+from standards_core.common import config, nar, pyproject, repoconfig
 from standards_core.scaffold import context, discover, engine, fixtures
 from standards_core.testing import conformance
 from standards_core.testing.fakes import flake_lock, git, run_cli
 
 
 class KitCase(CheckoutCase):
-    """A ``bundle`` checkout (one unit, ``alpha``) opted in with ``profile``."""
+    """A ``bundle`` checkout (one unit, ``alpha``) opted in with ``profile``: no root
+    ``pyproject.toml``, the table in the generated ``kit/pyproject.toml``
+    (``config``)."""
 
     product = KIT
     profile = "recommended"
+    config = kit.KIT_CONFIG
 
     def setUp(self) -> None:
         super().setUp()
-        git(self.root, "rm", "-q", "--cached", "-r", "demo_unit")
+        git(self.root, "rm", "-q", "--cached", "-r", "demo_unit", "pyproject.toml")
         (self.root / "demo_unit" / "__init__.py").unlink()
+        (self.root / "pyproject.toml").unlink()
         self.write(
-            "pyproject.toml",
-            f'[tool.kit-nix]\nschema = 1\nprofile = "{self.profile}"\n',
+            self.config,
+            kit.BUNDLE_PYPROJECT
+            + f'[tool.kit-nix]\nschema = 1\nprofile = "{self.profile}"\n',
         )
         self.write("alpha/__unit__.toml", 'name = "alpha"\nversion = "18.0.1.0.0"\n')
         self.write("alpha/__init__.py", "")
@@ -44,8 +50,8 @@ class KitCase(CheckoutCase):
 
     def table(self, extra: str) -> None:
         self.write(
-            "pyproject.toml",
-            self.read("pyproject.toml").replace(
+            self.config,
+            self.read(self.config).replace(
                 "[tool.kit-nix]\n", f"[tool.kit-nix]\n{extra}", 1
             ),
         )
@@ -182,23 +188,287 @@ class TestBothShapes(unittest.TestCase):
 
 
 class TestOptIn(KitCase):
-    def test_a_bundle_with_no_config_file(self):
-        git(self.root, "rm", "-q", "pyproject.toml")
-        self.commit("no config")
+    def test_a_bundle_whose_kit_project_has_no_table(self):
+        self.write(self.config, kit.BUNDLE_PYPROJECT)
+        self.commit("no table")
         code, out = self.check()
         self.assertEqual(code, 2, out)
         self.assertIn("has not opted in to kit-nix standards", out)
         code, _, err = self.fn("sync", "--write", "--standards", "minimal")
         self.assertEqual(code, 0, err)
+        # The table goes into kit/pyproject.toml, after what kit-init generated there.
+        text = self.read(self.config)
+        self.assertTrue(text.startswith(kit.BUNDLE_PYPROJECT), text)
         self.assertEqual(
-            tomllib.loads(self.read("pyproject.toml")),
-            {"tool": {"kit-nix": {"schema": 1, "profile": "minimal"}}},
+            tomllib.loads(text)["tool"]["kit-nix"], {"schema": 1, "profile": "minimal"}
         )
+        self.assertFalse((self.root / "pyproject.toml").exists())
         # The seed made the flake: the bundle had none.
         self.assertIn("kit-nix.lib.mkFlake", self.read("flake.nix"))
         self.fake_locks()
         self.commit("opted in")
         self.assertEqual(self.check()[0], 0)
+
+    def test_a_bundle_whose_kit_directory_has_only_other_files(self):
+        """The file is created where its directory exists (§4.4)."""
+        git(self.root, "rm", "-q", self.config)
+        self.write("kit/README.md", "# kit\n")
+        self.commit("no kit project")
+        self.assertEqual(KIT.hooks.config_file(self.root), self.config)
+        code, _, err = self.fn("sync", "--write", "--standards", "minimal")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            tomllib.loads(self.read(self.config)),
+            {"tool": {"kit-nix": {"schema": 1, "profile": "minimal"}}},
+        )
+
+    def test_the_preflight_refuses_a_bundle_without_kit(self):
+        git(self.root, "rm", "-q", "-r", "kit")
+        self.commit("no kit")
+        self.assertEqual(KIT.hooks.config_file(self.root), "pyproject.toml")
+        before = self.snapshot()
+        code, _, err = self.fn("sync", "--write", "--standards", "minimal")
+        self.assertEqual(code, 2, err)
+        self.assertIn(
+            "a bundle keeps [tool.kit-nix] in kit/pyproject.toml, and this checkout"
+            " has no kit/ directory",
+            err,
+        )
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.root / "pyproject.toml").exists())
+
+
+class TestSyncFromKit(KitCase):
+    """kit/ holds the checkout's config file, so it is no checkout of its own: sync from
+    there is refused (exit 2) and writes nothing under kit/ (§6.2)."""
+
+    def test_check_and_write_from_kit_are_refused(self):
+        self.synced()
+        kit_dir = self.root / "kit"
+        before = self.snapshot()
+        message = (
+            f"kit/pyproject.toml belongs to the checkout at {self.root.resolve()}: run"
+            " kit-init --sync there"
+        )
+        code, out, err = self.fn("sync", "--check", cwd=kit_dir)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn(message, err)
+        code, out, err = self.fn("sync", "--check", "--format", "json", cwd=kit_dir)
+        self.assertEqual(code, 2, out + err)
+        self.assertIn(message, out)
+        code, _, err = self.fn("sync", "--write", cwd=kit_dir)
+        self.assertEqual(code, 2, err)
+        self.assertIn(message, err)
+        code, _, err = self.fn("sync", "--write", "--standards", "minimal", cwd=kit_dir)
+        self.assertEqual(code, 2, err)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(sorted(p.name for p in kit_dir.iterdir()), ["pyproject.toml"])
+        # The root still syncs clean.
+        self.assertEqual(self.check()[0], 0)
+
+    def test_a_unit_directory_with_its_own_pyproject_is_not_refused(self):
+        """A unit's own pyproject.toml is not the checkout's config file: sync there
+        reads it, and it has not opted in (the opt-in hint, not the refusal)."""
+        self.write("alpha/pyproject.toml", '[project]\nname = "alpha"\n')
+        self.commit("unit project")
+        self.synced()
+        code, out, err = self.fn("sync", "--check", cwd=self.root / "alpha")
+        self.assertEqual(code, 2, out + err)
+        self.assertNotIn("belongs to the checkout", out + err)
+
+
+# A kit org profile, pinned in the root's flake.lock.
+KIT_ORG = """schema = 1
+name = "example-org"
+description = "Example Org's kit standards (a test fixture)"
+extends = "recommended@1.0"
+
+[org]
+publisher = "Example Org"
+"""
+
+
+class TestConfigInKit(KitCase):
+    """§15.CR1: the table in ``kit/pyproject.toml``, the checkout's root the work
+    tree's, from the root and from ``kit/``."""
+
+    profile = "github:example/profile"
+    rev = "c" * 40
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The locked profile tree, where pin-path finds it without a fetch: under the
+        # root's pins directory, beside the root's flake.lock.
+        tree = write_profile(
+            self.root, rel=f".dev-dist/pins/profile-{self.rev}", text=KIT_ORG
+        )
+        lock = {"version": 7, "root": "root", "nodes": {"root": {"inputs": {}}}}
+        lock["nodes"]["standards-profile"] = {
+            "flake": False,
+            "locked": {
+                "type": "github",
+                "owner": "example",
+                "repo": "profile",
+                "rev": self.rev,
+                "narHash": nar.nar_hash(tree),
+            },
+            "original": {"type": "github", "owner": "example", "repo": "profile"},
+        }
+        lock["nodes"]["root"]["inputs"]["standards-profile"] = "standards-profile"
+        self.write("flake.lock", json.dumps(lock, indent=2))
+        self.commit("locked profile")
+
+    def test_the_hook_and_the_root(self):
+        self.assertEqual(KIT.hooks.config_file(self.root), "kit/pyproject.toml")
+        self.assertEqual(
+            pyproject.config_path(KIT, self.root), self.root / "kit/pyproject.toml"
+        )
+        kit_dir = self.root.resolve() / "kit"
+        for start in (self.root, kit_dir):
+            with self.subTest(start=start):
+                self.assertEqual(
+                    pyproject.checkout_root(KIT, start), self.root.resolve()
+                )
+        self.assertEqual(
+            pyproject.root_for(KIT, kit_dir / "pyproject.toml"), self.root.resolve()
+        )
+        # Without a kit/ directory the root pyproject.toml is the config file.
+        git(self.root, "rm", "-q", "-r", "--cached", "kit")
+        self.assertEqual(KIT.hooks.config_file(self.root), "pyproject.toml")
+
+    def test_config_and_profile_show_from_the_root_and_from_kit(self):
+        for cwd in (self.root, self.root / "kit"):
+            with self.subTest(cwd=cwd):
+                code, out, err = self.fn("config", "org.publisher", cwd=cwd)
+                self.assertEqual((code, out, err), (0, "Example Org\n", ""))
+                code, out, err = self.fn("config", "profile.rev", cwd=cwd)
+                self.assertEqual((code, out), (0, self.rev + "\n"), err)
+                # The root's series discovery: the units sit at the root, not in kit/.
+                self.assertEqual(
+                    self.fn("config", "series", cwd=cwd)[:2], (0, "18.0\n")
+                )
+                code, out, err = self.fn("profile", "show", "--format", "json", cwd=cwd)
+                self.assertEqual(code, 0, err)
+                doc = json.loads(out)
+                self.assertEqual(
+                    (doc["profile"]["source"], doc["profile"]["rev"]),
+                    ("github:example/profile", self.rev),
+                )
+                self.assertEqual(doc["config"]["org"]["publisher"], "Example Org")
+        # --pyproject names the file; its root is still the checkout's.
+        code, out, err = self.fn(
+            "config", "profile.rev", "--pyproject", "kit/pyproject.toml"
+        )
+        self.assertEqual((code, out), (0, self.rev + "\n"), err)
+        # The lock is the root's: one beside kit/pyproject.toml is not read.
+        self.write(
+            "kit/flake.lock", '{"version": 7, "root": "root", "nodes": {"root": {}}}'
+        )
+        self.assertEqual(
+            self.fn("config", "profile.rev", cwd=self.root / "kit")[:2],
+            (0, self.rev + "\n"),
+        )
+
+    def test_from_a_unit_with_a_pyproject_of_its_own(self):
+        """§14 Stage 10: a unit directory's own pyproject.toml, which does not open the
+        table, does not shadow the checkout's kit/pyproject.toml."""
+        self.write("alpha/pyproject.toml", '[project]\nname = "kit-unit-alpha"\n')
+        self.commit("unit project")
+        unit = self.root / "alpha"
+        self.assertEqual(KIT.hooks.config_file(unit), "pyproject.toml")
+        self.assertEqual(pyproject.checkout_root(KIT, unit), self.root.resolve())
+        code, out, err = self.fn("config", "org.publisher", cwd=unit)
+        self.assertEqual((code, out, err), (0, "Example Org\n", ""))
+        code, out, err = self.fn("profile", "show", "--format", "json", cwd=unit)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["profile"]["rev"], self.rev)
+
+    def test_the_name_is_not_the_kit_project_s(self):
+        """kit/pyproject.toml's [project].name names the dev-shell project, not the
+        repository: the stub's load_checkout takes the name from the table's repo, else
+        the origin, else the directory (the core default would take [project].name)."""
+        self.write(
+            self.config,
+            '[project]\nname = "kit-dev-shell"\n\n' + self.read(self.config),
+        )
+        self.commit("kit project name")
+        self.assertEqual(
+            context.default_load_checkout(KIT, self.root).name, "kit-dev-shell"
+        )
+        self.assertEqual(KIT.hooks.load_checkout(self.root).name, "demo")
+        self.table('repo = "example/kit-bundle"\n')
+        self.assertEqual(KIT.hooks.load_checkout(self.root).name, "kit-bundle")
+
+    def test_the_help_names_both_files(self):
+        _, out, _ = self.fn("config", "--help")
+        self.assertIn("pyproject.toml or kit/pyproject.toml", " ".join(out.split()))
+        self.assertIn(
+            "the checkout root's, beside its flake.nix", " ".join(out.split())
+        )
+
+    def test_rollout_sets_the_profile_ref_in_kit(self):
+        path = pyproject.config_path(KIT, self.root)
+        self.assertTrue(rollout.set_profile_ref(KIT, path, "github:example/profile/v2"))
+        self.assertIn('profile = "github:example/profile/v2"\n', self.read(self.config))
+        self.assertTrue(self.read(self.config).startswith(kit.BUNDLE_PYPROJECT))
+        self.assertFalse((self.root / "pyproject.toml").exists())
+
+
+class TestHistoryInKit(KitCase):
+    """§15.CR1: history reads the table from ``kit/pyproject.toml``, and from the file
+    each commit kept it in."""
+
+    def synced(self) -> None:
+        code, _, err = self.fn("sync", "--write")
+        self.assertEqual(code, 0, err)
+        self.fake_locks()
+        self.commit("synced")
+        code, out = self.check()
+        self.assertEqual(code, 0, out)
+
+    def assertRetracts(self) -> None:
+        code, out = self.check()
+        self.assertEqual(code, 1, out)
+        self.assertIn(
+            ".gitignore (sentinel): the lint block goes with python-lint", out
+        )
+        code, _, err = self.fn("sync", "--write")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("lint (managed)", self.read(".gitignore"))
+        self.commit("retracted")
+        self.assertEqual(self.check()[0], 0)
+
+    def test_a_module_turned_off_in_a_commit_is_retracted(self):
+        self.synced()
+        self.write(
+            self.config, self.read(self.config).replace("recommended", "minimal")
+        )
+        self.commit("minimal")
+        states = engine.history(KIT, self.root)
+        self.assertTrue(context.ever(states, lambda h: h.modules["python-lint"]))
+        self.assertRetracts()
+
+    def test_a_table_that_moved_into_kit(self):
+        # Opted in with a root pyproject.toml before kit/ existed.
+        git(self.root, "rm", "-q", "-r", "kit")
+        self.write(
+            "pyproject.toml", '[tool.kit-nix]\nschema = 1\nprofile = "recommended"\n'
+        )
+        self.commit("root table")
+        self.assertEqual(engine.config_file(KIT, self.root), "pyproject.toml")
+        self.synced()
+        # The table moves into kit/pyproject.toml, under minimal.
+        git(self.root, "rm", "-q", "pyproject.toml")
+        self.write(
+            self.config,
+            kit.BUNDLE_PYPROJECT + '[tool.kit-nix]\nschema = 1\nprofile = "minimal"\n',
+        )
+        self.commit("moved")
+        self.assertEqual(engine.config_file(KIT, self.root), self.config)
+        self.assertEqual(
+            engine.history_paths(KIT, self.root), ["pyproject.toml", self.config]
+        )
+        self.assertRetracts()
 
 
 class TestMinimalRetracts(KitCase):
@@ -215,8 +485,7 @@ class TestMinimalRetracts(KitCase):
         self.commit("synced")
         self.assertEqual(self.check()[0], 0)
         self.write(
-            "pyproject.toml",
-            self.read("pyproject.toml").replace("recommended", "minimal"),
+            self.config, self.read(self.config).replace("recommended", "minimal")
         )
         code, out = self.check()
         self.assertEqual(code, 1, out)

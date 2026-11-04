@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 from unittest import mock
 
-from support import STUB, run_cli
-from support.repos import R, RepoCase, write_unit
+from kit_nix_tools.product import BUNDLE_PYPROJECT
+from support import KIT, STUB, run_cli
+from support.repos import K, R, RepoCase, kit_bundle, write_unit
 
 from standards_core.commands.repo import rollout, targets
 from standards_core.common.github import Result
@@ -210,3 +211,49 @@ class TestRun(RolloutCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(out.strip(), f"{R}: already current")
         self.assertEqual(self.gh.cli_calls, [])
+
+
+class TestProfileToInKit(RepoCase):
+    """§15.CR1: ``--profile-to`` rewrites the clone's config file, kit/pyproject.toml,
+    and creates no root pyproject.toml."""
+
+    product = KIT
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.root = kit_bundle(self.tmp / "bundle", in_kit=True)
+        self.clones[(K, None)] = self.root
+        self.commands: list[list[str]] = []
+        for target, name, kwargs in (
+            (targets, "clone_branch", {"return_value": "develop"}),
+            (rollout, "_org_profile", {"return_value": True}),
+            (rollout, "sh", {"side_effect": self.sh}),
+        ):
+            p = mock.patch.object(target, name, **kwargs)
+            p.start()
+            self.addCleanup(p.stop)
+        self.gh.cli_results[("pr", "create")] = Result(
+            0, "https://github.com/example/kit-bundle/pull/2\n"
+        )
+
+    def sh(self, cmd: list[str], cwd: Path) -> str:
+        self.commands.append(cmd)
+        if cmd[:3] == ["nix", "flake", "update"]:
+            (cwd / "flake.lock").write_text(
+                '{"version": 7, "root": "root", "nodes": {"root": {}}}'
+            )
+        if cmd[:3] == ["git", "status", "--porcelain"]:
+            return git(cwd, "status", "--porcelain")
+        return ""
+
+    def test_the_profile_line_in_kit_changes(self):
+        code, out, err = run_cli(
+            KIT, "repo", "rollout", "--repo", K, "--profile-to", "github:example/p/v2"
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("https://github.com/example/kit-bundle/pull/2", out)
+        text = (self.root / "kit/pyproject.toml").read_text()
+        self.assertTrue(text.startswith(BUNDLE_PYPROJECT), text)
+        self.assertIn('profile = "github:example/p/v2"\n', text)
+        self.assertFalse((self.root / "pyproject.toml").exists())
+        self.assertIn(["nix", "flake", "update", "standards-profile"], self.commands)

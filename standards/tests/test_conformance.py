@@ -6,8 +6,10 @@ import dataclasses
 import io
 import json
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
+from types import MappingProxyType
 
 from support import KIT, STUB, product_copy, without_fixtures
 
@@ -406,6 +408,95 @@ class TestCiPart(unittest.TestCase):
     def test_only_post_merge_bump_branchings_are_rendered(self):
         self.assertEqual(conformance._ci_push(STUB), [])
         self.assertEqual(conformance._ci_push(without_fixtures(KIT)), [])
+
+    def needy_kit(self):
+        """A kit whose ``releases`` needs ``commits``, which needs ``hygiene``: both off
+        in every built-in profile (``releases`` too, so the built-ins resolve)."""
+        product = self.kit_copy()
+        product = dataclasses.replace(
+            product,
+            modules=dataclasses.replace(
+                product.modules,
+                needs=MappingProxyType(
+                    {"releases": ("commits",), "commits": ("hygiene",)}
+                ),
+            ),
+        )
+        path = product.data_root / "profiles" / "recommended@1.0.toml"
+        text = path.read_text()
+        for module in ("hygiene", "commits", "releases"):
+            old = f"[{module}]\nenable = true\n"
+            self.assertIn(old, text)
+            text = text.replace(old, f"[{module}]\nenable = false\n")
+        path.write_text(text)
+        return product
+
+    def test_the_ci_part_turns_on_what_releases_and_ci_need(self):
+        """§15.CR8: the render turns on every module ``releases`` and ``ci`` need,
+        transitively, so a product's own needs rule does not fail the part."""
+        product = self.needy_kit()
+        self.assertEqual(
+            conformance.needed(product, ("releases", "ci")), ["hygiene", "commits"]
+        )
+        self.assertEqual(conformance.check(product), [])
+        bumped = conformance._bump_fixture(
+            product, product.fixtures["bundle"], "develop+series"
+        )
+        self.assertEqual(
+            bumped.table,
+            "releases.enable = true\n"
+            'releases.branching = "develop+series"\n'
+            "ci.enable = true\n"
+            "hygiene.enable = true\n"
+            "commits.enable = true\n",
+        )
+
+    def test_a_dotted_line_under_another_header_is_not_the_key(self):
+        """Below a deeper table's header, ``ci.enable = …`` belongs to that table: the
+        key is still added, in the table's own body."""
+        table = '[tool.kit-nix.org.extra]\nci.enable = false\nname = "x"\n'
+        self.assertEqual(
+            conformance._with_key(table, "ci.enable", "true"),
+            "ci.enable = true\n" + table,
+        )
+        table = "[[tool.kit-nix.items]]\nci.enable = false\n"
+        self.assertEqual(
+            conformance._with_key(table, "ci.enable", "true"),
+            "ci.enable = true\n" + table,
+        )
+        # In the table's own body it is the key.
+        table = "ci.enable = false\n\n[tool.kit-nix.org.extra]\n"
+        self.assertEqual(conformance._with_key(table, "ci.enable", "true"), table)
+
+    def test_a_key_the_fixture_sets_is_left_to_it(self):
+        product = self.needy_kit()
+        fixture = Fixture(
+            table="commits.enable = false\n\n[tool.kit-nix.hygiene]\n# own\n",
+            files=product.fixtures["bundle"].files,
+        )
+        bumped = conformance._bump_fixture(product, fixture, "develop+series")
+        self.assertIn("commits.enable = false\n", bumped.table)
+        self.assertNotIn("commits.enable = true", bumped.table)
+        # Under the module's own header, not as a dotted key that would define it twice.
+        self.assertIn("[tool.kit-nix.hygiene]\nenable = true\n# own\n", bumped.table)
+        doc = tomllib.loads("[tool.kit-nix]\n" + bumped.table)["tool"]["kit-nix"]
+        self.assertEqual(
+            (
+                doc["releases"]["enable"],
+                doc["commits"]["enable"],
+                doc["hygiene"]["enable"],
+            ),
+            (True, False, True),
+        )
+        # The fixture's own commits.enable = false stands, and the product's rule
+        # refuses it: the part reports the render.
+        product = dataclasses.replace(
+            product, fixtures=MappingProxyType({"bundle": fixture})
+        )
+        self.assertProblem(
+            product,
+            "fixture bundle x develop+series: sync --write --offline exited 2",
+        )
 
     def test_push_problem(self):
         branch = "develop"

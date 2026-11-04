@@ -2,7 +2,9 @@
 
 Only a checkout that opted in is synced: one whose config file has a
 ``[tool.<table>]`` table. ``--standards <profile>`` creates the table; without either,
-both modes exit 2 with the opt-in hint and write nothing.
+both modes exit 2 with the opt-in hint and write nothing. A directory whose config
+file belongs to the checkout above it (a table kept in a subdirectory's file) is
+refused the same way: run sync at that checkout's root.
 
 ``--write`` runs both phases: phase A writes the files the flake needs (the flake,
 ``.envrc``), locks the flake, and re-executes sync from the engine the lock pins when
@@ -29,7 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from standards_core.commands import help_text
-from standards_core.common import repo, skew
+from standards_core.common import pyproject, repo, skew
 from standards_core.common.report import (
     CLEAN,
     DRIFT,
@@ -220,16 +222,33 @@ def _error_path(product: Product, root: Path, e: Exception) -> str:
     return "."
 
 
+def refuse_claimed(product: Product, root: Path) -> None:
+    """Refuse (exit 2) a directory whose config file belongs to the checkout above it:
+    from ``kit/`` of a checkout keeping its table in ``kit/pyproject.toml``, sync would
+    otherwise take ``kit/`` for a checkout of its own and render a second tree there
+    (DESIGN §6.2, §15.CR1)."""
+    owner = pyproject.claimed_by(product, root)
+    if owner is None:
+        return
+    rel = pyproject.config_rel(product, owner)
+    raise ConfigError(
+        f"{rel} belongs to the checkout at {owner}: run"
+        f" {product.identity.sync_command} there"
+    )
+
+
 def check_reported(product: Product, root: Path, args: argparse.Namespace) -> int:
     """``--check``, where an error that stops the plan (not opted in, not a repository, a
     schema error, a malformed local region, a crash) is still a report in ``json`` and
     ``github``: the fleet audit and the CI annotations always get a document."""
     if args.format == "text":
         repo.toplevel(root)
+        refuse_claimed(product, root)
         return check(product, root, args)
     name = product.identity.name
     try:
         repo.toplevel(root)
+        refuse_claimed(product, root)
         return check(product, root, args)
     except StandardsError as e:
         code, problem, path = e.code, str(e), _error_path(product, root, e)
@@ -559,6 +578,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.check:
         return check_reported(product, root, args)
     repo.toplevel(root)
+    refuse_claimed(product, root)
     if os.environ.get(bootstrap.env_name(product, "OFFLINE")) == "1":
         args.offline = True
     try:

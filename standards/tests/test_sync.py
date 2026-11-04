@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from support import STUB, git, product_copy, run_cli
-from support.checkouts import CheckoutCase, write_profile
+from support.checkouts import CheckoutCase, nested_config_product, write_profile
 
 from standards_core.common.report import DRIFT
 from standards_core.scaffold import engine
@@ -785,6 +785,35 @@ class TestConfigCreation(CheckoutCase):
         self.table("frobnicate = true\n")
         self.commit()
         self.assertEqual(self.check()[0], 2)
+
+
+class TestConfigFileInAMissingDirectory(CheckoutCase):
+    """§15.CR1 point 2: an optional config file is created only where its directory
+    exists; without ``sub/``, ``--standards`` is exit 2 and writes nothing."""
+
+    product = nested_config_product(
+        STUB,
+        config_required=False,
+        hooks={"new_target_table": lambda *a: {"major": 16}},
+    )
+
+    def test_the_file_is_not_created(self):
+        git(self.root, "rm", "-q", "pyproject.toml")
+        self.commit("no config file")
+        self.assertFalse((self.root / "sub").exists())
+        before = self.snapshot()
+        code, _, err = self.fn("sync", "--write", "--standards", "minimal")
+        self.assertEqual(code, 2, err)
+        self.assertIn("sub/pyproject.toml cannot be created: sub/ does not exist", err)
+        self.assertEqual(self.snapshot(), before)
+        self.assertFalse((self.root / "sub").exists())
+        # With the directory there, the same command creates the file.
+        self.write("sub/README.md", "# sub\n")
+        self.commit("sub")
+        code, _, err = self.fn("sync", "--write", "--standards", "minimal")
+        self.assertEqual(code, 0, err)
+        table = tomllib.loads(self.read("sub/pyproject.toml"))["tool"]["stub-nix"]
+        self.assertEqual(table, {"schema": 1, "profile": "minimal", "major": 16})
 
 
 class TestSymlinks(CheckoutCase):

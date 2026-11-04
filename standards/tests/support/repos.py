@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from kit_nix_tools.product import BUNDLE_PYPROJECT
 from stub_nix_tools.product import PRODUCT as STUB
 
 from standards_core.commands.repo import targets
@@ -52,13 +53,18 @@ def write_unit(
     return root
 
 
-def kit_bundle(root: Path, table: str = "") -> Path:
-    """A kit ``bundle`` checkout (unit ``alpha`` on series 18.0) at ``root``."""
+def kit_bundle(root: Path, table: str = "", *, in_kit: bool = False) -> Path:
+    """A kit ``bundle`` checkout (unit ``alpha`` on series 18.0) at ``root``; with
+    ``in_kit`` the table is in a generated ``kit/pyproject.toml`` and there is no root
+    ``pyproject.toml`` (§15.CR1)."""
     root.mkdir(parents=True)
     git(root, "init", "-q", "-b", "develop")
-    (root / "pyproject.toml").write_text(
-        f'[tool.kit-nix]\nschema = 1\nprofile = "recommended"\nrepo = "{K}"\n{table}'
-    )
+    text = f'[tool.kit-nix]\nschema = 1\nprofile = "recommended"\nrepo = "{K}"\n{table}'
+    if in_kit:
+        (root / "kit").mkdir()
+        (root / "kit/pyproject.toml").write_text(BUNDLE_PYPROJECT + text)
+    else:
+        (root / "pyproject.toml").write_text(text)
     (root / "alpha").mkdir()
     (root / "alpha/__unit__.toml").write_text(
         'name = "alpha"\nversion = "18.0.1.0.0"\n'

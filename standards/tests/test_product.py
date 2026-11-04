@@ -118,6 +118,11 @@ class TestDefaults(unittest.TestCase):
         self.assertEqual(STUB.identity.config_file, "pyproject.toml")
         self.assertTrue(STUB.identity.config_required)
         self.assertFalse(KIT.identity.config_required)
+        self.assertEqual(STUB.identity.config_paths, ())
+        self.assertIsNone(STUB.hooks.config_file)
+        self.assertEqual(
+            KIT.identity.config_paths, ("pyproject.toml", "kit/pyproject.toml")
+        )
         self.assertEqual(STUB.engine.version_file, "version.txt")
         self.assertEqual(STUB.engine.base_input, "python-devops-nix")
         self.assertEqual(STUB.rollout_inputs, ("stub-nix", "standards-profile"))
@@ -212,6 +217,28 @@ class TestPostInitRules(unittest.TestCase):
         )
         self.refused(
             "identity.report_key", identity=replace(ident, report_key="stub-nix")
+        )
+
+    def test_config_paths(self):
+        ident = STUB.identity
+        for rel in ("/abs/pyproject.toml", "../pyproject.toml", "a\\b.toml", ""):
+            with self.subTest(rel=rel):
+                self.refused(
+                    "is not a relative POSIX path",
+                    identity=replace(ident, config_paths=("pyproject.toml", rel)),
+                )
+        self.refused(
+            "identity.config_paths lists a path twice",
+            identity=replace(ident, config_paths=("pyproject.toml", "pyproject.toml")),
+        )
+        self.refused(
+            "identity.config_file 'pyproject.toml' is not one of",
+            identity=replace(ident, config_paths=("nix/pyproject.toml",)),
+        )
+        product(
+            identity=replace(
+                ident, config_paths=("pyproject.toml", "nix/pyproject.toml")
+            )
         )
 
     def test_modules(self):

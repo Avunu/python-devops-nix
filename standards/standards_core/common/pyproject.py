@@ -1,6 +1,8 @@
 """The config file and its ``[tool.<table>]`` table: loading them, and whether a checkout opted in.
 
-The file is ``product.identity.config_file`` (``pyproject.toml`` by default) and the table
+The file is ``config_path(product, root)``: ``hooks.config_file(root)`` when the product
+keeps the table in one of several files (``identity.config_paths``), else
+``identity.config_file`` (``pyproject.toml`` by default), and the table is
 ``[tool.<identity.table>]``. Resolving the table into the configuration the tools act on
 (profiles, defaults, module switches) is ``standards_core.common.config``; this module
 only reads.
@@ -53,9 +55,68 @@ def parse(text: str, path: Path) -> dict:
         raise ConfigError(f"{path}: {e}") from e
 
 
+def config_paths(product: Product) -> tuple[str, ...]:
+    """Every file, relative to a checkout's root, the table may live in:
+    ``identity.config_paths``, else ``(identity.config_file,)``."""
+    identity = product.identity
+    return identity.config_paths or (identity.config_file,)
+
+
+def config_rel(product: Product, root: Path) -> str:
+    """The checkout's config file relative to ``root``: ``hooks.config_file(root)``,
+    else ``identity.config_file``. A hook's answer outside ``identity.config_paths``
+    (when those are set) is a ``ConfigError``."""
+    hook = product.hooks.config_file
+    if hook is None:
+        return product.identity.config_file
+    rel = hook(root)
+    paths = product.identity.config_paths
+    if paths and rel not in paths:
+        raise ConfigError(
+            f"hooks.config_file gave {rel!r} for {root}, not one of"
+            f" identity.config_paths ({', '.join(paths)})"
+        )
+    return rel
+
+
 def config_path(product: Product, root: Path) -> Path:
-    """The checkout's config file: ``<root>/<identity.config_file>``."""
-    return root / product.identity.config_file
+    """The checkout's config file: ``<root>/<config_rel(product, root)>``. Every core
+    read and write of the table goes through it (DESIGN §15.CR1)."""
+    return root / config_rel(product, root)
+
+
+def _owner(product: Product, path: Path, start: Path, top: Path) -> Path:
+    """The outermost directory from ``start`` up to ``top`` whose config file is
+    ``path``, else ``start``: a checkout that keeps its table in a subdirectory
+    (``kit/pyproject.toml``) claims the file over that subdirectory, where the same file
+    would read as a root ``pyproject.toml``."""
+    owner = start
+    for directory in (start, *start.parents):
+        if config_path(product, directory) == path:
+            owner = directory
+        if directory == top:
+            break
+    return owner
+
+
+def _toplevel(start: Path) -> Path | None:
+    try:
+        return repo.toplevel(start).resolve()
+    except EnvError:
+        return None
+
+
+def per_checkout(product: Product) -> bool:
+    """Whether the product's config file can differ between checkouts: a
+    ``hooks.config_file``, or more than one ``identity.config_paths``."""
+    return product.hooks.config_file is not None or len(config_paths(product)) > 1
+
+
+def _opens_table(product: Product, path: Path) -> bool:
+    try:
+        return opt_in_line(product, read(path))
+    except EnvError:
+        return False
 
 
 def checkout_root(product: Product, start: Path | None = None) -> Path:
@@ -63,20 +124,64 @@ def checkout_root(product: Product, start: Path | None = None) -> Path:
 
     It is the nearest directory ``d``, up to the git work tree's root, for which
     ``config_path(product, d)`` is a file, else the work tree's root (outside git,
-    ``start``). The root is never derived from the config file's location, which may
-    sit in a subdirectory of it (DESIGN §15.CR1).
+    ``start``). For a product whose config file differs between checkouts
+    (``per_checkout``), a directory whose file opens ``[tool.<table>]`` (``opt_in_line``)
+    is preferred: from an addon or package directory with a ``pyproject.toml`` of its own
+    that does not opt in, the root is the opted-in checkout above it, whose table may be
+    in another file (``nix/pyproject.toml``); only when no file up to the work tree's root
+    opens the table is the nearest existing one taken. When an outer directory up to the
+    work tree's root has that same file as its config file, the outermost such directory
+    is the root. The root is never derived from the config file's location, which may sit
+    in a subdirectory of it (DESIGN §15.CR1).
     """
     here = (start or Path.cwd()).resolve()
-    try:
-        top = repo.toplevel(here).resolve()
-    except EnvError:
+    top = _toplevel(here)
+    if top is None:
         return here
+    wide = per_checkout(product)
+    nearest: tuple[Path, Path] | None = None
     for directory in (here, *here.parents):
-        if config_path(product, directory).is_file():
-            return directory
+        path = config_path(product, directory)
+        if path.is_file():
+            if nearest is None:
+                nearest = (path, directory)
+                if not wide:
+                    break
+            if _opens_table(product, path):
+                return _owner(product, path, directory, top)
         if directory == top:
             break
+    if nearest is not None:
+        return _owner(product, *nearest, top)
     return top
+
+
+def claimed_by(product: Product, directory: Path) -> Path | None:
+    """The outer checkout root whose config file is ``directory``'s own (``kit/`` of a
+    checkout keeping its table in ``kit/pyproject.toml``), else ``None``. Never an outer
+    root for a product with one root-level config file."""
+    if not per_checkout(product):
+        return None
+    directory = directory.resolve()
+    top = _toplevel(directory)
+    if top is None:
+        return None
+    owner = _owner(product, config_path(product, directory), directory, top)
+    return owner if owner != directory else None
+
+
+def root_for(product: Product, path: Path) -> Path:
+    """The checkout root whose config file is ``path`` (``--pyproject``): the outermost
+    ancestor ``d`` of ``path``, up to the git work tree's root, with
+    ``config_path(product, d) == path``, else ``path``'s directory. The directory is
+    resolved, the file name is not: a symlinked config file belongs to the checkout the
+    link is in, not the one its target is in."""
+    path = path.absolute()
+    parent = path.parent.resolve()
+    top = _toplevel(parent) if parent.is_dir() else None
+    if top is None:
+        return parent
+    return _owner(product, parent / path.name, parent, top)
 
 
 def config_text(product: Product, root: Path) -> str:
