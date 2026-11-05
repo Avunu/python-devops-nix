@@ -1177,7 +1177,7 @@ Parsing (`blocks.scan(text, product, comment) -> list[Found]`):
     literal `${`; `${` opens an interpolation as above; any other `''` ends the string;
   - paths and URIs need no rule: they contain no braces or quotes.
 
-  odoo-ruckus's `flake.nix` (`port="''${ODOO_NIX_HTTP_PORT:-8069}"` inside an indented string) is the regression
+  a client project's `flake.nix` (`port="''${ODOO_NIX_HTTP_PORT:-8069}"` inside an indented string) is the regression
   shape (neutral copy in `test_nixattrs`).
 - The path is followed from the outermost `{ … }` of the file: each step is a child `name = {` whose value is an
   attrset (`name = {` on its line).
@@ -1305,7 +1305,7 @@ The plan's odoo uses:
 
 - `.pre-commit-config.yaml` (B3);
 - `.envrc` (the dev-shell module's whole file with a local region), with `legacy` returning the `.envrc` texts
-  `odoo-init` has written (for example odoo-ruckus's `watch_file pyproject.toml uv.lock modules.txt` +
+  `odoo-init` has written (for example a client project's `watch_file pyproject.toml uv.lock modules.txt` +
   `use flake . --no-pure-eval`), so those opt in silently and any other hand-written `.envrc` is refused with its
   diff, as frappe does with `APP_TEMPLATE[".envrc"]`;
 - `flake.nix` through `claims` (§5.6.4).
@@ -2187,20 +2187,20 @@ repositories before it was resolved. All 31 were accepted, some with a refinemen
 | 2 | The bump push is refused by the integration ruleset | yes: `integration.json` `"bypass_actors": []`; `bypass_actors()` has only two forms | Accepted. Core `bypass_actors` gains `integration:<id>`; `integration.json` uses `{integration_bypass}` (`[]` except under `post-merge-bump`) (§2.2, §2.6, §4.2, §7.3, §8.2); tests in `test_repo_policy`/`test_bump` |
 | 3 | Series- and shape-dependent config cannot be computed | yes | Accepted. `derive(cfg, checkout)`, `Branching.release_branch(cfg, facts)`, `Hooks.release_branch(cfg, modules, facts)`, scheme methods take `facts`; `RepoConfig.facts`, `Target.facts` (§2.2, §3.1, §3.3, §7.1, §8.2, §11.1) |
 | 4 | `self.submodules = true;` breaks lock checks | yes: both flakes; frappe ignores it only by regex | Accepted. Explicit input rule with `self` excluded (§5.6.4); both flakes' shapes in `test_nixattrs` |
-| 5 | Addon repos have no root `pyproject.toml` / `flake.nix`; name from the directory | yes: `millrun/modules/*-addons` hold only `.github`, `.gitignore`, `LICENSE`, `.odoo-series`, `README.md` and addons; `pyproject.read` raises `EnvError`; clones land in `<tmp>/repo` | Accepted. `Identity.config_required` (frappe keeps exit 3; odoo reads `{}`, exit 2 with the hint, `--standards` creates the file). Amended by §15.CR1: `--standards` creates the table in `config_path(product, root)`, and the file when it is missing, its directory exists and `identity.config_required` is false; `Identity.config_paths` and `Hooks.config_file` let a product keep the table in a per-checkout file (§2.2, §3.1, §4.4); `seed_template` for sentinel entries (§4.3, §5.6.2); the name falls back to the table's `repo`, then origin, and to `root.name` only with no remote; clones go to `<tmp>/<repo name>` (§2.5, §3.3). Refinement: the directory is kept as the last resort for remote-less fixtures, which have no other name |
+| 5 | Addon repos have no root `pyproject.toml` / `flake.nix`; name from the directory | yes: a project's `modules/*-addons` submodules hold only `.github`, `.gitignore`, `LICENSE`, `.odoo-series`, `README.md` and addons; `pyproject.read` raises `EnvError`; clones land in `<tmp>/repo` | Accepted. `Identity.config_required` (frappe keeps exit 3; odoo reads `{}`, exit 2 with the hint, `--standards` creates the file). Amended by §15.CR1: `--standards` creates the table in `config_path(product, root)`, and the file when it is missing, its directory exists and `identity.config_required` is false; `Identity.config_paths` and `Hooks.config_file` let a product keep the table in a per-checkout file (§2.2, §3.1, §4.4); `seed_template` for sentinel entries (§4.3, §5.6.2); the name falls back to the table's `repo`, then origin, and to `root.name` only with no remote; clones go to `<tmp>/<repo name>` (§2.5, §3.3). Refinement: the directory is kept as the last resort for remote-less fixtures, which have no other name |
 | 6 | `tools/pyproject.toml` claimed by two strategies | yes: Amendments put coverage in the managed `tools/pyproject.toml` | Accepted. One `toml-merge` entry with groups per module (§4.3, §5.3); `TomlGroups.reconcile` for hand-raised pins (refinement of the suggested `accept`: it returns the value, so a list can be merged per item); the warning names the entry path (§2.3) |
 | 7 | `hooks.checks` runs only under `--check` | yes: frappe phase B's final report reads `after.problems` | Accepted. `engine.build` adds the items to the plan (§2.3, §3.3, §6.3) |
 | 8 | `check_state` never green on skipped or neutral | yes | Accepted. Green = success/neutral/skipped; failed list extended; newest run per name; conformance requires push triggers under `post-merge-bump` (§8.2, §11.4); `test_github` |
 | 9 | `since` wrong after a hand edit | yes | Accepted. `since` is the newest bump commit recognised by `commit_subject`; `old` is read at `since`; a hand-edited unit is skipped with a notice (§8.2); `test_bump` |
-| 10 | The JSONC editor cannot handle the target files | yes: one-line `extensions.json` with no final newline; inline arrays in millrun's settings | Accepted. Inline insertion with the file's separators, final-newline preservation, prefix form for `never`/`forbidden` (§5.5); shape-identical neutral fixtures in core, real files in odoo-nix-tools' tests (the real files name the product, so they cannot live under `standards/`) |
-| 11 | Foreign blocks and `absorb` contradict each other | yes: odoo-ruckus `pyproject.toml` markers (the `module sources` pair even has different begin and end texts) | Accepted. Loose foreign recognizer, foreign regions excluded from `absorb` and `claims`, owned insertion inside a foreign region is exit 2 (§5.6.1, §5.6.3, §5.6.4) |
-| 12 | The Nix lexer must handle indented-string escapes | yes: odoo-ruckus `flake.nix:69` | Accepted. `''$`, `'''`, `''\`, `$${` and interpolation nesting specified (§5.6.2); `test_nixattrs` |
+| 10 | The JSONC editor cannot handle the target files | yes: one-line `extensions.json` with no final newline; inline arrays in a client project's settings | Accepted. Inline insertion with the file's separators, final-newline preservation, prefix form for `never`/`forbidden` (§5.5); shape-identical neutral fixtures in core, real files in odoo-nix-tools' tests (the real files name the product, so they cannot live under `standards/`) |
+| 11 | Foreign blocks and `absorb` contradict each other | yes: a client project's `pyproject.toml` markers (the `module sources` pair even has different begin and end texts) | Accepted. Loose foreign recognizer, foreign regions excluded from `absorb` and `claims`, owned insertion inside a foreign region is exit 2 (§5.6.1, §5.6.3, §5.6.4) |
+| 12 | The Nix lexer must handle indented-string escapes | yes: a client project's `flake.nix` | Accepted. `''$`, `'''`, `''\`, `$${` and interpolation nesting specified (§5.6.2); `test_nixattrs` |
 | 13 | `policy` runs `committed` from a tools env without it | yes: `committed_cmd` and B3's python-lint tool list | Accepted. `hooks.committed_argv(root)` with frappe's rule as default (§2.5, §3.1, §3.3) |
 | 14 | `only_section` takes one section; no brace globs | yes: exact-set test at engine.py; `globs.py` has no braces | Accepted. `only_sections` (subset), `only_section` kept; braces expanded in product data at load, `globs.match` unchanged (§2.3, §4.3, §5.8) |
 | 15 | Per-series Dependabot entries are not expressible | yes: key `(ecosystem, directory)` | Accepted. Key `(ecosystem, directory, target-branch)` with frappe's text unchanged when no branch; branch list as a product module parameter (§2.3, §3.5, §5.2) |
 | 16 | The JSON emitter is fixed to oxfmt's form | yes: `jsonfmt` constants | Accepted. `Product.json_style` (`JsonStyle`, frappe's form by default); created JSONC files use it (§2.3, §3.1, §5.5) |
 | 17 | No generic JSON key merge | yes: `JsonMergeHandler` was abstract | Accepted. `JsonGroups`/`JsonGroupsHandler` in `scaffold/jsonmerge.py` (§1.1, §2.3, §5.1, §5.3); `test_jsonmerge` |
-| 18 | `.envrc` missing from odoo's first-opt-in list | yes: frappe's `APP_TEMPLATE`; odoo-ruckus `.envrc` | Accepted. Listed with odoo-init's variants as `legacy` (§5.9); kit stub and `test_kit` |
+| 18 | `.envrc` missing from odoo's first-opt-in list | yes: frappe's `APP_TEMPLATE`; a client project's `.envrc` | Accepted. Listed with odoo-init's variants as `legacy` (§5.9); kit stub and `test_kit` |
 | 19 | JSON report key order changes | yes: frappe writes `status`, `frappe_nix`, `files`, then `profile`, `modules` | Accepted. Frappe's order (§2.2, §6.4) |
 | 20 | Resolve order changes cfg key order | yes: `site` before `_repo`; `sort_keys=False` | Accepted. `derive` is step 8, `repo` step 9 (§2.2, §3.3, §4.4) |
 | 21 | `--help` output changes | yes: module-name order, module docstrings, sync flag order, cli description | Accepted (kept in scope rather than dropped from S0). `Command.sort_key`, `Identity.description`, `Product.help`, sync flag slots (§2.1, §3.1, §6.1, §6.2); parity harness compares `--help` |
@@ -2947,7 +2947,7 @@ lines". `test_blocks` adds it.
 
 ### 15.CR5: sync does not stage a file that had the user's changes (improvement)
 
-**Why.** Core §6.3 stages every touched path. In a dirty tree (the real ruckus checkout: 26 changed entries,
+**Why.** Core §6.3 stages every touched path. In a dirty tree (a real client checkout: 26 changed entries,
 `.vscode/settings.json` among them) that stages the user's own edits together with sync's.
 
 **Proposal.** §6.3: "paths with unstaged changes when the run starts (`git diff --name-only`) are written but not

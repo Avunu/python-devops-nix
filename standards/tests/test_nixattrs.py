@@ -205,7 +205,7 @@ SHOP = """{
               };
               settings = {
                 options = {
-                  admin_passwd = "x&y^z*!{brace}$";
+                  banner = "x&y^z*!{brace}$";
                   log_level = "info";
                 };
               };
