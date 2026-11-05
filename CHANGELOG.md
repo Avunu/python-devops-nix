@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/Avunu/python-devops-nix/compare/v1.2.1...v1.3.0) (2026-11-05)
+
+
+### Features
+
+* **standards:** standards-core, the shared standards engine for frappe-nix and odoo-nix ([#58](https://github.com/Avunu/python-devops-nix/issues/58)) ([7887586](https://github.com/Avunu/python-devops-nix/commit/7887586590d83942dac7db84c655478f633a7005))
+
 ## [1.2.1](https://github.com/Avunu/python-devops-nix/compare/v1.2.0...v1.2.1) (2026-11-03)
 
 
