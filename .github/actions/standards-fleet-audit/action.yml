@@ -1,0 +1,86 @@
+name: Fleet scorecard
+description: >-
+  Runs `<cli> repo audit --all` over a fleet list and writes the scorecard to the job
+  summary, optionally keeping one `scorecard: <repo>` issue per repository. The step's
+  exit is the audit's: 1 when any row is amber or red.
+
+# An organisation's scheduled job in its profile repository, which holds the fleet list
+# (standards/DESIGN.md §7, §8.5), after standards-install:
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-fleet-audit@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       env-prefix: KIT_NIX
+#       fleet: fleet.json
+#       issue-repo: example/standards-profile
+#       audit-token: ${{ secrets.AUDIT_TOKEN }}
+#
+# `audit-token` is read-only (Administration and Contents read on the fleet's
+# repositories): without it the settings and ruleset rows read `unknown`. The issues
+# are written with `issue-token` (`issues: write` on `issue-repo`).
+
+inputs:
+  cli:
+    description: The product's console script (`kit-nix`).
+    required: true
+  env-prefix:
+    description: >-
+      The product's environment prefix, for <P>_ISSUE_TOKEN. Empty is `cli` in upper
+      case with `-` as `_` (`kit-nix` → `KIT_NIX`).
+    default: ""
+  fleet:
+    description: The fleet list, a path in the checkout (`fleet.json`).
+    required: true
+  issue-repo:
+    description: "The repository (`<owner>/<repo>`) that holds the scorecard issues; empty for none."
+    default: ""
+  against:
+    description: "`pinned` (each repository's locked engine) or `latest`."
+    default: pinned
+  audit-token:
+    description: A read-only token over the fleet's repositories.
+    required: true
+  issue-token:
+    description: "A token with `issues: write` on `issue-repo`."
+    default: ${{ github.token }}
+  working-directory:
+    description: The checkout that holds the fleet list.
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CLI: ${{ inputs.cli }}
+        ENV_PREFIX: ${{ inputs.env-prefix }}
+        FLEET: ${{ inputs.fleet }}
+        ISSUE_REPO: ${{ inputs.issue-repo }}
+        AGAINST: ${{ inputs.against }}
+        AUDIT_TOKEN: ${{ inputs.audit-token }}
+        ISSUE_TOKEN: ${{ inputs.issue-token }}
+      run: |
+        set -euo pipefail
+        fail() {
+          echo "::error title=standards-fleet-audit::$*"
+          exit 1
+        }
+        [[ "$CLI" =~ ^[a-z][a-z0-9-]*$ ]] || fail "cli must be a console script name, not '$CLI'"
+        prefix="${ENV_PREFIX:-$(tr 'a-z-' 'A-Z_' <<<"$CLI")}"
+        [[ "$prefix" =~ ^[A-Z][A-Z0-9_]*$ ]] || fail "env-prefix must be like KIT_NIX, not '$prefix'"
+        [ -f "$FLEET" ] || fail "no fleet list at $FLEET"
+        if [ -z "$AUDIT_TOKEN" ]; then
+          echo "::notice title=standards-fleet-audit::audit-token is empty: the rows that need it read as unknown"
+          AUDIT_TOKEN="$ISSUE_TOKEN"
+        fi
+        out="$RUNNER_TEMP/scorecard.md"
+        rm -f "$out"
+        args=(repo audit --all --fleet "$FLEET" --against "$AGAINST" --format md --out "$out")
+        [ -z "$ISSUE_REPO" ] || args+=(--issue --issue-repo "$ISSUE_REPO")
+        rc=0
+        env GH_TOKEN="$AUDIT_TOKEN" "${prefix}_ISSUE_TOKEN=$ISSUE_TOKEN" "$CLI" "${args[@]}" || rc=$?
+        if [ -f "$out" ]; then
+          cat "$out" >>"$GITHUB_STEP_SUMMARY"
+        fi
+        exit "$rc"

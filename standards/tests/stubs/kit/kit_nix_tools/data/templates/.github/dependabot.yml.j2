@@ -1,0 +1,19 @@
+{% set targets = cfg.dependabot["target-branches"] if "target-branches" in cfg.dependabot else [branches.integration] %}
+version: 2
+updates:
+{% for branch in targets %}
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: "{{ branch }}"
+    schedule:
+      interval: weekly
+{% if modules["python-lint"] or modules.tests %}
+  - package-ecosystem: uv
+    directory: /tools
+    target-branch: "{{ branch }}"
+    schedule:
+      interval: weekly
+{% endif %}
+{% endfor %}
+  # kit-nix:local-begin updates
+  # kit-nix:local-end updates

@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "modules.schema.json",
+  "title": "The kit product's modules",
+  "$defs": {
+    "module-name": {
+      "enum": [
+        "dev-shell",
+        "editor",
+        "python-lint",
+        "tests",
+        "hygiene",
+        "commits",
+        "releases",
+        "dependabot",
+        "ci",
+        "repo-policy"
+      ]
+    },
+    "modules": {
+      "dev-shell": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The flake.nix inputs block, .envrc and the .gitignore block. Required.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "kit-nix-url": {
+            "type": "string",
+            "default": "",
+            "description": "\"\" means the engine's release branch.",
+            "x-app-only": true
+          }
+        }
+      },
+      "editor": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The .vscode settings and extension recommendations.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "vendor.python",
+              "vendor.ruff"
+            ]
+          }
+        }
+      },
+      "python-lint": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "ruff, pinned in tools/pyproject.toml.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "tool": {
+            "enum": [
+              "ruff",
+              "none"
+            ],
+            "default": "ruff"
+          },
+          "line-length": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 88
+          }
+        }
+      },
+      "tests": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "pytest and coverage in tools/pyproject.toml.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "initial-floor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "default": 0
+              }
+            }
+          }
+        }
+      },
+      "hygiene": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Every unit has a README.md; every submodule follows the series.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "commits": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "committed.toml and pr-policy.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "releases": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The post-merge bump of each unit's version.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "tool": {
+            "enum": [
+              "unit-manifest",
+              "none"
+            ],
+            "default": "unit-manifest"
+          }
+        }
+      },
+      "dependabot": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": ".github/dependabot.yml, one entry per (ecosystem, branch).",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          },
+          "target-branches": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The branches each ecosystem gets an entry for; default: the integration branch."
+          }
+        }
+      },
+      "ci": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The CI workflow, run on push to the integration branch.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "repo-policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Rulesets and repository settings.",
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    "org-extra": {
+      "properties": {}
+    },
+    "profile-extra": {
+      "properties": {}
+    },
+    "app-extra": {
+      "properties": {
+        "shape": {
+          "enum": [
+            "bundle",
+            "workspace"
+          ],
+          "description": "Default: from the tracked files."
+        },
+        "series": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.0$",
+          "description": "Default: from the units' versions, .kit-series or the branch."
+        }
+      }
+    }
+  }
+}

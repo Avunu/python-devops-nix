@@ -1,0 +1,45 @@
+# The kit's built-in profile `recommended@1.0`. Frozen once released. Every value here
+# is the schema's default.
+
+schema = 1
+name = "recommended"
+description = "Editor settings, lint, tests, conventional commits, the post-merge bump, dependabot and CI."
+
+[dev-shell]
+enable = true
+
+[editor]
+enable = true
+extensions = ["vendor.python", "vendor.ruff"]
+
+[python-lint]
+enable = true
+tool = "ruff"
+line-length = 88
+
+[tests]
+enable = true
+
+[tests.coverage]
+initial-floor = 0
+
+[hygiene]
+enable = true
+
+[commits]
+enable = true
+
+[releases]
+enable = true
+tool = "unit-manifest"
+branching = "develop+series"
+version-scheme = "kit-series"
+
+[dependabot]
+enable = true
+
+[ci]
+enable = true
+
+[repo-policy]
+enable = false

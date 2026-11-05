@@ -1,0 +1,86 @@
+name: Install a product's standards tools
+description: >-
+  Installs a product's standards tools (its console script, built on standards-core)
+  with `uv tool install`, at the engine revision the checkout's flake.lock pins, so the
+  tools a job runs are the ones its sync was rendered with. Exports the expected
+  revision for the skew check.
+
+# A product's workflow job, before any other standards-* action (standards/DESIGN.md
+# §8.5). A caller pins it by SHA, as every action:
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-install@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       engine-input: kit-nix
+#       env-prefix: KIT_NIX
+#       install-spec: >-
+#         kit-nix-tools @ git+https://github.com/{owner}/{repo}@{rev}#subdirectory=py/kit_nix_tools
+#
+# `{owner}`, `{repo}` and `{rev}` are the engine node flake.lock locks: a fork the
+# checkout locks installs from that fork. With `override` (a product's own self-test),
+# the tools are installed from a path in the workspace instead, and the skew check is
+# turned off (<P>_ALLOW_SKEW=1, an empty <P>_EXPECT_REV).
+
+inputs:
+  cli:
+    description: The product's console script, which the later steps run (`kit-nix`).
+    required: true
+  engine-input:
+    description: The root flake input every checkout locks the engine as (`kit-nix`).
+    required: true
+  install-spec:
+    description: >-
+      What `uv tool install` installs, with `{owner}`, `{repo}` and `{rev}` replaced by
+      the engine node's locked owner, repository and revision.
+    required: true
+  env-prefix:
+    description: The product's environment prefix (`KIT_NIX`); every variable is `<P>_<X>`.
+    required: true
+  python:
+    description: The interpreter `uv tool install --python` uses.
+    default: "3.12"
+  override:
+    description: >-
+      A path (relative to the workspace, or absolute) to install the tools from instead
+      of the locked revision: a product's self-test of its own tree.
+    default: ""
+  fetch-token:
+    description: >-
+      A token that reads private profile and pin repositories, exported as
+      <P>_FETCH_TOKEN for pin-path and the org profile fetch.
+    default: ""
+  working-directory:
+    description: The checkout whose flake.lock pins the engine.
+    default: "."
+
+outputs:
+  rev:
+    description: The engine revision installed (empty with `override`).
+    value: ${{ steps.install.outputs.rev }}
+  version:
+    description: What `<cli> --version` prints.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      with:
+        # Saving the cache uploads it; from a self-hosted runner that is slow and outlasts
+        # the job, so only hosted runners save it.
+        enable-cache: ${{ runner.environment == 'github-hosted' }}
+        tool-dir: ${{ runner.temp }}/uv-tool-dir
+        tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+    - id: install
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CLI: ${{ inputs.cli }}
+        ENGINE_INPUT: ${{ inputs.engine-input }}
+        INSTALL_SPEC: ${{ inputs.install-spec }}
+        ENV_PREFIX: ${{ inputs.env-prefix }}
+        PYTHON: ${{ inputs.python }}
+        OVERRIDE: ${{ inputs.override }}
+        FETCH_TOKEN: ${{ inputs.fetch-token }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"

@@ -1,0 +1,3 @@
+style = "conventional"
+subject_length = {{ cfg.commits["subject-length"] }}
+allowed_types = [{% for t in cfg.commits["allowed-types"] %}{{ t | json_string }}{{ ", " if not loop.last }}{% endfor %}]

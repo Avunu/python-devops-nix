@@ -6,7 +6,17 @@
   "packages": {
     ".": {
       "package-name": "python-devops-nix",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "standards/pyproject.toml"
+        },
+        {
+          "type": "generic",
+          "path": "standards/standards_core/__init__.py"
+        }
+      ]
     }
   }
 }

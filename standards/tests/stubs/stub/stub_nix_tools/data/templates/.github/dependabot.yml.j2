@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: {{ cfg.dependabot["cadence-overrides"]["github-actions"] | default(cfg.dependabot.cadence) }}
+{% if modules["python-lint"] or modules.tests %}
+  - package-ecosystem: uv
+    directory: /tools
+    schedule:
+      interval: {{ cfg.dependabot["cadence-overrides"]["uv"] | default(cfg.dependabot.cadence) }}
+{% endif %}
+  # stub-nix:local-begin updates
+  # stub-nix:local-end updates

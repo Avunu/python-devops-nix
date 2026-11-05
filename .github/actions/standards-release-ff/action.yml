@@ -1,0 +1,108 @@
+name: Move the release branch
+description: >-
+  Moves a release branch forward and guards it: to a release tag (the tags flow), or,
+  with `bump`, raises each changed unit's version on the integration branch first and
+  then moves the branch to an integration head whose required checks passed (the
+  post-merge-bump flow).
+
+# A product's release job (standards/DESIGN.md §8.2, §8.5), after standards-install.
+#
+# Tags flow, once release-please tagged a release:
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-release-ff@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       release-branch: version-16
+#       sha: ${{ needs.release-please.outputs.sha }}
+#       tag: ${{ needs.release-please.outputs.tag_name }}
+#       token: ${{ steps.app-token.outputs.token }}
+#
+# Post-merge-bump flow, on every push to the integration branch and on `workflow_run`
+# completed of its CI, from a checkout of the integration branch with the whole history
+# (`fetch-depth: 0`) and `persist-credentials: false`:
+#
+#   - uses: <owner>/python-devops-nix/.github/actions/standards-release-ff@<sha> # vX.Y.Z
+#     with:
+#       cli: kit-nix
+#       release-branch: "18.0"
+#       bump: true
+#       wait-checks: 600
+#       token: ${{ steps.app-token.outputs.token }}
+#
+# The bump pushes to the integration branch with `token`, which must be a GitHub App's
+# that the integration ruleset lets past its pull-request and status-check rules
+# (`repo-policy.release-bypass = "integration:<app id>"`); the commit it pushes is a
+# `chore`, so the run that push starts bumps nothing and only moves the branch, once
+# the bump commit's own checks pass. A move onto commits that change
+# .github/workflows/ needs the App's Workflows write.
+
+inputs:
+  cli:
+    description: The product's console script (`kit-nix`).
+    required: true
+  release-branch:
+    description: The branch to move (`version-16`, `18.0`).
+    required: true
+  sha:
+    description: The commit to move it to; with `bump`, the commit the bump starts from.
+    default: ${{ github.sha }}
+  tag:
+    description: >-
+      The release tag the branch must equal after the move (the tags flow). Empty: the
+      required checks of the commit guard the move instead.
+    default: ""
+  bump:
+    description: "`true`: run `<cli> ci bump --push` first (the post-merge-bump flow)."
+    default: "false"
+  base:
+    description: The ref the bump compares with. Empty is `origin/<release-branch>`.
+    default: ""
+  wait-checks:
+    description: Seconds to wait for pending required checks (tagless); 0 reads once.
+    default: "0"
+  token:
+    description: >-
+      The token that moves the branch and pushes the bump: a GitHub App's with Contents
+      write (and Workflows write for a move onto workflow changes).
+    required: true
+  git-user:
+    description: >-
+      The bump commit's author, `Name <email>`. Empty is the token's own user when the
+      token can read it (`gh api user`), else github-actions[bot].
+    default: ""
+  dry-run:
+    description: "`true`: compute and print the bump and the move, write nothing."
+    default: "false"
+  working-directory:
+    description: The checkout.
+    default: "."
+
+outputs:
+  moved:
+    description: "`true`, `pending` (the required checks are still running) or `false`."
+    value: ${{ steps.release.outputs.moved }}
+  bumped:
+    description: The units the bump raised, comma-separated (empty for none).
+    value: ${{ steps.release.outputs.bumped }}
+  sha:
+    description: The commit the branch was moved (or is to be moved) to.
+    value: ${{ steps.release.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - id: release
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CLI: ${{ inputs.cli }}
+        RELEASE_BRANCH: ${{ inputs.release-branch }}
+        SHA: ${{ inputs.sha }}
+        TAG: ${{ inputs.tag }}
+        BUMP: ${{ inputs.bump }}
+        BASE: ${{ inputs.base }}
+        WAIT_CHECKS: ${{ inputs.wait-checks }}
+        GH_TOKEN: ${{ inputs.token }}
+        GIT_USER: ${{ inputs.git-user }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: bash "$GITHUB_ACTION_PATH/release-ff.sh"

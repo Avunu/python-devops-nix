@@ -1,0 +1,22 @@
+name: ci
+on:
+  push:
+    branches: [{{ branches.integration }}]
+  pull_request:
+  workflow_dispatch:
+permissions: {}
+jobs:
+{% for gate in gates %}
+  {{ gate }}:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: nix develop --no-pure-eval -c kit-nix ci {{ gate }}
+{% endfor %}
+{% if not gates %}
+  none:
+    runs-on: ubuntu-latest
+    steps:
+      - run: "true"
+{% endif %}

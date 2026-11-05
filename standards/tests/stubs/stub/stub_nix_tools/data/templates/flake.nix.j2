@@ -1,0 +1,27 @@
+{
+  description = {{ name | nix_string }};
+
+  inputs = {
+    stub-nix.url = {{ engine.url | nix_string }};
+    nixpkgs.follows = "stub-nix/nixpkgs";
+{% if profile_input %}
+    standards-profile = {
+      url = {{ profile_input | nix_string }};
+      flake = false;
+    };
+{% endif %}
+    # stub-nix:local-begin inputs
+    # stub-nix:local-end inputs
+  };
+
+  outputs =
+    { stub-nix, ... }@inputs:
+    stub-nix.lib.mkFlake {
+      inherit inputs;
+      systems = [
+{% for system in cfg["dev-shell"]["systems"] | sort %}
+        {{ system | nix_string }}
+{% endfor %}
+      ];
+    };
+}

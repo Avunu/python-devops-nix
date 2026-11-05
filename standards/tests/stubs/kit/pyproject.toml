@@ -1,0 +1,17 @@
+# The stub product that exercises the core's newer capabilities (DESIGN §11.1).
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "kit-nix-tools"
+version = "1.0.0"
+description = "A stub product for the standards-core tests: shapes, blocks and series"
+requires-python = ">=3.11"
+dependencies = ["standards-core"]
+
+[tool.uv.sources]
+standards-core = { path = "../../..", editable = true }
+
+[tool.flit.module]
+name = "kit_nix_tools"

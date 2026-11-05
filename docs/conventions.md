@@ -3,7 +3,7 @@ title: Conventions
 description: How frappe-nix and odoo-nix name and do the jobs they both do, and where each product stands on each decision.
 order: 1
 tags: [conventions, frappe-nix, odoo-nix]
-updated: 2026-10-29
+updated: 2026-11-03
 ---
 
 # Conventions
@@ -804,6 +804,52 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 -   **Adopted:** both enforce it with `committed.toml` and `pr-policy`. The shared list is frappe-nix's 61 scopes, the union of both products' history (frappe-nix#159), with `conventions`, `sources` and `tui` from this repository. Both products carry it: odoo-nix since odoo-nix#114, which took the whole list in place of its 30, and frappe-nix since frappe-nix#206, which added this repository's three (#33).
 -   **Status:** decided.
 -   **Check:** `lib.checks.sharedConfig` compares each product's `committed.toml` with this repository's copy. Each product's `pr-policy` job runs `committed` over its pull requests.
+
+## Standards
+
+The app standards tools: what a product's `<cli>` (`frappe-nix`, `odoo-nix`) does over the repositories built on it, from managed files to CI and the fleet. standards-core (`standards/`, [Library: Standards](library.md#standards)) is their shared engine, and its design contract is [standards/DESIGN.md](https://github.com/Avunu/python-devops-nix/blob/main/standards/DESIGN.md). Below, `<P>` is the product's `Identity.env_prefix`, which the [tool-owned variables](#tool-owned-variables) rule makes `FRAPPE_NIX` and `ODOO_NIX`.
+
+### Exit codes
+
+-   **Convention:** one table for every `<cli>` command, the highest code that applies winning: 0 clean; 1 drift (`sync --check`), or a policy, guard or repository that failed (`policy`, `ci fast-forward`, `repo apply`, `repo audit` amber or red); 2 an invalid configuration or argument, a checkout that has not opted in, or no command; 3 the environment: not a checkout, not git, an unreadable lock, a fetch or narHash failure, version skew, a `requires-<product>` range that excludes the tools, or a bug. A failure no command anticipated is `<cli> <command>: internal error: <Type>: <message>` and exit 3, never 1, which means drift; `<P>_DEBUG=1` prints its traceback. A command's own failure is one line, `<cli> <command>: <message>`.
+-   **Adopted:** frappe-nix's tools (its app standards' table); standards-core (DESIGN §6.1, §6.2), which odoo-nix's tools build on and frappe-nix's will.
+-   **Status:** partial: frappe-nix moves onto standards-core in a later phase, with this table unchanged.
+-   **Check:** standards-core's suite (`lib-standards`), and each product's conformance check (`lib.standards.conformance`).
+
+### Sync flags
+
+-   **Convention:** `<cli> sync --write|--check` renders, writes or checks the managed files of the checkout in the current directory, and the scaffolder's `--sync` and `--check` run it. The core flags are `--standards <profile>` (opt in: create the `[tool.<table>]` table), `--profile-path <dir>`, `--force` (replace an unmanaged file on first opt-in), `--dry-run`, `--skip-lock`, `--offline` (also `<P>_OFFLINE=1`), `--only <path>[,…]`, `--format text|json|github` and `--expect-rev <rev>`, in that order. A product's own flags go at the slots it names among them (frappe-nix: `--init-listing` after `--only`). `--check` runs no `nix`, `uv` or `npm`, so a no-Nix CI job runs it. The JSON report is `{"status", "<report key>": {"rev", "version"}, "files", "profile", "modules"}`, in that order.
+-   **Adopted:** frappe-nix's tools; standards-core (DESIGN §6.2-§6.4).
+-   **Status:** partial, as above.
+-   **Check:** standards-core's suite; the frappe parity harness (`parity/frappe/check.py`) compares `--help` and the reports with frappe-nix-tools' own.
+
+### Variables the standards tools read
+
+-   **Convention:** every variable standards-core reads or sets is `<P>_<X>`:
+
+    | Variable | Meaning |
+    | --- | --- |
+    | `<P>_OFFLINE=1` | `sync --write` runs no `nix`, `uv` or `npm` command, and reports the locks it would make |
+    | `<P>_ALLOW_SKEW=1` | no version-skew rows: a self-test, `repo audit --against latest`, the drift step |
+    | `<P>_EXPECT_REV` | the engine revision the tools were installed from (`standards-install` exports it; a workflow passes it as `sync --check --expect-rev`) |
+    | `<P>_FETCH_TOKEN` | a token for private profile and pin repositories, sent over https only and dropped on a redirect |
+    | `<P>_PIN_URL` | a tarball URL template for `pin-path` (mirrors, tests) |
+    | `<P>_ISSUE_TOKEN` | the token `repo audit --issue` writes the scorecard issues with |
+    | `<P>_URL_OVERRIDE` | an engine's self-test only: lock the checkout under test in the engine's place (with `<P>_ALLOW_SKEW=1`) |
+    | `<P>_DEBUG=1` | print the traceback of an internal error |
+    | `<P>_SYNC_RESULT`, `<P>_SYNC_REEXEC`, `<P>_SYNC_REENTERED`, `<P>_SYNC_LOCK_CHANGED`, `<P>_LOCKED_REV`, `<P>_CI` | sync's own hand-over between its phases (the re-exec from the locked engine and the re-entry into the dev shell); never set by hand |
+
+    The core reads no other variable of the product's, except the GitHub runner's own (`GITHUB_OUTPUT`, `GITHUB_REPOSITORY`, the pull request's event values the policy step passes) and `GH_TOKEN` for `gh`.
+-   **Adopted:** frappe-nix's tools read the `FRAPPE_NIX_*` names; standards-core reads them for any product.
+-   **Status:** partial, as above.
+-   **Check:** each product's conformance check refuses a variable with one of these suffixes under another prefix in its data, and `env-vars` ([tool-owned variables](#tool-owned-variables)) covers the product's own code.
+
+### Composite actions and pins
+
+-   **Convention:** a product's standards CI jobs call the `standards-*` composite actions of this repository (install, pr-policy, release-ff, deps-automerge, update-branches, fleet-audit), pinned by SHA like any action. The job graph stays in the product. The actions' `@<sha>`, the flake input `python-devops-nix` and the tools' `standards-core @ git+https://github.com/<owner>/python-devops-nix@<sha>#subdirectory=standards` dependency name one commit, which is on `main` or a `v*` tag.
+-   **Adopted:** odoo-nix with its tools' move onto standards-core; frappe-nix in a later phase.
+-   **Status:** partial.
+-   **Check:** `standards-core-pins` (`lib.standards.pins`) in the product's checks, and `python -m standards_core.testing.pins --reachable …` in its CI.
 
 ## The development shell option tree
 

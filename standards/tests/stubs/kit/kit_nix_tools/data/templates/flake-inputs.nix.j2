@@ -1,0 +1,7 @@
+kit-nix.url = {{ engine.url | nix_string }};
+{% if profile_input %}
+standards-profile = {
+  url = {{ profile_input | nix_string }};
+  flake = false;
+};
+{% endif %}

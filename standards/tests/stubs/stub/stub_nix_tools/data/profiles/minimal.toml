@@ -1,0 +1,33 @@
+# The stub's built-in profile `minimal`: the dev shell only. Frozen: it never turns a
+# module on.
+
+schema = 1
+name = "minimal"
+description = "The stub-nix dev shell only: flake.nix and .envrc."
+
+[org]
+dev-docs-url = "https://example.org/stub-nix/docs"
+
+[dev-shell]
+enable = true
+
+[editorconfig]
+enable = false
+[python-lint]
+enable = false
+[tests]
+enable = false
+[hygiene]
+enable = false
+[commits]
+enable = false
+[releases]
+enable = false
+[dependabot]
+enable = false
+[ci]
+enable = false
+[repo-policy]
+enable = false
+[extras]
+enable = false

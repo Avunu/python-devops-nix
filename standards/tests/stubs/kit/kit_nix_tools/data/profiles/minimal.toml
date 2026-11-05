@@ -1,0 +1,27 @@
+# The kit's built-in profile `minimal`: the dev shell only. Frozen.
+
+schema = 1
+name = "minimal"
+description = "The kit-nix dev shell only."
+
+[dev-shell]
+enable = true
+
+[editor]
+enable = false
+[python-lint]
+enable = false
+[tests]
+enable = false
+[hygiene]
+enable = false
+[commits]
+enable = false
+[releases]
+enable = false
+[dependabot]
+enable = false
+[ci]
+enable = false
+[repo-policy]
+enable = false

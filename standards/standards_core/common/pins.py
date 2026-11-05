@@ -1,0 +1,336 @@
+"""Locked trees on disk: ``<cli> pin-path <input>`` (DESIGN §9.2).
+
+Given an input of the checkout's ``flake.lock`` (its own, such as ``standards-profile``,
+or one its engine pins for it), produce a directory holding exactly the locked tree:
+
+1. In a dev shell the tree is usually in the Nix store already: when the store path its
+   ``narHash`` implies exists, that is the answer.
+2. Otherwise ``<pins.dir>/<name>-<rev>/`` beside the lock, fetched and verified against
+   the ``narHash`` with ``standards_core.common.nar``. A mismatch is an ``EnvError``
+   (exit 3) and leaves nothing behind. A tree already there is hashed again before it
+   is reused, and refetched unless it matches: it lives in the checkout, so a commit or
+   a stray edit can change it.
+
+The fetch follows the lock node's type: ``github`` from codeload's tarball (a GitHub
+Enterprise host's API tarball), ``gitlab`` from the GitLab API's archive, ``git`` with
+``git clone --filter=blob:none`` and a checkout of the locked rev.
+``<PREFIX>_FETCH_TOKEN``, when set, authenticates each one (``Authorization: Bearer``;
+for git through ``http.extraHeader``, passed in git's environment so it never shows in a
+process listing), so private profiles and forks work. Without it, a 401, 403 or 404 says
+to set it. The token goes only over https (or plain http to a loopback address), never
+with a redirect to another scheme, host or port, and a redirect from https to http is
+refused.
+
+``writable=True`` (``pin-path --writable``) never answers with the store path: a store tree
+is read-only, so a caller that writes into it gets ``<pins.dir>/<name>-<rev>/`` instead,
+copied from the store when the tree is there (``copy_tree``) and fetched otherwise, and
+verified like any fetched tree.
+
+``<PREFIX>_PIN_URL`` replaces a tarball URL (``{host}``, ``{owner}``, ``{repo}`` and
+``{rev}`` are filled in), for mirrors and for the tests, which serve a tarball from
+``file://`` or a local server.
+"""
+
+from __future__ import annotations
+
+import http.client
+import ipaddress
+import os
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from standards_core.common import flakelock, nar, repo
+from standards_core.common.report import ConfigError, EnvError
+
+if TYPE_CHECKING:
+    from standards_core.product import Product
+
+
+def token_var(product: Product) -> str:
+    """The variable holding the fetch token: ``<PREFIX>_FETCH_TOKEN``."""
+    return f"{product.identity.env_prefix}_FETCH_TOKEN"
+
+
+def url_var(product: Product) -> str:
+    """The variable holding a tarball URL template: ``<PREFIX>_PIN_URL``."""
+    return f"{product.identity.env_prefix}_PIN_URL"
+
+
+def _token(product: Product) -> str:
+    return os.environ.get(token_var(product), "")
+
+
+def _hint(product: Product, pin: flakelock.Pin) -> str:
+    return f"set {token_var(product)} (Contents read on {pin.label})"
+
+
+def _url(product: Product, pin: flakelock.Pin) -> str:
+    template = os.environ.get(url_var(product))
+    if not template:
+        return pin.tarball_url
+    try:
+        return template.format(
+            host=pin.host, owner=pin.owner, repo=pin.repo, rev=pin.rev
+        )
+    except (KeyError, IndexError, ValueError) as e:
+        raise ConfigError(
+            f"{url_var(product)}={template!r} is not a URL template with {{host}}, "
+            f"{{owner}}, {{repo}} and {{rev}}: {e!r}"
+        ) from e
+
+
+def _may_carry_token(url: str) -> bool:
+    """Whether ``url`` may be sent the token: https, or plain http to a loopback address."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme == "https":
+        return True
+    if parts.scheme != "http" or not parts.hostname:
+        return False
+    if parts.hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(parts.hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _origin(url: str) -> tuple[str, str]:
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme.lower(), parts.netloc.lower()
+
+
+class _Redirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect without the token unless it stays on the same scheme, host and port.
+
+    urllib's own handler copies every ordinary header, ``Authorization`` included, to
+    wherever a redirect points, and follows https to http. A GitLab that redirects archive
+    downloads to object storage, or a mirror, would otherwise be handed the token.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old, new = _origin(req.full_url), _origin(newurl)
+        if old[0] == "https" and new[0] != "https":
+            raise EnvError(
+                f"cannot fetch {req.full_url}: it redirects to {newurl}, which is not https"
+            )
+        out = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if out is not None and (old != new or not _may_carry_token(newurl)):
+            out.remove_header("Authorization")
+        return out
+
+
+_OPENER = urllib.request.build_opener(_Redirects)
+
+
+def _fetch(product: Product, pin: flakelock.Pin, url: str, dest: Path) -> None:
+    token = _token(product)
+    try:
+        request = urllib.request.Request(url)
+        if token and _may_carry_token(url):
+            request.add_header("Authorization", f"Bearer {token}")
+        with _OPENER.open(request, timeout=120) as response, dest.open("wb") as out:
+            shutil.copyfileobj(response, out)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403, 404) and not token:
+            raise EnvError(
+                f"cannot fetch {url}: HTTP {e.code}; if the repository is private, "
+                f"{_hint(product, pin)}"
+            ) from e
+        if e.code in (401, 403, 404) and not _may_carry_token(url):
+            raise EnvError(
+                f"cannot fetch {url}: HTTP {e.code}; {token_var(product)} is sent only "
+                "over https"
+            ) from e
+        raise EnvError(f"cannot fetch {url}: HTTP {e.code}") from e
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        raise EnvError(f"cannot fetch {url}: {e}") from e
+
+
+def _unpack(tarball: Path, into: Path) -> Path:
+    """Unpack and return the tarball's single top-level directory (GitHub's ``<repo>-<rev>/``)."""
+    # `filter` exists from 3.11.4 (and in the security backports); an older 3.11 would
+    # unpack without it, so it is refused instead.
+    if not hasattr(tarfile, "tar_filter"):
+        raise EnvError("this Python lacks tarfile filters (3.11.4+)")
+    try:
+        with tarfile.open(tarball) as tar:
+            tar.extractall(into, filter="tar")
+    except (tarfile.TarError, OSError) as e:
+        raise EnvError(f"cannot unpack {tarball}: {e}") from e
+    entries = list(into.iterdir())
+    if len(entries) != 1 or not entries[0].is_dir() or entries[0].is_symlink():
+        raise EnvError(f"{tarball} does not hold exactly one top-level directory")
+    return entries[0]
+
+
+def _git_env(product: Product, pin: flakelock.Pin) -> dict[str, str]:
+    """git's environment: no prompts, and the token as ``http.extraHeader`` when it may go.
+
+    Through ``GIT_CONFIG_COUNT``/``_KEY_<n>``/``_VALUE_<n>`` rather than ``git -c``, which
+    would put the token in the command line, readable by every user of the machine.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    token = _token(product)
+    if token and _may_carry_token(pin.url):
+        try:
+            n = int(env.get("GIT_CONFIG_COUNT") or 0)
+        except ValueError:
+            n = 0
+        env[f"GIT_CONFIG_KEY_{n}"] = "http.extraHeader"
+        env[f"GIT_CONFIG_VALUE_{n}"] = f"Authorization: Bearer {token}"
+        env["GIT_CONFIG_COUNT"] = str(n + 1)
+    return env
+
+
+def _git(
+    product: Product, pin: flakelock.Pin, *args: str, cwd: Path | None = None
+) -> None:
+    """``git <args>`` for a pin's clone, which is removed (its ``.git``) or rebuilt soon after:
+    no detached auto maintenance (``repo.NO_AUTO_MAINTENANCE``)."""
+    token = _token(product)
+    try:
+        subprocess.run(
+            ["git", *repo.NO_AUTO_MAINTENANCE, *args],
+            cwd=cwd,
+            env=_git_env(product, pin),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as e:
+        raise EnvError("git is not on PATH") from e
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or "").strip().splitlines()
+        message = f"cannot fetch {pin.url}: git {args[0]}: {detail[-1] if detail else e.returncode}"
+        if args[0] == "clone" and not token:
+            message += f"; if the repository is private, {_hint(product, pin)}"
+        elif args[0] == "clone" and not _may_carry_token(pin.url):
+            message += f"; {token_var(product)} is sent only over https"
+        raise EnvError(message) from e
+
+
+def _clone(product: Product, pin: flakelock.Pin, into: Path) -> Path:
+    """Clone a ``git`` pin and check out its rev; the tree without ``.git``."""
+    tree = into / pin.name
+    _git(
+        product,
+        pin,
+        "clone",
+        "--quiet",
+        "--filter=blob:none",
+        "--no-checkout",
+        "--",
+        pin.url,
+        str(tree),
+    )
+    _git(
+        product,
+        pin,
+        "-c",
+        "advice.detachedHead=false",
+        "checkout",
+        "--quiet",
+        pin.rev,
+        cwd=tree,
+    )
+    shutil.rmtree(tree / ".git")
+    return tree
+
+
+def copy_tree(tree: Path, dest: Path) -> None:
+    """``tree`` copied to ``dest`` (links as links), every file and directory writable by its
+    owner and stamped with the current time, as ``cp -r --no-preserve=timestamps`` would.
+
+    A tree from the Nix store is read-only and every mtime in it is 1 (1970): a copy that
+    kept them could be written to by no one, and a wheel built from it fails (flit_core,
+    setuptools: ``ZIP does not support timestamps before 1980``) unless ``SOURCE_DATE_EPOCH``
+    happens to be set. The mode bits are kept otherwise, so the copy's NAR hash is the tree's.
+    """
+    shutil.copytree(tree, dest, symlinks=True, copy_function=shutil.copy)
+    now = time.time()
+    for path in [dest, *dest.rglob("*")]:
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode | 0o200)
+            os.utime(path, (now, now))
+
+
+def _holds(dest: Path, nar_hash: str) -> bool:
+    """Whether ``dest`` is a real directory whose NAR hash is ``nar_hash``.
+
+    Never trusts a marker: the pins directory sits in the checkout, where a commit can
+    put any tree (and any stamp) under the expected name.
+    """
+    if dest.is_symlink() or not dest.is_dir():
+        return False
+    try:
+        return nar.nar_hash(dest) == nar_hash
+    except (OSError, ValueError):
+        return False
+
+
+def pin_path(
+    product: Product,
+    name: str,
+    lock_path: Path,
+    store_dir: str = "/nix/store",
+    *,
+    lock: dict | None = None,
+    writable: bool = False,
+) -> Path:
+    """The directory holding input ``name`` as ``lock_path`` locks it.
+
+    ``lock`` is a parsed lock read elsewhere (a committed one: ``git show <sha>:flake.lock``)
+    to use instead of ``lock_path``'s, which then only places the pins directory.
+    ``writable`` asks for a tree the caller may write into: never the store path."""
+    pin = flakelock.locked_pin(
+        product, lock if lock is not None else flakelock.load(lock_path), name
+    )
+
+    in_store = Path(nar.store_path(pin.nar_hash, store_dir=store_dir))
+    if in_store.is_dir() and not writable:
+        return in_store
+
+    pins_dir = product.pins.dir
+    pins = lock_path.parent / pins_dir
+    dest = pins / f"{pin.name}-{pin.rev}"
+    # flakelock.locked_pin already refuses names that leave the pins directory; this keeps
+    # it true whatever a future Pin is built from.
+    if dest.parent != pins or pin.name.startswith("."):
+        raise ConfigError(
+            f"{pin.name}-{pin.rev} is not a directory name under {pins_dir}"
+        )
+    if _holds(dest, pin.nar_hash):
+        return dest
+
+    pins.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=pins, prefix=".fetch-") as tmp:
+        work = Path(tmp)
+        if in_store.is_dir():
+            tree = work / "copy"
+            copy_tree(in_store, tree)
+        elif pin.type == "git":
+            tree = _clone(product, pin, work)
+        else:
+            tarball = work / "src.tar.gz"
+            _fetch(product, pin, _url(product, pin), tarball)
+            tree = _unpack(tarball, work / "unpacked")
+        got = nar.nar_hash(tree)
+        if got != pin.nar_hash:
+            raise EnvError(
+                f"{pin.label}@{pin.rev} does not match flake.lock: narHash {got}, "
+                f"locked {pin.nar_hash}"
+            )
+        if dest.is_symlink() or dest.is_file():
+            dest.unlink()
+        elif dest.exists():
+            shutil.rmtree(dest)
+        tree.rename(dest)
+    return dest

@@ -1,0 +1,21 @@
+# The general stub product the core's tests run against (DESIGN §11.1).
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "stub-nix-tools"
+version = "1.0.0"
+description = "A stub product for the standards-core tests"
+requires-python = ">=3.11"
+dependencies = ["standards-core"]
+
+# The selftest workflow installs it with `uv tool install` (DESIGN §8.5).
+[project.scripts]
+stub-nix = "stub_nix_tools.product:main"
+
+[tool.uv.sources]
+standards-core = { path = "../../..", editable = true }
+
+[tool.flit.module]
+name = "stub_nix_tools"
