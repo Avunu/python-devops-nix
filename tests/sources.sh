@@ -183,6 +183,7 @@ git clone -q "$BENCH" "$ROOT/clone2"
 git clone -q "$BENCH" "$ROOT/clone3"
 git clone -q "$BENCH" "$ROOT/clone4"
 git clone -q "$BENCH" "$ROOT/clone5"
+git clone -q "$BENCH" "$ROOT/clone6"
 
 # fresh: what `git submodule deinit` leaves, its clone kept in the git dir.
 git submodule deinit -q -f -- "$P/fresh"
@@ -627,6 +628,122 @@ check_eq "no submodules: exits 0" 0 "$RC"
 check_eq "and prints nothing" "" "$OUT"
 OUT="$("$TOOL" enter "$ROOT/nowhere" 2>&1)" && RC=0 || RC=$?
 check_eq "no such directory: exits 0" 0 "$RC"
+
+echo "── repair ───────────────────────────────────────────────────────"
+cd "$ROOT/clone6"
+repair() { OUT="$("$TOOL" repair "${1:-$PWD}" 2>&1)" && RC=0 || RC=$?; }
+# Shell entry's checkout, then each way of being unreadable to Nix: removed by
+# hand, deinitialized, and shallow (what `shallow = true` in .gitmodules makes).
+run
+rm -rf "$P/taken"
+git submodule deinit -q -f -- "$P/fresh"
+git submodule deinit -q -f -- "$P/present"
+rm -rf ".git/modules/$P/present"
+git submodule update -q --init --depth 1 -- "$P/present"
+head_present="$(git -C "$P/present" rev-parse HEAD)"
+run
+check "(entry will not bring those back)" says "registered but not checked out"
+check_not "(…and $P/taken is still gone)" at_pin "$P/taken"
+git submodule deinit -q -f -- "$P/present"
+rm -rf ".git/modules/$P/present"
+git submodule update -q --init --depth 1 -- "$P/present"
+check "(and the shallow one starts out shallow)" test "$(git -C "$P/present" rev-parse --is-shallow-repository)" = true
+tracked_before="$(git diff HEAD --name-only -- .gitmodules flake.lock)"
+repair
+check_eq "exits 0" 0 "$RC"
+check "says what it brings back" says "$P/taken is not checked out — bringing it back"
+check "says it is settled" says "stub-nix: the $NOUN's sources are settled"
+check "a submodule removed by hand is back, at its pin" at_pin "$P/taken"
+check "…with no failed fetch on the way" silent_on "could not fetch"
+check "…still a partial clone of its branch" partial_one_branch "$P/taken"
+check "a deinitialized one is back, at its pin" at_pin "$P/fresh"
+check "the shallow one has its history" test "$(git -C "$P/present" rev-parse --is-shallow-repository)" = false
+check_eq "…its checkout where it was" "$head_present" "$(git -C "$P/present" rev-parse HEAD)"
+check_eq "no tracked file changes" "$tracked_before" "$(git diff HEAD --name-only -- .gitmodules flake.lock)"
+before="$(snapshot)"
+repair
+check_eq "nothing left: exits 0" 0 "$RC"
+check_eq "…and changes nothing" "$before" "$(snapshot)"
+repair "$PWD/$P"
+check_eq "from a directory inside the $NOUN: exits 0" 0 "$RC"
+check "…and settles the whole $NOUN" says "the $NOUN's sources are settled"
+
+# Removed by hand, and the project has since moved its pin past what the clone
+# has: fetched first, the ordinary way, so git does not download it all again.
+newer="$(git -C "$ROOT/remotes/taken.git" rev-parse develop)"
+git update-index --cacheinfo "160000,$newer,$P/taken"
+git commit -q -m "a newer pin"
+rm -rf "$P/taken"
+check_not "(the clone lacks the new pin)" git --git-dir=".git/modules/$P/taken" -c core.worktree=/ -c extensions.partialClone= cat-file -e "$newer^{commit}"
+repair
+check_eq "a moved pin: exits 0" 0 "$RC"
+check "…is checked out" at_pin "$P/taken"
+check "…with no failed fetch on the way" silent_on "could not fetch"
+
+# Only its URL left (`git submodule add` over a checkout): nothing to restore from.
+rm -rf "$P/taken" ".git/modules/$P/taken"
+repair
+check_eq "only a URL left: exits 0" 0 "$RC"
+check "…cloned anew, at its pin" at_pin "$P/taken"
+check "…a partial clone of its branch" partial_one_branch "$P/taken"
+
+# Something of someone's in the way.
+rm -rf "$P/taken"
+mkdir "$P/taken"
+printf 'mine\n' > "$P/taken/keep.txt"
+repair
+check_eq "a directory in the way: exits 1" 1 "$RC"
+check "…names what is there" says "keep.txt"
+check "…says what did not settle" says "could not settle: $P/taken"
+check_eq "…and leaves it" "mine" "$(cat "$P/taken/keep.txt")"
+rm -rf "$P/taken"
+repair
+check_eq "cleared: exits 0" 0 "$RC"
+
+# Nix has the last word, from a stub that takes no chances with the real one.
+mkdir -p "$ROOT/stubnix"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s/nix-args"\n[ -z "$NIX_STUB_ERROR" ] || { echo "$NIX_STUB_ERROR" >&2; exit 1; }\n' "$ROOT" > "$ROOT/stubnix/nix"
+chmod +x "$ROOT/stubnix/nix"
+repair
+check "no flake.nix: not asked, and says so" says "not checked with Nix"
+: > flake.nix
+OUT="$(PATH="$ROOT/stubnix:$PATH" "$TOOL" repair "$PWD" 2>&1)" && RC=0 || RC=$?
+check_eq "Nix reads the flake: exits 0" 0 "$RC"
+check "…says so" says "and Nix reads the flake"
+check "…and asks without writing the lock" grep -qF -- "flake metadata . --no-write-lock-file" "$ROOT/nix-args"
+OUT="$(NIX_STUB_ERROR="error: nope" PATH="$ROOT/stubnix:$PATH" "$TOOL" repair "$PWD" 2>&1)" && RC=0 || RC=$?
+check_eq "Nix does not: exits 1" 1 "$RC"
+check "…and shows why" says "error: nope"
+rm -f flake.nix
+
+# A submodule's own submodule: Nix reads it too, and entry leaves it out in the
+# apps shape. A broken ref in one is reported, not hidden.
+seed_remote deep
+git -C "$ROOT/seed/present" checkout -q develop
+git -C "$ROOT/seed/present" submodule add -q -b develop "file://$ROOT/remotes/deep.git" deep
+git -C "$ROOT/seed/present" commit -q -m "a submodule of its own"
+git -C "$ROOT/seed/present" push -q "$ROOT/remotes/present.git" develop
+git -C "$P/present" fetch -q origin develop
+git -C "$P/present" checkout -q FETCH_HEAD
+repair
+check_eq "a nested submodule: exits 0" 0 "$RC"
+check "…is checked out" test -f "$P/present/deep/deep/hooks.py"
+check "…with its history" test "$(git -C "$P/present/deep" rev-parse --is-shallow-repository)" = false
+check "…partial" test "$(git -C "$P/present/deep" config remote.origin.promisor)" = true
+git -C "$P/present" submodule deinit -q -f -- deep
+rm -rf "$(git -C "$P/present" rev-parse --git-path modules/deep)"
+mv "$ROOT/remotes/deep.git" "$ROOT/remotes/deep.git.away"
+repair
+check_eq "a nested submodule that cannot be fetched: exits 1" 1 "$RC"
+check "…names it" says "could not settle: $P/present/deep"
+mv "$ROOT/remotes/deep.git.away" "$ROOT/remotes/deep.git"
+
+mkdir -p "$ROOT/not-a-repo"
+OUT="$("$TOOL" repair "$ROOT/not-a-repo" 2>&1)" && RC=0 || RC=$?
+check_eq "not a repository: exits 1" 1 "$RC"
+check "…and says so" says "is not a git repository"
+OUT="$("$TOOL" repair "$ROOT/nowhere" 2>&1)" && RC=0 || RC=$?
+check_eq "no such directory: exits 1" 1 "$RC"
 
 echo "── the first clone (a scaffolder's) ─────────────────────────────"
 cd "$ROOT"
