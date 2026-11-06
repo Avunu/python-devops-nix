@@ -18,7 +18,10 @@ rec {
   # (it always exits 0: every problem is reported, and the next entry tries
   # again), and `<name> clone [--branch B] [--treeless] [--require-branch] URL
   # PATH` for a scaffolder's first clone (exit 1 when git fails, 3 when
-  # --require-branch and the remote has no such branch).
+  # --require-branch and the remote has no such branch), and `<name> repair
+  # [--treeless PATH]... [ROOT]` for a person whose flake Nix cannot read (exit 1
+  # unless Nix reads it after). A product exposes repair as its own flake's app:
+  # a project's flake cannot be evaluated in the state repair is for.
   #
   #   label          the message prefix ("<p>-nix")
   #   noun           what the superproject is called ("bench", "project")

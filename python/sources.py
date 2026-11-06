@@ -3,7 +3,7 @@ does about them.
 
 Product-independent and standard library only (written to 3.11). A product
 runs it as a command (`lib.sources.command` builds one), or copies it into its
-own package and imports it (`lib.sources.module`). Two entry points:
+own package and imports it (`lib.sources.module`). Three entry points:
 
     enter [ROOT]   what the development shell runs on every entry: check out,
                    once, the submodules a fresh clone of the project has never
@@ -11,6 +11,8 @@ own package and imports it (`lib.sources.module`). Two entry points:
                    report on the rest
     clone URL PATH the scaffolder's first clone of a source repository, in the
                    same shape shell entry makes
+    repair [ROOT]  run by a person when Nix cannot read the project's flake:
+                   everything Nix needs from the submodules, and Nix's answer
 
 Ported from frappe-nix's lib/apps-report.nix and odoo-nix's
 lib/submodules-init.nix, which had been ported into each other twice; the
@@ -114,6 +116,21 @@ it is the old copy of an app. Entry says whether anything in it would be lost
 its config section with it: left behind, they make a later submodule at the
 same path look as if this clone had set it up before, and so not worth checking
 out. Entry deletes nothing itself.
+
+`repair` exists because entry cannot help where it is needed most. A flake that
+includes submodules, evaluated from a tree with uncommitted changes, reads each
+one from its working tree, so Nix fails before any flake output exists: on a
+submodule with no checkout, at any depth, and under Determinate Nix on a shallow
+one too (its provenance tracking asks every input for `revCount`, which upstream
+Nix leaves uncomputed). That rules out the dev shell, and `nix run .#anything`
+as well: the command has to reach a person from outside the project, as
+`nix run github:<product>#repair`. It runs entry, and does the two things entry
+will not do unasked: it brings back a submodule this clone set up before
+(`restore`), and it checks out a submodule's own submodules (`settle_nested`),
+broken refs being a failure to report rather than a reason not to try. It writes
+to no tracked file and overwrites nothing: a directory in a submodule's way is
+named and left. It succeeds only if Nix then reads the flake
+(`nix flake metadata`), since that, not the state of the clones, is the point.
 
 The product supplies (`Config`):
 
@@ -532,14 +549,16 @@ class Sources:
         ):
             git("config", "remote.origin.partialclonefilter", BLOBLESS, cwd=path)
 
-    def prefetch_pin(self, path: str) -> None:
+    def prefetch_pin(self, path: str, clone: str = "") -> None:
         """Fetch the commit the superproject records, the ordinary way, when the
         clone lacks it. Asked on every entry, because a pin moves under a clone
         with a `git pull` of the superproject. A fetch that fails (offline, a
         pin the remote no longer has) is reported and leaves the clone as it
-        was."""
+        was. `clone` is the clone's git directory, for one with no checkout at
+        `path` to run in."""
         pin = self.links.get(path, "")
-        if not pin or have_commit(path, pin):
+        where = clone or path
+        if not pin or have_commit(where, pin):
             return
         try:
             result = git(
@@ -548,7 +567,7 @@ class Sources:
                 "--no-recurse-submodules",
                 "origin",
                 pin,
-                cwd=path,
+                cwd=where,
                 timeout=PREFETCH_TIMEOUT,
             )
             fetched = result.returncode == 0
@@ -891,6 +910,166 @@ class Sources:
         self.summarise(report)
         return report
 
+    def repair(self, root: str = ".") -> bool:
+        """What it takes for Nix to read the flake in `root`, or anywhere in
+        that repository (see the module docstring). Whether it does now; every
+        problem has been said by the time this returns. The working directory
+        is restored after."""
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            top = out("rev-parse", "--show-toplevel")
+            if not top:
+                say(f"{self.label}: {os.path.abspath('.')} is not a git repository")
+                return False
+            os.chdir(top)
+            with entry_lock() as acquired:
+                if not acquired:
+                    say(
+                        f"{self.label}: a shell entry is setting up the sources — try again when it is done"
+                    )
+                    return False
+                return self._repair()
+        finally:
+            os.chdir(cwd)
+
+    def _repair(self) -> bool:
+        self.links = gitlinks()
+        missing = self.classify()[0].unchecked
+        by_path = {sub.path: sub for sub in read_gitmodules()}
+        for path in missing:
+            say(f"{self.label}: {path} is not checked out — bringing it back")
+            self.restore(by_path[path])
+
+        report = self._enter()
+        unsettled = [*report.failed, *report.unfinished, *report.unchecked]
+        for path in (*report.first, *report.checked):
+            if path in report.failed:
+                continue
+            unsettled += self.settle_nested(path)
+            unsettled += [
+                p for p in (path, *nested_checkouts(path)) if shallow_on_disk(p)
+            ]
+        if unsettled:
+            paths = " ".join(dict.fromkeys(unsettled))
+            say(f"{self.label}: could not settle: {paths} — see above.")
+            return False
+        return self.nix_reads_flake()
+
+    def restore(self, sub: Submodule) -> bool:
+        """Back to its pinned commit, a submodule this clone set up before and
+        has no checkout of. In place from the clone under the git directory, or
+        a first checkout when there is none (only its URL was left). Git will
+        not clone into a directory with anything in it, and what is there is
+        somebody's."""
+        in_the_way = directory_entries(sub.path)
+        if in_the_way:
+            say(
+                f"{self.label}: {sub.path} is not checked out, but its directory is not empty.",
+                "  Move what is there aside and run this again:",
+                *(f"    {entry}" for entry in in_the_way),
+            )
+            return False
+        clone = out("rev-parse", "--git-path", f"modules/{sub.name}")
+        if not os.path.isdir(clone):
+            active_before = out("config", "--get", f"submodule.{sub.name}.active")
+            if self.first_checkout(sub):
+                return True
+            self.undo_first_checkout(sub, active_before)
+            return False
+        # The clone's core.worktree names this directory, and git will not start
+        # in a clone whose working tree is not there.
+        os.makedirs(sub.path, exist_ok=True)
+        self.prefetch_pin(sub.path, clone)
+        recursive = ["--recursive"] if self.config.recursive else []
+        update = git(
+            "submodule",
+            "update",
+            "--init",
+            "--force",
+            "--no-recommend-shallow",
+            *recursive,
+            "--",
+            sub.path,
+            stdout=sys.stderr,
+            stderr=None,
+        )
+        if update.returncode:
+            return False
+        no_submodule_fetch(sub.path)
+        return True
+
+    def settle_nested(self, path: str, depth: int = 0) -> list[str]:
+        """Check out a submodule's own submodules, at any depth up to
+        MAX_NESTING, whole-history and partial. Nix reads them too. Returns the
+        ones that could not be."""
+        failed: list[str] = []
+        if depth >= MAX_NESTING:
+            return failed
+        for sub in read_gitmodules(path):
+            if os.path.isabs(sub.path) or ".." in sub.path.split("/"):
+                continue
+            # No gitlink: only the .gitmodules entry is left, and Nix passes over it.
+            if not out("ls-files", "-s", "--", sub.path, cwd=path).startswith("160000"):
+                continue
+            nested = os.path.join(path, sub.path)
+            if not os.path.exists(os.path.join(nested, ".git")):
+                say(
+                    f"{self.label}: checking out {nested} (a submodule of a submodule): Nix reads it too"
+                )
+                update = git(
+                    "submodule",
+                    "update",
+                    "--init",
+                    "--no-recommend-shallow",
+                    f"--filter={self.config.filter_for(nested)}",
+                    "--",
+                    sub.path,
+                    cwd=path,
+                    stdout=sys.stderr,
+                    stderr=None,
+                )
+                if update.returncode:
+                    failed.append(nested)
+                    continue
+                no_submodule_fetch(nested)
+            failed += self.settle_nested(nested, depth + 1)
+        return failed
+
+    def nix_reads_flake(self) -> bool:
+        """Nix's own answer, from the flake in the working directory. Without a
+        flake or a nix to ask, the sources being settled is all there is to go
+        on. --no-write-lock-file: asking changes nothing."""
+        settled = f"{self.label}: the {self.config.noun}'s sources are settled"
+        nix = shutil.which("nix")
+        if not nix or not os.path.exists("flake.nix"):
+            why = "no nix on PATH" if not nix else "no flake.nix here"
+            say(f"{settled} (not checked with Nix: {why}).")
+            return True
+        asked = subprocess.run(
+            [
+                nix,
+                "--extra-experimental-features",
+                "nix-command flakes",
+                "flake",
+                "metadata",
+                ".",
+                "--no-write-lock-file",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if asked.returncode == 0:
+            say(f"{settled}, and Nix reads the flake.")
+            return True
+        say(
+            f"{settled}, but Nix still cannot read the flake:",
+            *(f"  {line}" for line in asked.stderr.rstrip().splitlines()),
+        )
+        return False
+
     def summarise(self, report: Report) -> None:
         recursive = " --recursive" if self.config.recursive else ""
         if report.failed:
@@ -987,20 +1166,26 @@ def main(
 ) -> int:
     settings = Config.from_mapping(config)
     parser = argparse.ArgumentParser(
-        prog=prog, description="Source submodules: the first clone, and shell entry."
+        prog=prog,
+        description="Source submodules: the first clone, shell entry, and repair.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     enter_p = sub.add_parser(
         "enter", help="check out a fresh clone's submodules once; report on the rest"
     )
-    enter_p.add_argument("root", nargs="?", default=".")
-    enter_p.add_argument(
-        "--treeless",
-        action="append",
-        default=[],
-        metavar="PATH",
-        help="also clone this path commits-only (tree:0); repeatable",
+    repair_p = sub.add_parser(
+        "repair",
+        help="check out and deepen what Nix needs to read the flake, and ask it; exit 1 if it cannot",
     )
+    for checkout_p in (enter_p, repair_p):
+        checkout_p.add_argument("root", nargs="?", default=".")
+        checkout_p.add_argument(
+            "--treeless",
+            action="append",
+            default=[],
+            metavar="PATH",
+            help="also clone this path commits-only (tree:0); repeatable",
+        )
     clone_p = sub.add_parser(
         "clone", help="a partial clone of one branch, as shell entry makes"
     )
@@ -1017,7 +1202,7 @@ def main(
     )
     args = parser.parse_args(argv)
 
-    if args.command == "enter":
+    if args.command in ("enter", "repair"):
         if args.treeless:
             settings = Config(
                 **{
@@ -1025,6 +1210,11 @@ def main(
                     "treeless": settings.treeless + tuple(args.treeless),
                 }
             )
+        if args.command == "repair":
+            if not os.path.isdir(args.root):
+                say(f"{settings.label}: no such directory: {args.root}")
+                return 1
+            return 0 if Sources(settings).repair(args.root) else 1
         if not os.path.isdir(args.root):
             return 0
         Sources(settings).enter(args.root)
