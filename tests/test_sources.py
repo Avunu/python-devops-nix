@@ -291,6 +291,13 @@ class CommandLine(unittest.TestCase):
             sources.main([], config={"label": "p"})
         self.assertEqual(raised.exception.code, 2)
 
+    def test_repair_of_no_directory_fails_and_says_so(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = sources.main(["repair", "/no/such/dir"], config={"label": "p"})
+        self.assertEqual(code, 1)
+        self.assertIn("no such directory", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
