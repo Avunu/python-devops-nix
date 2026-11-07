@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0](https://github.com/Avunu/python-devops-nix/compare/v1.3.0...v1.4.0) (2026-11-07)
+
+
+### Features
+
+* **sources:** add a repair command for a flake Nix cannot read ([#61](https://github.com/Avunu/python-devops-nix/issues/61)) ([4d3628b](https://github.com/Avunu/python-devops-nix/commit/4d3628b1a9a00831e6b139500fb6508a12143e6c))
+
+
+### Bug Fixes
+
+* **deps:** bump the github-actions group across 2 directories with 1 update ([#60](https://github.com/Avunu/python-devops-nix/issues/60)) ([3bf1583](https://github.com/Avunu/python-devops-nix/commit/3bf15838e920271b532d16dbd53ba5268bd5a33d))
+
 ## [1.3.0](https://github.com/Avunu/python-devops-nix/compare/v1.2.1...v1.3.0) (2026-11-05)
 
 
