@@ -9,7 +9,7 @@ build-backend = "flit_core.buildapi"
 [project]
 name = "standards-core"
 # x-release-please-start-version
-version = "1.3.0"
+version = "1.4.0"
 # x-release-please-end
 description = "Managed files, profiles, CI steps and fleet tools for product plugins"
 requires-python = ">=3.11"

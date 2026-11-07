@@ -6,7 +6,7 @@ from importlib import metadata
 from importlib.resources import files
 
 # x-release-please-start-version
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 # x-release-please-end
 
 _SHA = re.compile(r"[0-9a-f]{40}")
