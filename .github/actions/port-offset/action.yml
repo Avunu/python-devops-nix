@@ -1,0 +1,105 @@
+name: Port offset
+description: >-
+  Picks a port offset of its own for a CI job and exports it as the product's
+  `<P>_NIX_PORT_OFFSET`, so jobs sharing a self-hosted host do not meet on the
+  project's hashed ports.
+
+# docs/conventions.md, Ports: every port a shell binds is a base plus one offset, 0 to 899,
+# hashed from the project's name, so every job of one project asks for the same ports. On a
+# self-hosted host, jobs that run side by side (a Dependabot burst opens a pull request each)
+# then collide, and the second server dies on "Port N is in use by another program" before one
+# test has run. This picks the offset per job: a hash of the repository, run, attempt and
+# runner as the place to start, then the first offset from there whose ports nothing on the
+# host holds. The shell reads the variable when it starts (lib.ports.options), so the step
+# goes before the one that enters it:
+#
+#   - uses: Avunu/python-devops-nix/.github/actions/port-offset@<sha> # main (no release yet)
+#     with:
+#       variable: ODOO_NIX_PORT_OFFSET
+#       bases: "10000 11000 12000 13000 14000"
+#       sockets: |
+#         ${{ runner.temp }}/odoo-nix-pg-*/.s.PGSQL.{port}
+#         /tmp/odoo-nix-pg-*/.s.PGSQL.{port}
+#
+# A variable the job already has is kept. Two jobs choosing in the same moment can still agree,
+# but only when their hashes do (1 in 900); a GitHub-hosted runner is alone on its machine and
+# keeps its start. The chosen offset is also the `offset` output.
+
+inputs:
+  variable:
+    description: The offset variable the shell reads, `<P>_NIX_PORT_OFFSET`.
+    required: true
+  bases:
+    description: >-
+      The product's port bases (lib.ports.options `bases`), separated by spaces: the offset
+      is free when none of base + offset is taken.
+    required: true
+  sockets:
+    description: >-
+      Unix socket paths that carry a port and so count as taking it, one glob per line with
+      `{port}` for the port (a throwaway PostgreSQL cluster's `.s.PGSQL.<port>`). Optional.
+    default: ""
+
+outputs:
+  offset:
+    description: The offset in force, the job's own or the one it already had.
+    value: ${{ steps.pick.outputs.offset }}
+
+runs:
+  using: composite
+  steps:
+    - id: pick
+      shell: bash
+      env:
+        VARIABLE: ${{ inputs.variable }}
+        BASES: ${{ inputs.bases }}
+        SOCKETS: ${{ inputs.sockets }}
+        SEED: ${{ github.repository }}/${{ github.run_id }}/${{ github.run_attempt }}/${{ runner.name }}
+      run: | # zizmor: ignore[github-env] the name is checked below and the value is a number
+        if [[ ! "$VARIABLE" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+          echo "::error::variable $VARIABLE is not an environment variable name"
+          exit 1
+        fi
+        if [ -n "${!VARIABLE:-}" ]; then
+          echo "$VARIABLE=${!VARIABLE} is already set; kept"
+          echo "offset=${!VARIABLE}" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        read -r -a bases <<< "$BASES"
+        if [ "${#bases[@]}" -eq 0 ]; then
+          echo "::error::bases is empty"
+          exit 1
+        fi
+        mapfile -t sockets <<< "$SOCKETS"
+
+        # Whether something listens on the port, or a socket file carries it.
+        in_use() {
+          local port=$1 pattern
+          (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null && return 0
+          for pattern in "${sockets[@]}"; do
+            [ -n "$pattern" ] || continue
+            compgen -G "${pattern//\{port\}/$port}" >/dev/null && return 0
+          done
+          return 1
+        }
+
+        start=$(( 16#$(printf '%s' "$SEED" | sha256sum | cut -c1-4) % 900 ))
+        for ((i = 0; i < 900; i++)); do
+          offset=$(( (start + i) % 900 ))
+          free=1
+          for base in "${bases[@]}"; do
+            if in_use $(( base + offset )); then
+              free=0
+              break
+            fi
+          done
+          if [ "$free" = 1 ]; then
+            echo "$VARIABLE=$offset" >> "$GITHUB_ENV"
+            echo "offset=$offset" >> "$GITHUB_OUTPUT"
+            echo "$VARIABLE=$offset (first base ${bases[0]} -> $(( bases[0] + offset ))), starting from $start"
+            exit 0
+          fi
+        done
+        echo "::error::every port offset from 0 to 899 has a port in use on this host"
+        exit 1
