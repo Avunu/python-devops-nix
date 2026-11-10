@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/Avunu/python-devops-nix/compare/v1.4.0...v1.5.0) (2026-11-10)
+
+
+### Features
+
+* **ci:** a port-offset action for jobs that share a self-hosted host ([#65](https://github.com/Avunu/python-devops-nix/issues/65)) ([fdab5c4](https://github.com/Avunu/python-devops-nix/commit/fdab5c44326fddb710e1309bfc4f6f0be52aed6f))
+* **sources:** add pull, the one way a product moves submodules to their branches ([#67](https://github.com/Avunu/python-devops-nix/issues/67)) ([9931b5d](https://github.com/Avunu/python-devops-nix/commit/9931b5d3f53ad891962641e75a850d84f39ab1f2))
+
 ## [1.4.0](https://github.com/Avunu/python-devops-nix/compare/v1.3.0...v1.4.0) (2026-11-07)
 
 
