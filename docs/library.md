@@ -125,6 +125,7 @@ Conventions: [Images](conventions.md#images).
 | `.github/actions/pre-commit-autofix` | Runs the caller's fixers (`nix fmt`) and prek hooks over a pull request's branch, pushes what they rewrote, dispatches the workflows the push cannot start, and comments what it did. |
 | `.github/actions/nix-failures` | Markdown from the log of a failed `nix build` or `nix flake check`: each failed derivation with the end of its log, or the evaluation error. |
 | `.github/actions/check-report` | A workflow's last job: comments its jobs' results and the `failures-*` artifacts on the pull request when a job failed, and brings that comment up to date once they pass. |
+| `.github/actions/port-offset` | A port offset of its own for a CI job, exported as the product's `<P>_NIX_PORT_OFFSET`: from a hash of the run and runner, the first offset whose ports (the product's `bases`, and any socket files `sockets` names) nothing on the host holds. For jobs that share a self-hosted host. |
 | `.github/actions/sticky-comment` | One comment per marker on a pull request, created or edited, never failing the job. The other actions comment through it. |
 | `.editorconfig`, `.pre-commit-config.yaml`, `committed.toml`, `ruff.toml`, `statix.toml` | The shared copies those checks compare with. `committed.toml` holds the commit types and the one scope list. |
 
