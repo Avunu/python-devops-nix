@@ -86,8 +86,12 @@ class Settings(unittest.TestCase):
                 "scope": ["apps"],
                 "treeless": ["odoo"],
                 "recursive": True,
+                "regen_locks": ["yarn.lock"],
+                "force_env": "P_FORCE",
             }
         )
+        self.assertEqual(config.regen_locks, ("yarn.lock",))
+        self.assertEqual(config.force_env, "P_FORCE")
         self.assertEqual(config.scope, ("apps",))
         self.assertEqual(config.filter_for("odoo"), "tree:0")
         self.assertEqual(config.filter_for("modules/x"), "blob:none")
@@ -99,6 +103,28 @@ class Settings(unittest.TestCase):
     def test_label_required(self) -> None:
         with self.assertRaisesRegex(ValueError, "label"):
             sources.Config.from_mapping({"noun": "bench"})
+
+
+class PullRemote(unittest.TestCase):
+    """`pull` follows the remote with the URL .gitmodules declares, not origin
+    (the end-to-end side is tests/sources.sh)."""
+
+    def test_remote_for_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(["git", "init", "-q", tmp], check=True)
+            for name, url in (
+                ("origin", "https://x/fork.git"),
+                ("upstream", "https://x/app/"),
+            ):
+                subprocess.run(
+                    ["git", "-C", tmp, "remote", "add", name, url], check=True
+                )
+            self.assertEqual(
+                sources.remote_for_url("https://x/app.git", tmp), "upstream"
+            )
+            self.assertEqual(sources.remote_for_url("https://x/fork/", tmp), "origin")
+            self.assertIsNone(sources.remote_for_url("https://x/other", tmp))
+            self.assertIsNone(sources.remote_for_url("", tmp))
 
 
 @contextlib.contextmanager
