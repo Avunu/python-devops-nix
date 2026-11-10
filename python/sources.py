@@ -13,6 +13,9 @@ own package and imports it (`lib.sources.module`). Three entry points:
                    same shape shell entry makes
     repair [ROOT]  run by a person when Nix cannot read the project's flake:
                    everything Nix needs from the submodules, and Nix's answer
+    pull [PATH...] what the product's update command does to the submodules:
+                   each one onto the tip of the branch .gitmodules pairs it
+                   with, as that local branch (`pull`, below)
 
 Ported from frappe-nix's lib/apps-report.nix and odoo-nix's
 lib/submodules-init.nix, which had been ported into each other twice; the
@@ -132,6 +135,25 @@ to no tracked file and overwrites nothing: a directory in a submodule's way is
 named and left. It succeeds only if Nix then reads the flake
 (`nix flake metadata`), since that, not the state of the clones, is the point.
 
+Update is `pull`, and it is one thing for every product. A submodule is moved
+with `git checkout -B <branch> FETCH_HEAD` after the branch is fetched by name
+from the remote that has the URL .gitmodules declares, so the submodule is
+*on* its branch (an editor's branch picker shows it, `git status` says whether
+it is ahead or behind) and not detached at the branch's latest commit.
+Detached is what `git submodule update`, and a checkout of FETCH_HEAD, leave:
+the pin moves and nothing says which branch it was meant to follow. Fetching
+the branch by name rules out the other two obvious ways to move: pulling
+"origin HEAD" follows the remote's default branch, not the paired one, and
+`git submodule update --remote` fails on a clone whose refspec was narrowed to
+another branch. Because `checkout -B` discards commits that are not on the
+remote branch, `pull` leaves a submodule alone, and says so, when its HEAD is
+not an ancestor of what it fetched (unless forced); a tracked file in the way
+is the person's to settle, except the regenerable lockfiles the product names
+(`regen_locks`: tool output, regenerated from the commit's own manifest).
+No `--depth`: a depth-1 fetch grafts the new tip with no parents, so the
+ancestry check could never pass once the remote had moved. A shallow clone
+that cannot answer the question is deepened back to HEAD's own commit date.
+
 The product supplies (`Config`):
 
     label           the message prefix ("frappe-nix")
@@ -149,6 +171,11 @@ The product supplies (`Config`):
                     path component) filled in
     nested_hint     the lines after "<path> is a git repository but not a
                     registered submodule"
+    regen_locks     basenames of lockfiles `pull` may discard local changes
+                    to, where the commit it moves to changes them too
+    force_env       the environment variable that lets `pull` discard commits
+                    a submodule has that its remote branch lacks (`--force`
+                    does the same)
 """
 
 import argparse
@@ -190,6 +217,8 @@ class Config:
         "  'nix build' will not see it. Register it (git submodule add) or commit its",
         "  files in place.",
     )
+    regen_locks: tuple[str, ...] = ()
+    force_env: str = ""
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, object]) -> "Config":
@@ -201,7 +230,7 @@ class Config:
         if "label" not in data:
             raise ValueError("sources settings need a label")
         values = dict(data)
-        for key in ("scope", "treeless", "nested_hint"):
+        for key in ("scope", "treeless", "nested_hint", "regen_locks"):
             if key in values:
                 values[key] = tuple(values[key])  # type: ignore[arg-type]
         return cls(**values)  # type: ignore[arg-type]
@@ -1070,6 +1099,162 @@ class Sources:
         )
         return False
 
+    def forced(self, force: bool = False) -> bool:
+        env = self.config.force_env
+        return force or bool(env and os.environ.get(env))
+
+    def pull(
+        self,
+        root: str = ".",
+        paths: Sequence[str] = (),
+        *,
+        force: bool = False,
+    ) -> dict[str, int]:
+        """Each checked-out submodule in PATHS (every in-scope one by default)
+        onto the tip of its branch, as that local branch. {path: result}, a
+        result being PULLED, SKIPPED or FETCH_FAILED; the working directory is
+        restored after.
+
+        A submodule that is not checked out is not touched (`enter` and the
+        product's own handling see to it), nor is one .gitmodules gives no
+        branch while it is detached: there is nothing to follow."""
+        cwd = os.getcwd()
+        os.chdir(root)
+        try:
+            wanted = {p.rstrip("/") for p in paths}
+            subs = [
+                s
+                for s in sorted(read_gitmodules(), key=lambda s: s.path)
+                if (s.path in wanted if wanted else in_scope(s.path, self.config.scope))
+                and os.path.exists(os.path.join(s.path, ".git"))
+            ]
+            for path in sorted(wanted - {s.path for s in subs}):
+                say(
+                    f"{self.label}: {path} is not a checked-out submodule — nothing to pull"
+                )
+            return {s.path: self.pull_one(s, self.forced(force)) for s in subs}
+        finally:
+            os.chdir(cwd)
+
+    def pull_one(self, sub: Submodule, force: bool) -> int:
+        """Fetch SUB's branch and move it there (`pull`, in the module
+        docstring). The working directory is the superproject's."""
+        cwd, name = sub.path, sub.path.rpartition("/")[2]
+        branch = sub.branch or out(
+            "symbolic-ref", "--quiet", "--short", "HEAD", cwd=cwd
+        )
+        if not branch:
+            say(
+                f"  ⚠  {name}: no branch configured in .gitmodules, and none checked out — skipping.",
+                f"     Fix it with: git config -f .gitmodules submodule.{sub.name}.branch <branch>",
+            )
+            return SKIPPED
+        # The declared URL's remote when there is one; else the URL itself,
+        # which git fetches just as well (only the remote-tracking ref goes
+        # unrefreshed). The name-based guesses are a last resort for a
+        # submodule registered without a URL.
+        remote = remote_for_url(sub.url, cwd)
+        if not remote and sub.url:
+            remote = sub.url
+            say(
+                f"  · {name}: no remote has the .gitmodules URL ({sub.url}); fetching it directly"
+            )
+        if not remote:
+            names = out("remote", cwd=cwd).split()
+            remote = "origin" if "origin" in names else (names[0] if names else "")
+        if not remote:
+            say(f"  ⚠  {name}: no git remote — skipping")
+            return SKIPPED
+        say(f"  → {name} ({branch} from {remote})")
+        # A partial clone keeps its branch with the folders of every commit
+        # (the commits only, for a treeless path); this pulls that branch, so
+        # ask for as much. An URL has no promisor setting of its own: origin's.
+        holder = "origin" if remote == sub.url else remote
+        filt = (
+            [f"--filter={self.config.filter_for(sub.path)}"]
+            if out("config", "--get", f"remote.{holder}.promisor", cwd=cwd) == "true"
+            else []
+        )
+        fetched = git(
+            "fetch",
+            "--quiet",
+            "--no-recurse-submodules",
+            *filt,
+            remote,
+            branch,
+            cwd=cwd,
+            stdout=None,
+            stderr=None,
+        )
+        if fetched.returncode != 0:
+            say(
+                f"  ✗ {name}: could not fetch '{branch}' from {remote}",
+                f"     .gitmodules says {sub.path} is {sub.url} @ {branch}; fix either the entry",
+                f"     (git config -f .gitmodules submodule.{sub.name}.branch <branch>) or the remote.",
+            )
+            return FETCH_FAILED
+        # A shallow clone can be unable to answer the ancestry question at all:
+        # a depth-limited fetch leaves the pin and the tip as two disconnected
+        # islands, and a plain fetch never asks for the gap. "No merge-base
+        # whatsoever" is the exact signature, and only ever a shallow artefact:
+        # a real local commit shares its parent with the tip. So then, and only
+        # then, deepen back to HEAD's own commit date, less a day for a
+        # backport whose committer date runs a little behind the pin's.
+        shallow = out("rev-parse", "--is-shallow-repository", cwd=cwd) == "true"
+        if shallow and not out("merge-base", "HEAD", "FETCH_HEAD", cwd=cwd):
+            say(
+                f"     shallow clone with no path between HEAD and {remote}/{branch} — deepening to check"
+            )
+            since = int(out("log", "-1", "--format=%ct", "HEAD", cwd=cwd) or 0) - 86400
+            git(
+                "fetch",
+                "-q",
+                remote,
+                branch,
+                f"--shallow-since=@{since}",
+                cwd=cwd,
+                stdout=None,
+                stderr=None,
+            )
+        # `checkout -B` discards anything not on the remote branch: refuse when
+        # this submodule carries commits that are not in what was just fetched.
+        if not ok("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD", cwd=cwd):
+            env = self.config.force_env
+            if force:
+                via = f"{env}=1" if env and os.environ.get(env) else "--force"
+                say(f"     ⚠  local commits will be discarded ({via})")
+            else:
+                override = f"{env}=1" if env else "--force"
+                say(
+                    f"  ⚠  {name}: HEAD is not an ancestor of {remote}/{branch} — it has local or",
+                    "     unpushed commits that checkout -B would discard. Skipping.",
+                    f"     Push them, or re-run with {override} to overwrite.",
+                )
+                if shallow:
+                    say(
+                        "     (This clone is shallow. If you made no commits here, 'git fetch --unshallow'",
+                        f"     in {sub.path} settles it.)",
+                    )
+                return SKIPPED
+        clear_lock_obstacles(cwd, self.config.regen_locks)
+        # Whatever else is in the way (git names it) is the person's to decide:
+        # the submodule is skipped like one with local commits, rather than
+        # ending the whole update for one submodule's dirty tree.
+        moved = git(
+            "checkout", "-B", branch, "FETCH_HEAD", cwd=cwd, stderr=subprocess.STDOUT
+        )
+        if moved.returncode != 0:
+            say(
+                f"  ⚠  {name}: git could not check out {remote}/{branch} — skipping. git says:",
+                *(f"       {line}" for line in moved.stdout.rstrip("\n").split("\n")),
+                f"     If that names local changes: commit them, stash them (git -C {sub.path} stash),",
+                f"     or discard them (git -C {sub.path} checkout -- <path>), then re-run.",
+            )
+            return SKIPPED
+        if moved.stdout.strip():
+            say(moved.stdout.rstrip("\n"))
+        return PULLED
+
     def summarise(self, report: Report) -> None:
         recursive = " --recursive" if self.config.recursive else ""
         if report.failed:
@@ -1106,6 +1291,113 @@ class Sources:
             say(
                 f"{self.label}: .gitmodules still registers {sub.path}, but the {self.config.noun} records no commit",
                 f"  for it — a removal that stopped halfway. Finish it: {finish}",
+            )
+
+
+# ── onto the branch tips ───────────────────────────────────────────────────
+
+#: `pull`'s results, and the exit status of the command for the worst of them.
+PULLED = 0
+SKIPPED = 1  # left where it was, for a person to decide (said above)
+FETCH_FAILED = 2  # the branch could not be fetched
+
+
+def strip_url(url: str) -> str:
+    """Two spellings of one GitHub URL usually differ by a trailing / or .git."""
+    return url.removesuffix("/").removesuffix(".git")
+
+
+def remote_for_url(url: str, cwd: str) -> str | None:
+    """Which remote of a submodule has the URL .gitmodules declares.
+
+    That URL is the submodule's source of truth (it is what `nix build` fetches
+    the pinned commit from), and `origin` is no safe stand-in for it: a
+    developer's checkout commonly has origin on a fork that does not carry the
+    release branch at all, and upstream on the real thing."""
+    want = strip_url(url)
+    if not want:
+        return None
+    for remote in out("remote", cwd=cwd).split():
+        if strip_url(out("remote", "get-url", remote, cwd=cwd)) == want:
+            return remote
+    return None
+
+
+def clear_lock_obstacles(cwd: str, names: Sequence[str]) -> None:
+    """Clear what would stop `checkout -B` from moving to FETCH_HEAD, of the
+    regenerable lockfiles NAMES only.
+
+    `checkout -B` refuses over a tracked file with local changes that the
+    target commit also changes, and over an untracked file it would create.
+    Lockfiles in a checkout are tool output (a postinstall's non-frozen `yarn
+    install`, a manual `yarn`), and the install that follows regenerates them
+    from the commit's own, so exactly those obstacles go and nothing else. What
+    git would carry across untouched is left alone, which keeps node_modules'
+    sentinel valid. Run after the ancestry guard has passed: only uncommitted
+    changes are discarded here, never commits."""
+    if not names:
+        return
+    specs = [f":(glob)**/{name}" for name in names]
+    listing = out(
+        "diff-tree",
+        "-r",
+        "-z",
+        "--no-renames",
+        "--name-status",
+        "HEAD",
+        "FETCH_HEAD",
+        "--",
+        *specs,
+        cwd=cwd,
+    )
+    fields = listing.split("\0")
+    for status, path in zip(fields[0::2], fields[1::2]):
+        if not status or not path:
+            continue
+        obstacle = False
+        if status == "A":
+            # Not in HEAD: a file (untracked, or staged new) where upstream
+            # adds one. git overwrites an ignored one by itself; check-ignore
+            # says 1 for "not ignored" (0 ignored, 128 error: both leave it).
+            if os.path.lexists(os.path.join(cwd, path)):
+                obstacle = (
+                    git("check-ignore", "-q", "--", path, cwd=cwd).returncode == 1
+                )
+        elif not ok(
+            "--literal-pathspecs", "diff", "--quiet", "HEAD", "--", path, cwd=cwd
+        ):
+            obstacle = True
+        if not obstacle:
+            continue
+        # A lock beside a package.json that is edited too may be the other half
+        # of a hand edit (`yarn add`), not tool output: leave it, and let the
+        # checkout say so.
+        manifest = path[: len(path) - len(path.rsplit("/", 1)[-1])] + "package.json"
+        if not ok(
+            "--literal-pathspecs", "diff", "--quiet", "HEAD", "--", manifest, cwd=cwd
+        ):
+            say(f"     keeping {path}: the package.json beside it has local edits too")
+            continue
+        if status == "A":
+            git(
+                "--literal-pathspecs",
+                "rm",
+                "-q",
+                "-f",
+                "--cached",
+                "--ignore-unmatch",
+                "--",
+                path,
+                cwd=cwd,
+            )
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(os.path.join(cwd, path))
+            say(
+                f"     discarding local {path} (regenerated by the install; upstream adds one)"
+            )
+        elif ok("--literal-pathspecs", "checkout", "-q", "HEAD", "--", path, cwd=cwd):
+            say(
+                f"     discarding local changes to {path} (regenerated by the install; upstream changes it)"
             )
 
 
@@ -1186,6 +1478,27 @@ def main(
             metavar="PATH",
             help="also clone this path commits-only (tree:0); repeatable",
         )
+    pull_p = sub.add_parser(
+        "pull",
+        help="move each checked-out submodule onto the tip of its .gitmodules branch, as that branch; "
+        "exit 1 if any was skipped, 2 if a fetch failed",
+    )
+    pull_p.add_argument(
+        "paths", nargs="*", metavar="PATH", help="default: every submodule in scope"
+    )
+    pull_p.add_argument("--root", default=".")
+    pull_p.add_argument(
+        "--treeless",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="this path is cloned commits-only (tree:0), so fetch it so; repeatable",
+    )
+    pull_p.add_argument(
+        "--force",
+        action="store_true",
+        help="discard commits a submodule has that its remote branch lacks",
+    )
     clone_p = sub.add_parser(
         "clone", help="a partial clone of one branch, as shell entry makes"
     )
@@ -1202,14 +1515,22 @@ def main(
     )
     args = parser.parse_args(argv)
 
+    if args.command in ("pull", "enter", "repair") and args.treeless:
+        settings = Config(
+            **{
+                **settings.__dict__,
+                "treeless": settings.treeless + tuple(args.treeless),
+            }
+        )
+
+    if args.command == "pull":
+        if not os.path.isdir(args.root):
+            say(f"{settings.label}: no such directory: {args.root}")
+            return FETCH_FAILED
+        results = Sources(settings).pull(args.root, args.paths, force=args.force)
+        return max(results.values(), default=PULLED)
+
     if args.command in ("enter", "repair"):
-        if args.treeless:
-            settings = Config(
-                **{
-                    **settings.__dict__,
-                    "treeless": settings.treeless + tuple(args.treeless),
-                }
-            )
         if args.command == "repair":
             if not os.path.isdir(args.root):
                 say(f"{settings.label}: no such directory: {args.root}")

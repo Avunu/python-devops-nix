@@ -766,6 +766,142 @@ OUT="$("$TOOL" clone "file://$ROOT/remotes/nope.git" first/nope 2>&1)" && RC=0 |
 check_eq "a remote that is not there: exits 1" 1 "$RC"
 check "…naming it" says "stub-nix: could not clone file://$ROOT/remotes/nope.git into first/nope"
 
+echo "── pull: onto the branch tips ───────────────────────────────────"
+pull() { OUT="$("$TOOL" pull --root "$PWD" "$@" 2>&1)" && RC=0 || RC=$?; }
+tip() { git -C "$ROOT/remotes/$1.git" rev-parse develop; }
+on_branch() { # <path> <branch> <commit>
+  [ "$(git -C "$1" symbolic-ref --short -q HEAD)" = "$2" ] && [ "$(git -C "$1" rev-parse HEAD)" = "$3" ]
+}
+git clone -q "$BENCH" "$ROOT/clone7"
+cd "$ROOT/clone7"
+run
+check "a first entry's checkouts are at their pins, detached" test -z "$(git -C "$P/present" symbolic-ref -q HEAD || true)"
+commit_to present develop "develop 3"
+commit_to fresh develop "develop 3"
+pull "$P/present"
+check_eq "pulling a path: exits 0" 0 "$RC"
+check "…leaves the submodule on its branch, at the branch's tip" on_branch "$P/present" develop "$(tip present)"
+check "…with the files of that commit" test -f "$P/present/present/develop/log.txt"
+check "…says what it moved" says "→ present (develop from origin)"
+check_eq "…and touches no other path" "$(git ls-files -s -- "$P/fresh" | awk '{ print $2 }')" "$(git -C "$P/fresh" rev-parse HEAD)"
+pull "$P/present"
+check_eq "again: exits 0" 0 "$RC"
+check "…and stays where it is" on_branch "$P/present" develop "$(tip present)"
+
+git submodule deinit -q -f -- "$P/gone"
+pull
+check_eq "no path: exits 0" 0 "$RC"
+for a in present fresh taken; do
+  check "…moves $P/$a onto the tip of its branch" on_branch "$P/$a" develop "$(tip "$a")"
+done
+check "…leaves a submodule that is not checked out alone" empty "$P/gone"
+check_not "…and names nothing of the local directory" says "localapp"
+check "…keeps the clone partial" partial_one_branch "$P/present"
+if [ "$SHAPE" = modules ]; then
+  check "…core, which is treeless, too" on_branch core develop "$(tip core)"
+  check_eq "…and treeless still" tree:0 "$(git -C core config remote.origin.partialclonefilter)"
+  # A path the product only knows at run time (odoo-nix's core source).
+  commit_to core develop "develop 3"
+  OUT="$("$TOOL" pull --root "$PWD" --treeless modules/present core 2>&1)" && RC=0 || RC=$?
+  check_eq "--treeless PATH: exits 0" 0 "$RC"
+  check "…and core is on the new tip" on_branch core develop "$(tip core)"
+fi
+
+# A remote that carries the branch under a second name: the URL .gitmodules
+# declares is the one to follow, whatever origin is.
+git -C "$P/present" remote add upstream "file://$ROOT/remotes/present.git"
+git -C "$P/present" config remote.upstream.promisor true
+git -C "$P/present" config remote.upstream.partialclonefilter blob:none
+git -C "$P/present" remote set-url origin "file://$ROOT/remotes/nope.git"
+commit_to present develop "develop 4"
+pull "$P/present"
+check "origin on a fork without the branch: follows the remote with .gitmodules' URL" \
+  on_branch "$P/present" develop "$(tip present)"
+check "…which it says" says "→ present (develop from upstream)"
+git -C "$P/present" remote set-url origin "file://$ROOT/remotes/present.git"
+
+echo "  — commits the remote branch lacks"
+echo local > "$P/present/mine.txt"
+git -C "$P/present" add mine.txt
+git -C "$P/present" commit -q -m "mine"
+mine="$(git -C "$P/present" rev-parse HEAD)"
+commit_to present develop "develop 5"
+pull
+check_eq "exits 1" 1 "$RC"
+check "…leaves the submodule with its commit" on_branch "$P/present" develop "$mine"
+check "…says why" says "HEAD is not an ancestor of origin/develop"
+if [ "$SHAPE" = apps ]; then
+  check "…and how to override it, by the shape's variable" says "re-run with STUB_FORCE=1 to overwrite"
+else
+  check "…and how to override it" says "re-run with --force to overwrite"
+fi
+check "…while the others still move" on_branch "$P/fresh" develop "$(tip fresh)"
+pull --force "$P/present"
+check_eq "--force: exits 0" 0 "$RC"
+check "…discards the commit" on_branch "$P/present" develop "$(tip present)"
+check "…saying so" says "local commits will be discarded"
+
+if [ "$SHAPE" = apps ]; then
+  # forceEnv is STUB_FORCE in this shape; the line above has --force
+  git -C "$P/present" commit -q --allow-empty -m "mine again"
+  commit_to present develop "develop 6"
+  pull "$P/present"
+  check_eq "the shape's force variable, unset: exits 1" 1 "$RC"
+  check "…and names it" says "re-run with STUB_FORCE=1 to overwrite"
+  OUT="$(STUB_FORCE=1 "$TOOL" pull --root "$PWD" "$P/present" 2>&1)" && RC=0 || RC=$?
+  check_eq "set: exits 0" 0 "$RC"
+  check "…and discards the commit" on_branch "$P/present" develop "$(tip present)"
+
+  echo "  — lockfiles"
+  seed="$ROOT/seed/present"
+  lock_commit() { # <message> <contents> — yarn.lock and notes.txt upstream
+    git -C "$seed" checkout -q develop
+    printf '%s\n' "$2" > "$seed/yarn.lock"
+    printf '%s\n' "$2" > "$seed/notes.txt"
+    git -C "$seed" add -A && git -C "$seed" commit -q -m "$1"
+    git -C "$seed" push -q "$ROOT/remotes/present.git" develop
+  }
+  lock_commit "first locks" first
+  pull "$P/present"
+  check_eq "setup: pulled the first locks" 0 "$RC"
+  printf 'yarn rewrote this\n' > "$P/present/yarn.lock"
+  lock_commit "second locks" second
+  pull "$P/present"
+  check_eq "a regenerable lockfile with local changes, changed upstream: exits 0" 0 "$RC"
+  check "…is replaced by upstream's" on_branch "$P/present" develop "$(tip present)"
+  check "…saying so" says "discarding local changes to yarn.lock"
+  printf 'mine\n' > "$P/present/notes.txt"
+  lock_commit "third locks" third
+  pull "$P/present"
+  check_eq "another file with local changes, changed upstream: exits 1" 1 "$RC"
+  check "…is the person's to settle, and git is quoted" says "git could not check out origin/develop"
+  check_eq "…and it keeps their edit" mine "$(cat "$P/present/notes.txt")"
+  git -C "$P/present" checkout -q -- notes.txt
+  pull "$P/present"
+  check_eq "once settled: exits 0" 0 "$RC"
+fi
+
+echo "  — branches that cannot be fetched"
+git config -f .gitmodules "submodule.$P/taken.branch" nope
+pull
+check_eq "a branch the remote lacks: exits 2" 2 "$RC"
+check "…says so" says "could not fetch 'nope' from origin"
+check "…and how to fix the entry" says "git config -f .gitmodules submodule.$P/taken.branch <branch>"
+check "…the others still move" on_branch "$P/fresh" develop "$(tip fresh)"
+git config -f .gitmodules --unset "submodule.$P/taken.branch"
+pull "$P/taken"
+check "with no branch in .gitmodules, the checked-out one is followed" on_branch "$P/taken" develop "$(tip taken)"
+git -C "$P/taken" switch -q --detach
+pull "$P/taken"
+check_eq "…and with none checked out either: exits 1" 1 "$RC"
+check "…saying what to set" says "no branch configured in .gitmodules, and none checked out"
+git checkout -q -- .gitmodules
+pull "$P/nothere"
+check_eq "a path that is no submodule: exits 0" 0 "$RC"
+check "…says so" says "$P/nothere is not a checked-out submodule"
+OUT="$("$TOOL" pull --root "$ROOT/nowhere" 2>&1)" && RC=0 || RC=$?
+check_eq "no such directory: exits 2" 2 "$RC"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails check(s) failed"

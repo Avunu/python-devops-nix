@@ -20,7 +20,11 @@ rec {
   # PATH` for a scaffolder's first clone (exit 1 when git fails, 3 when
   # --require-branch and the remote has no such branch), and `<name> repair
   # [--treeless PATH]... [ROOT]` for a person whose flake Nix cannot read (exit 1
-  # unless Nix reads it after). A product exposes repair as its own flake's app:
+  # unless Nix reads it after), and `<name> pull [--root ROOT] [--force] [PATH]...`
+  # for the product's update command (exit 1 when a submodule was left where it
+  # was, 2 when a branch could not be fetched): each checked-out submodule on
+  # the tip of the branch .gitmodules pairs it with, as that local branch. A
+  # product exposes repair as its own flake's app:
   # a project's flake cannot be evaluated in the state repair is for.
   #
   #   label          the message prefix ("<p>-nix")
@@ -36,6 +40,10 @@ rec {
   #   removeCommand  the command that finishes a half-done removal; {name},
   #                  {path} and {base} are filled in. Default: removing the
   #                  .gitmodules section
+  #   regenLocks     lockfile basenames `pull` may discard local changes to when
+  #                  the commit it moves to changes them too ([ "yarn.lock" ])
+  #   forceEnv       the environment variable that lets `pull` discard commits
+  #                  a submodule has that its remote branch lacks
   #   nestedHint     the lines (each indented by two spaces) after "<path> is a
   #                  git repository but not a registered submodule —"
   #   python         the interpreter it runs on (a tool: docs/library.md, Python
@@ -51,6 +59,8 @@ rec {
       treeless ? [ ],
       updateCommand ? "",
       removeCommand ? "",
+      regenLocks ? [ ],
+      forceEnv ? "",
       nestedHint ? null,
       python ? pkgs.python3,
       git ? pkgs.git,
@@ -67,6 +77,8 @@ rec {
           ;
         update_command = updateCommand;
         remove_command = removeCommand;
+        regen_locks = regenLocks;
+        force_env = forceEnv;
       }
       // lib.optionalAttrs (nestedHint != null) { nested_hint = nestedHint; };
     in
@@ -115,6 +127,8 @@ rec {
           scope = [ "apps" ];
           updateCommand = "stub update --pull";
           removeCommand = "stub remove-app {base}";
+          regenLocks = [ "yarn.lock" ];
+          forceEnv = "STUB_FORCE";
         };
         modules = {
           label = "stub-nix";
