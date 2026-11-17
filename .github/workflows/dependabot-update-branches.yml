@@ -35,6 +35,8 @@ name: Dependabot update branches
 #         APP_ID: ${{ vars.ORG_CI_APP_ID }}
 #         APP_PRIVATE_KEY: ${{ secrets.ORG_CI_PRIVATE_KEY }}
 #
+# It runs on GitHub-hosted ubuntu-latest, whatever runners the caller uses (see the job).
+#
 # With a GitHub App, the App comments and updates, so an updated branch starts its checks the
 # normal way. With GITHUB_TOKEN, an update raises no event: the workflows in `dispatch` are
 # dispatched on the updated branch instead, and those must have `workflow_dispatch`.
@@ -72,7 +74,11 @@ permissions:
 
 jobs:
   update-branches:
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    # It holds APP_PRIVATE_KEY, so it runs on a GitHub-hosted runner, a fresh machine for
+    # each job, never on a shared self-hosted one whose earlier jobs (any repository's, a
+    # dependency's, a fork's) could read the key or the token. It checks nothing out and
+    # runs only GitHub's create-github-app-token and the runner's gh.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # One run at a time; a burst of merges leaves one run pending, which sees them all.
     concurrency:

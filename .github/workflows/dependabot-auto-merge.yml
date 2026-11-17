@@ -32,6 +32,9 @@ name: Dependabot auto-merge
 # dependabot-update-branches.yml keeps the same pull requests up to date with the base
 # branch. This repository calls both, from auto-merge.yml.
 #
+# Both jobs run on GitHub-hosted ubuntu-latest, whatever runners the caller uses: the one
+# that mints the App's token holds its private key (see the job).
+#
 # Requires (one-time, in the caller's settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
 #   • Settings → Branches (or Rules) → protect the default branch and require the checks
@@ -76,10 +79,19 @@ permissions:
   pull-requests: write
 
 jobs:
-  auto-merge:
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+  # Decides from Dependabot's metadata, and holds no App key: dependabot/fetch-metadata
+  # runs here, apart from the job that mints the App's token.
+  policy:
+    # GitHub-hosted, never self-hosted: a shared self-hosted runner keeps state between
+    # jobs, which could change what this decides.
+    runs-on: ubuntu-latest
     # The pull request's author, not github.actor (which a re-run by a person changes).
     if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    permissions:
+      contents: read # fetch-metadata reads the pull request's commits
+      pull-requests: read # and the pull request
+    outputs:
+      merge: ${{ steps.policy.outputs.merge }}
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -113,9 +125,18 @@ jobs:
           echo "$ECOSYSTEM, $type update: auto-merge $merge"
           echo "merge=$merge" >> "$GITHUB_OUTPUT"
 
+  # Mints the App's token and enables auto-merge. It holds APP_PRIVATE_KEY, so it runs
+  # on a GitHub-hosted runner, a fresh machine for each job, never on a shared self-hosted
+  # one whose earlier jobs (any repository's, a dependency's, a fork's) could read the key
+  # or the token. It checks nothing out and runs only GitHub's create-github-app-token
+  # and the runner's gh.
+  auto-merge:
+    needs: policy
+    if: ${{ needs.policy.outputs.merge == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
       - name: Whether the caller passed a GitHub App
         id: app
-        if: steps.policy.outputs.merge == 'true'
         env:
           ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
         run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
@@ -133,7 +154,6 @@ jobs:
           permission-pull-requests: write
 
       - name: Enable auto-merge
-        if: steps.policy.outputs.merge == 'true'
         run: |
           set -euo pipefail
           if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
