@@ -32,12 +32,17 @@ description: >-
 # against the hashed `build-requirements`. The engine's revision and each git
 # dependency's must be on that repository's protected default branch (read with the
 # job's github.token, never the App's), so a pull request's head or a fork's commit,
-# which `git fetch` would also serve, is refused. uv is pinned and checked against its
-# sha256, reads no configuration, and runs without its cache (setup-uv's and
-# UV_NO_CACHE=1), under an empty environment, on the CPython it installs itself.
-# UV_NO_CACHE=1 and UV_NO_CONFIG=1 are exported for the rest of the job. Only on a
-# GitHub-hosted Linux X64 runner. `install-spec` is not used. Off by default, so an
-# existing caller installs as before:
+# which `git fetch` would also serve, is refused. uv is pinned and its binary checked
+# against its sha256 (setup-uv checks the release asset only when it downloads it, not
+# on a warm tool cache), reads no configuration, and runs without its cache (setup-uv's
+# and UV_NO_CACHE=1), under an empty environment, on the CPython it installs itself.
+# UV_NO_CACHE=1 and UV_NO_CONFIG=1 are exported for the rest of the job, the checked uv
+# goes first on PATH, and a job environment an earlier step could have set to steer uv,
+# git, gh, Python or TLS for the later steps (GH_HOST, GIT_SSH_COMMAND, LD_PRELOAD,
+# proxies, CA bundles, PYTHONPATH, …), or a git or gh not the image's, is refused. That
+# guards the later steps against an earlier step's environment only: an earlier step in
+# the job can still tamper with the runner. Only on a GitHub-hosted Linux X64 runner.
+# `install-spec` is not used. Off by default, so an existing caller installs as before:
 #
 #     with:
 #       ...
@@ -143,7 +148,8 @@ runs:
     # A cache another job saved (one that ran a pull request's code, say) is never
     # restored here: uv is pinned, checked against the sha256 of its release asset
     # (uv-x86_64-unknown-linux-gnu.tar.gz, whatever setup-uv's own table says), and runs
-    # without one.
+    # without one. setup-uv skips that check when the version is already in the tool
+    # cache, so install.sh checks the binary too (UV_SHA256, the `uv` in that asset).
     - if: inputs.hardened == 'true'
       id: uv
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -169,6 +175,9 @@ runs:
         GIT_SOURCES: ${{ inputs.git-sources }}
         BUILD_REQUIREMENTS: ${{ inputs.build-requirements }}
         UV: ${{ steps.uv.outputs.uv-path }}
+        # uv 0.13.6's x86_64-unknown-linux-gnu binary, from the asset whose sha256 is the
+        # checksum above.
+        UV_SHA256: 23803452c0fbe125033054cd9ff245f1d649fb65b4b73f68429f4abda432436d
         # The source repositories' history, read with the job's own token: never the
         # GitHub App's, whatever the caller's job puts in GH_TOKEN.
         API_TOKEN: ${{ github.token }}

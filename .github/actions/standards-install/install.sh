@@ -7,9 +7,9 @@
 #
 # Environment: CLI, ENGINE_INPUT, INSTALL_SPEC, ENV_PREFIX, PYTHON, OVERRIDE,
 # FETCH_TOKEN, HARDENED, SOURCE, PROJECT, GIT_SOURCES, BUILD_REQUIREMENTS, with HARDENED
-# UV (setup-uv's uv-path) and API_TOKEN (a read token that is not the App's: the job's
-# github.token), and the runner's GITHUB_ENV, GITHUB_OUTPUT, GITHUB_PATH,
-# GITHUB_WORKSPACE and RUNNER_TEMP.
+# UV (setup-uv's uv-path), UV_SHA256 (the sha256 of the uv binary itself) and API_TOKEN
+# (a read token that is not the App's: the job's github.token), and the runner's
+# GITHUB_ENV, GITHUB_OUTPUT, GITHUB_PATH, GITHUB_WORKSPACE and RUNNER_TEMP.
 set -euo pipefail
 
 fail() {
@@ -48,20 +48,46 @@ if [ "$HARDENED" = true ]; then
   done <<<"$BUILD_REQUIREMENTS"
   [[ "$PYTHON" =~ ^3\.[0-9]+(\.[0-9]+)?$ ]] || fail "hardened needs python, a CPython version like 3.12, not '$PYTHON'"
   [[ "${UV:-}" == /* && -x "$UV" ]] || fail "hardened needs UV, the absolute path of the pinned uv, not '${UV:-}'"
+  [[ "${UV_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || fail "hardened needs UV_SHA256, the sha256 of the uv binary"
   [ -n "${API_TOKEN:-}" ] || fail "hardened needs API_TOKEN, a token that reads the source repositories"
-  GIT="$(command -v git)" || fail "no git on PATH"
-  GH="$(command -v gh)" || fail "no gh on PATH"
+  # setup-uv checks its checksum only when it downloads: with uv already in the runner's
+  # tool cache (an earlier step's setup-uv, or anything that wrote there) it checks
+  # nothing. So the binary itself is copied out and checked here, and that copy is the
+  # uv this step runs and the one later steps find first on PATH.
+  uv_dir="$RUNNER_TEMP/standards-uv"
+  rm -rf "$uv_dir"
+  mkdir -p "$uv_dir"
+  /usr/bin/cp -- "$UV" "$uv_dir/uv"
+  uv_sum="$(/usr/bin/sha256sum "$uv_dir/uv")"
+  [ "${uv_sum%% *}" = "$UV_SHA256" ] ||
+    fail "$UV is not the pinned uv: sha256 ${uv_sum%% *}, not $UV_SHA256"
+  UV="$uv_dir/uv"
+  echo "$uv_dir" >>"$GITHUB_PATH"
+  # The runner image's git and gh, which later steps must find on PATH too: a directory
+  # an earlier step put before /usr/bin (GITHUB_PATH) could shadow them.
+  GIT=/usr/bin/git GH=/usr/bin/gh
+  [ -x "$GIT" ] && [ -x "$GH" ] || fail "no /usr/bin/git or /usr/bin/gh on this runner"
+  [ "$(command -v git)" = "$GIT" ] || fail "git on PATH is $(command -v git), not $GIT"
+  [ "$(command -v gh)" = "$GH" ] || fail "gh on PATH is $(command -v gh), not $GH"
   # uv, git and gh run here under an empty environment (`clean`), but the job's later
-  # steps run the installed tools, git and gh in the job's own: refuse what an earlier
-  # step could have exported to steer them. setup-uv exports its own paths.
-  for var in PYTHONPATH PYTHONHOME PYTHONSTARTUP GIT_CONFIG GIT_CONFIG_PARAMETERS \
-    GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM; do
-    [ -z "${!var:-}" ] || fail "hardened refuses $var in the job's environment"
-  done
+  # steps run the installed tools, git, gh and actions in the job's own: refuse what an
+  # earlier step could have exported (GITHUB_ENV) to steer them, or to send gh's token
+  # to another host. setup-uv exports its own paths; git's identity and gh's quiet
+  # switches are harmless.
   for var in $(compgen -e); do
     case "$var" in
       UV_CACHE_DIR | UV_PYTHON_INSTALL_DIR | UV_TOOL_DIR | UV_TOOL_BIN_DIR | UV_NO_CACHE | UV_NO_CONFIG) ;;
       UV_*) fail "hardened refuses $var in the job's environment (setup-uv's paths, UV_NO_CACHE and UV_NO_CONFIG only)" ;;
+      GH_TOKEN | GH_PROMPT_DISABLED | GH_NO_UPDATE_NOTIFIER | GH_SPINNER_DISABLED) ;;
+      GH_* | GITHUB_ENTERPRISE_TOKEN) fail "hardened refuses $var in the job's environment (gh: GH_TOKEN and its quiet switches only)" ;;
+      GIT_AUTHOR_NAME | GIT_AUTHOR_EMAIL | GIT_COMMITTER_NAME | GIT_COMMITTER_EMAIL | GIT_TERMINAL_PROMPT) ;;
+      GIT_* | SSH_ASKPASS) fail "hardened refuses $var in the job's environment (git: its identity and GIT_TERMINAL_PROMPT only)" ;;
+      PYTHONUNBUFFERED | PYTHONIOENCODING | PYTHONDONTWRITEBYTECODE | PYTHONUTF8) ;;
+      PYTHON*) fail "hardened refuses $var in the job's environment" ;;
+      NO_PROXY | no_proxy) ;;
+      LD_* | BASH_ENV | ENV | *_PROXY | *_proxy | SSL_CERT_FILE | SSL_CERT_DIR | REQUESTS_CA_BUNDLE | \
+        CURL_CA_BUNDLE | NODE_EXTRA_CA_CERTS | NODE_TLS_REJECT_UNAUTHORIZED)
+        fail "hardened refuses $var in the job's environment" ;;
     esac
   done
   # No uv cache and no uv configuration for any later step in the job either.

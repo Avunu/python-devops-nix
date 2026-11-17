@@ -13,7 +13,8 @@ name: selftest-standards
 #   hardened  standards-install's hardened mode as a product's key-holding job runs it:
 #             odoo-nix's tools from a flake.lock that locks Avunu/odoo-nix, hash-locked,
 #             and refusals of the same lock pointing at another repository and at a
-#             commit that is not on odoo-nix's main
+#             commit that is not on odoo-nix's main, of GH_HOST in the environment,
+#             and of a uv in the tool cache that is not the pinned binary
 #
 # Nothing here writes to GitHub: the token is read-only, and every step that could
 # write is a dry run or has nothing to act on.
@@ -257,6 +258,9 @@ jobs:
             || { echo "::error::the venv's interpreter is not uv's: $(grep '^home' "$RUNNER_TEMP/standards-tools/venv/pyvenv.cfg")"; exit 1; }
           [ "$(command -v odoo-nix)" = "$RUNNER_TEMP/standards-tools/bin/odoo-nix" ] \
             || { echo "::error::odoo-nix on PATH is $(command -v odoo-nix)"; exit 1; }
+          # Later steps find the uv whose binary was checked, not setup-uv's.
+          [ "$(command -v uv)" = "$RUNNER_TEMP/standards-uv/uv" ] \
+            || { echo "::error::uv on PATH is $(command -v uv)"; exit 1; }
           # standards-core came from git, and says at which commit (the version-skew row).
           core="$("$RUNNER_TEMP/standards-tools/venv/bin/python" -I -c 'import standards_core; print(standards_core.revision())')"
           [ "$core" = 623a91761baed55e66967d56559dd086b2df9f59 ] || { echo "::error::standards-core revision is '$core'"; exit 1; }
@@ -300,3 +304,59 @@ jobs:
           OUTCOME: ${{ steps.unmerged.outcome }}
         run: |
           [ "$OUTCOME" = failure ] || { echo "::error::the install of an unmerged odoo-nix commit was '$OUTCOME'"; exit 1; }
+
+      # gh would send GH_TOKEN, the App's token in a product's key job, to GH_HOST.
+      - id: gh-host
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        env:
+          GH_HOST: example.invalid
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-Avunu
+
+      - name: GH_HOST in the job's environment is refused
+        env:
+          OUTCOME: ${{ steps.gh-host.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install with GH_HOST set was '$OUTCOME'"; exit 1; }
+
+      # Last, since it changes the runner's tool cache: setup-uv finds 0.13.6 there and
+      # checks nothing, so install.sh's own check of the binary is what refuses it.
+      - name: Change the uv in the tool cache
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' uv; do
+            printf '\n' >>"$uv"
+            echo "changed $uv"
+            found=1
+          done < <(find "$RUNNER_TOOL_CACHE/uv/0.13.6" -type f -name uv -print0)
+          [ "$found" = 1 ] || { echo "::error::no uv 0.13.6 in the tool cache"; exit 1; }
+
+      - id: tampered
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-Avunu
+
+      - name: A uv in the tool cache that is not the pinned binary is refused
+        env:
+          OUTCOME: ${{ steps.tampered.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install with a changed cached uv was '$OUTCOME'"; exit 1; }

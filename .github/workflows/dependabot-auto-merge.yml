@@ -38,6 +38,8 @@ name: Dependabot auto-merge
 # key must both say merge before it runs: `policy`, from dependabot/fetch-metadata, and
 # `diff`, from the pull request's own diff with nothing but gh, so a bumped
 # fetch-metadata cannot wave through a pull request that changes what the key job runs.
+# When either holds, `hold` turns off auto-merge an earlier head's run enabled, with
+# GITHUB_TOKEN: GitHub keeps auto-merge on when the pull request moves.
 #
 # Requires (one-time, in the caller's settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
@@ -73,9 +75,9 @@ on:
           and its auto-merge job, the one that holds APP_PRIVATE_KEY, does not run. Held
           when fetch-metadata names one, and when the pull request's diff changes a
           `<name>@` reference to one (`diff`). A caller that calls this workflow at its
-          own revision (`./.github/workflows/…`) lists every action that runs in a job
-          holding the key, and better excludes github_actions, so a bump of one never
-          runs with the key before a person reviews it. None by default.
+          own revision (`./.github/workflows/…`) excludes github_actions, so a bump of an
+          action never runs with the key before a person reviews it; a list here is a
+          backstop that goes stale when a key job adds an action. None by default.
         type: string
         default: ""
       merge-method:
@@ -246,8 +248,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      # Only at the head this run is for, the one `diff` read: a pull request that moved
-      # since merges on the run its new head starts, not on this one.
+      # Enabled only at the head this run is for, the one `diff` read
+      # (--match-head-commit). GitHub checks that match when auto-merge is enabled, not
+      # when it merges, and a later push leaves auto-merge on: the run that push starts
+      # turns it off (`hold`) when that head is held.
       - name: Enable auto-merge
         run: |
           set -euo pipefail
@@ -261,3 +265,30 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_METHOD: ${{ inputs.merge-method }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+
+  # A held head turns off auto-merge that an earlier head's run enabled: GitHub keeps it
+  # on across Dependabot's pushes (a group refreshed in place) and would merge the new
+  # head once its checks pass. With the job's own GITHUB_TOKEN, never the App's key. Runs
+  # when either job says hold, or did not finish.
+  hold:
+    needs: [policy, diff]
+    if: >-
+      ${{ always() && github.event.pull_request.user.login == 'dependabot[bot]' &&
+      (needs.policy.outputs.merge != 'true' || needs.diff.outputs.merge != 'true') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh pr merge --disable-auto
+      pull-requests: write # gh pr merge --disable-auto
+    steps:
+      - name: Turn off auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" != true ]; then
+            echo "auto-merge is not enabled on $PR_URL"
+            exit 0
+          fi
+          gh pr merge --disable-auto "$PR_URL"
+          echo "::notice::auto-merge turned off on $PR_URL: this head is reviewed by a person"

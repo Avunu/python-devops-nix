@@ -517,8 +517,8 @@ def _merge_args(s: _Step) -> None:
     )
     s.add(
         "--head-sha",
-        "the PR head the verdict is for: auto-merge merges only that commit"
-        " (gh pr merge --match-head-commit)",
+        "the PR head the verdict is for: auto-merge is enabled only while it is the"
+        " head (gh pr merge --match-head-commit)",
         default="",
     )
 
