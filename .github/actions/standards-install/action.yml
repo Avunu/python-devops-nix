@@ -29,9 +29,15 @@ description: >-
 # project's committed uv.lock (`uv export --frozen`) by hash and as a wheel
 # (`--require-hashes --no-build`), a git dependency only from a `git-sources` repository
 # at a full revision, and only the project and those git dependencies are built, offline,
-# against the hashed `build-requirements`. uv is pinned, reads no configuration, and runs
-# without its cache (setup-uv's and UV_NO_CACHE=1). `install-spec` is not used. Off by
-# default, so an existing caller installs as before:
+# against the hashed `build-requirements`. The engine's revision and each git
+# dependency's must be on that repository's protected default branch (read with the
+# job's github.token, never the App's), so a pull request's head or a fork's commit,
+# which `git fetch` would also serve, is refused. uv is pinned and checked against its
+# sha256, reads no configuration, and runs without its cache (setup-uv's and
+# UV_NO_CACHE=1), under an empty environment, on the CPython it installs itself.
+# UV_NO_CACHE=1 and UV_NO_CONFIG=1 are exported for the rest of the job. Only on a
+# GitHub-hosted Linux X64 runner. `install-spec` is not used. Off by default, so an
+# existing caller installs as before:
 #
 #     with:
 #       ...
@@ -56,7 +62,9 @@ inputs:
     description: The product's environment prefix (`KIT_NIX`); every variable is `<P>_<X>`.
     required: true
   python:
-    description: The interpreter `uv tool install --python` uses.
+    description: >-
+      The interpreter `uv tool install --python` uses. With `hardened`, the CPython
+      version (`3.12`) the pinned uv installs from its own hashed downloads.
     default: "3.12"
   override:
     description: >-
@@ -117,12 +125,31 @@ runs:
         tool-dir: ${{ runner.temp }}/uv-tool-dir
         tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
-    # A cache another job saved (one that ran a pull request's code, say) is never
-    # restored here: uv is pinned and runs without one.
+    # hardened is for a job that holds a GitHub App's key, which runs on a fresh
+    # GitHub-hosted runner, never a shared self-hosted one; and the uv checksum below is
+    # x86_64 Linux's.
     - if: inputs.hardened == 'true'
+      shell: bash
+      env:
+        ENVIRONMENT: ${{ runner.environment }}
+        OS: ${{ runner.os }}
+        ARCH: ${{ runner.arch }}
+      run: |
+        if [ "$ENVIRONMENT/$OS/$ARCH" != github-hosted/Linux/X64 ]; then
+          echo "::error title=standards-install::hardened runs only on a GitHub-hosted Linux X64 runner, not $ENVIRONMENT/$OS/$ARCH"
+          exit 1
+        fi
+
+    # A cache another job saved (one that ran a pull request's code, say) is never
+    # restored here: uv is pinned, checked against the sha256 of its release asset
+    # (uv-x86_64-unknown-linux-gnu.tar.gz, whatever setup-uv's own table says), and runs
+    # without one.
+    - if: inputs.hardened == 'true'
+      id: uv
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         version: "0.13.6"
+        checksum: f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
         enable-cache: "false"
 
     - id: install
@@ -141,4 +168,8 @@ runs:
         PROJECT: ${{ inputs.project }}
         GIT_SOURCES: ${{ inputs.git-sources }}
         BUILD_REQUIREMENTS: ${{ inputs.build-requirements }}
+        UV: ${{ steps.uv.outputs.uv-path }}
+        # The source repositories' history, read with the job's own token: never the
+        # GitHub App's, whatever the caller's job puts in GH_TOKEN.
+        API_TOKEN: ${{ github.token }}
       run: bash "$GITHUB_ACTION_PATH/install.sh"

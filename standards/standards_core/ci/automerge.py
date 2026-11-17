@@ -5,7 +5,8 @@ works where the repository allows it; a profile may turn ``dependabot.auto-merge
 but leave ``repo-policy`` off, so neither can be assumed. Before any ``gh pr merge
 --auto`` the branch's rules and classic protection must require every enabled gate's
 context (``ci.check_context``). If they don't, or the merge call fails (auto-merge
-disabled for the repository), the PR is labelled ``needs-review`` with a notice naming
+disabled for the repository, or the PR's head is no longer the ``head_sha`` the verdict
+was made for), the PR is labelled ``needs-review`` with a notice naming
 ``<cli> repo doctor``, and the step still succeeds. Every label is created (``--force``,
 idempotent) before it is applied.
 """
@@ -13,14 +14,18 @@ idempotent) before it is applied.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from standards_core.ci import labels, notice, verdict
 from standards_core.common import github
+from standards_core.common.report import ConfigError
 
 if TYPE_CHECKING:
     from standards_core.product import Product
+
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def doctor(product: Product) -> str:
@@ -73,9 +78,14 @@ def enable(
     integration: str,
     gates: Sequence[str],
     merge_method: str,
+    head_sha: str = "",
 ) -> str:
     """``gh pr merge --auto`` when the gates protect ``integration``; else label
-    ``needs-review``. Returns ``merging`` or ``needs-review``."""
+    ``needs-review``. With ``head_sha`` (the head the verdict was made for), GitHub
+    merges only that commit (``--match-head-commit``). Returns ``merging`` or
+    ``needs-review``."""
+    if head_sha and not _SHA.fullmatch(head_sha):
+        raise ConfigError(f"--head-sha must be a full commit SHA, not {head_sha!r}")
     if not github.gates_protected(product, repo, integration, gates):
         label(product, pr_url, "needs-review", repo)
         contexts = ", ".join(github.gate_contexts(product, gates)) or "(no gates)"
@@ -87,7 +97,8 @@ def enable(
     if auto_merge_enabled(pr_url):
         print(f"auto-merge is already enabled on {pr_url}")
         return "merging"
-    res = github.cli("pr", "merge", "--auto", f"--{merge_method}", pr_url)
+    match = ["--match-head-commit", head_sha] if head_sha else []
+    res = github.cli("pr", "merge", "--auto", f"--{merge_method}", *match, pr_url)
     if res.code != 0:
         label(product, pr_url, "needs-review", repo)
         notice(
@@ -121,6 +132,7 @@ def apply(
     integration: str,
     gates: Sequence[str],
     merge_method: str,
+    head_sha: str = "",
     relock_state: str = "",
     moved: Sequence[str] | None = None,
 ) -> str:
@@ -134,7 +146,7 @@ def apply(
         close(product, pr_url, moved or [])
         return "closed"
     if decision == verdict.AUTO:
-        return enable(product, pr_url, repo, integration, gates, merge_method)
+        return enable(product, pr_url, repo, integration, gates, merge_method, head_sha)
     label(product, pr_url, "needs-review", repo)
     print(f"labelled {pr_url} needs-review")
     return "needs-review"

@@ -1,9 +1,10 @@
 version: 2
 
-# Keeps this repository's dependencies up to date. Pull requests, action bumps included,
-# auto-merge once the required checks go green and are kept up to date with main (see
+# Keeps this repository's dependencies up to date. The nix and pre-commit pull requests
+# auto-merge once the required checks go green; every one is kept up to date with main (see
 # .github/workflows/auto-merge.yml, which calls the reusable dependabot-auto-merge.yml and
-# dependabot-update-branches.yml).
+# dependabot-update-branches.yml). The github-actions pull request is reviewed by a person:
+# each action pinned here runs, here or in a product, in a job that holds the org App's key.
 #
 # The shape both products follow (docs/conventions.md, Dependabot): a seven-day cooldown
 # and one group per ecosystem, so each ecosystem is one pull request.

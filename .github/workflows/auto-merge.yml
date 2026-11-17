@@ -1,15 +1,25 @@
 name: auto-merge
 
 # This repository's Dependabot pull requests, through the reusable workflows the products
-# call, with their default policy: every one auto-merges, action bumps included, once the
-# required checks ("lint", "checks", "downstream") pass, and each one that falls behind main
-# is brought up to date (dependabot-update-branches.yml). The products call them pinned to a
-# commit; this repository calls its own copies at the same revision.
+# call: the nix and pre-commit ones auto-merge once the required checks ("lint", "checks",
+# "downstream") pass, and each one that falls behind main is brought up to date
+# (dependabot-update-branches.yml). The products call them pinned to a commit; this
+# repository calls its own copies at the same revision.
 #
-# But one: a pull request that bumps actions/create-github-app-token is reviewed by a person
-# (review-dependencies). On a pull request this repository runs its own copy of
-# dependabot-auto-merge.yml at the pull request's head, so its auto-merge job would hand
-# APP_PRIVATE_KEY to the bumped action before anyone has looked at it.
+# Every github-actions pull request is reviewed by a person (exclude-ecosystems), and the
+# reusable workflow's `diff` job holds one whose diff touches a workflow or an action file
+# whatever fetch-metadata says. Every action pinned here runs where the org App's key can
+# be read: on a pull request this repository runs its own dependabot-auto-merge.yml at the
+# pull request's head, whose auto-merge job would hand APP_PRIVATE_KEY to a bumped
+# create-github-app-token before review; and the composite actions here (standards-install's
+# setup-uv, standards-deps-automerge's fetch-metadata, …) and the action pins the products
+# copy from here run in the products' jobs that hold the key. A list of those actions goes
+# stale the day a key job adds one; the ecosystem does not. review-dependencies names the
+# ones such jobs run today (here: create-github-app-token; in the products' release,
+# relock-push, automerge, sync and update-branches jobs: checkout, download-artifact,
+# setup-uv, fetch-metadata, release-please-action), so `diff` holds a bump of one even if
+# Dependabot files it under another ecosystem. The cost is one grouped pull request a day at
+# most (a seven-day cooldown, one group) for a person to merge.
 #
 # The org's GitHub App (the variable AVUNU_CI_APP_ID, or a Dependabot secret of that name,
 # and the secret AVUNU_CI_PRIVATE_KEY) enables auto-merge and updates the branches, so a
@@ -35,7 +45,10 @@ jobs:
       pull-requests: write # gh pr merge --auto
     uses: ./.github/workflows/dependabot-auto-merge.yml
     with:
-      review-dependencies: actions/create-github-app-token
+      exclude-ecosystems: github_actions
+      review-dependencies: >-
+        actions/create-github-app-token actions/checkout actions/download-artifact
+        astral-sh/setup-uv dependabot/fetch-metadata googleapis/release-please-action
     # A Dependabot run sees only Dependabot secrets: the App's ID is one too.
     secrets:
       APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}

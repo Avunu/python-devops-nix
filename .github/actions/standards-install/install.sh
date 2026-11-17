@@ -2,12 +2,14 @@
 # Installs the product's standards tools (action.yml): from the engine revision
 # flake.lock locks, or from OVERRIDE; with HARDENED=true from the engine's uv.lock by
 # hash (hardened_install). Writes <P>_EXPECT_REV (and with OVERRIDE <P>_ALLOW_SKEW=1,
-# with FETCH_TOKEN <P>_FETCH_TOKEN, with HARDENED UV_NO_CACHE=1) to $GITHUB_ENV, and
-# `rev` and `version` to $GITHUB_OUTPUT.
+# with FETCH_TOKEN <P>_FETCH_TOKEN, with HARDENED UV_NO_CACHE=1 and UV_NO_CONFIG=1) to
+# $GITHUB_ENV, and `rev` and `version` to $GITHUB_OUTPUT.
 #
 # Environment: CLI, ENGINE_INPUT, INSTALL_SPEC, ENV_PREFIX, PYTHON, OVERRIDE,
-# FETCH_TOKEN, HARDENED, SOURCE, PROJECT, GIT_SOURCES, BUILD_REQUIREMENTS, and the
-# runner's GITHUB_ENV, GITHUB_OUTPUT, GITHUB_PATH, GITHUB_WORKSPACE and RUNNER_TEMP.
+# FETCH_TOKEN, HARDENED, SOURCE, PROJECT, GIT_SOURCES, BUILD_REQUIREMENTS, with HARDENED
+# UV (setup-uv's uv-path) and API_TOKEN (a read token that is not the App's: the job's
+# github.token), and the runner's GITHUB_ENV, GITHUB_OUTPUT, GITHUB_PATH,
+# GITHUB_WORKSPACE and RUNNER_TEMP.
 set -euo pipefail
 
 fail() {
@@ -44,9 +46,29 @@ if [ "$HARDENED" = true ]; then
     [[ "$line" =~ ^[A-Za-z0-9._-]+==[A-Za-z0-9.+!-]+\ --hash=sha256:[0-9a-f]{64}$ ]] ||
       fail "build-requirements must be 'name==version --hash=sha256:<hex>' lines, not '$line'"
   done <<<"$BUILD_REQUIREMENTS"
-  # No uv cache for this step or any later one in the job, and no uv configuration.
-  export UV_NO_CACHE=1 UV_NO_CONFIG=1
-  echo "UV_NO_CACHE=1" >>"$GITHUB_ENV"
+  [[ "$PYTHON" =~ ^3\.[0-9]+(\.[0-9]+)?$ ]] || fail "hardened needs python, a CPython version like 3.12, not '$PYTHON'"
+  [[ "${UV:-}" == /* && -x "$UV" ]] || fail "hardened needs UV, the absolute path of the pinned uv, not '${UV:-}'"
+  [ -n "${API_TOKEN:-}" ] || fail "hardened needs API_TOKEN, a token that reads the source repositories"
+  GIT="$(command -v git)" || fail "no git on PATH"
+  GH="$(command -v gh)" || fail "no gh on PATH"
+  # uv, git and gh run here under an empty environment (`clean`), but the job's later
+  # steps run the installed tools, git and gh in the job's own: refuse what an earlier
+  # step could have exported to steer them. setup-uv exports its own paths.
+  for var in PYTHONPATH PYTHONHOME PYTHONSTARTUP GIT_CONFIG GIT_CONFIG_PARAMETERS \
+    GIT_CONFIG_COUNT GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM; do
+    [ -z "${!var:-}" ] || fail "hardened refuses $var in the job's environment"
+  done
+  for var in $(compgen -e); do
+    case "$var" in
+      UV_CACHE_DIR | UV_PYTHON_INSTALL_DIR | UV_TOOL_DIR | UV_TOOL_BIN_DIR | UV_NO_CACHE | UV_NO_CONFIG) ;;
+      UV_*) fail "hardened refuses $var in the job's environment (setup-uv's paths, UV_NO_CACHE and UV_NO_CONFIG only)" ;;
+    esac
+  done
+  # No uv cache and no uv configuration for any later step in the job either.
+  {
+    echo "UV_NO_CACHE=1"
+    echo "UV_NO_CONFIG=1"
+  } >>"$GITHUB_ENV"
 fi
 
 if [ -n "$FETCH_TOKEN" ]; then
@@ -54,26 +76,68 @@ if [ -n "$FETCH_TOKEN" ]; then
   echo "${ENV_PREFIX}_FETCH_TOKEN=$FETCH_TOKEN" >>"$GITHUB_ENV"
 fi
 
+# HARDENED runs uv, git, gh and the venv's python only through `clean`: an empty
+# environment but for an explicit PATH, a fresh HOME (no ~/.gitconfig, ~/.netrc,
+# ~/.config/uv or gh login) and the variables set here, in an empty directory (no
+# .python-version, .venv or uv.toml from the checkout). Nothing the job or an earlier
+# step exported (UV_*, PYTHONPATH, PYTHONHOME, PYTHONSTARTUP, GIT_CONFIG_*,
+# GIT_CONFIG_PARAMETERS, VIRTUAL_ENV, proxies, an index URL) reaches them, so every path
+# passed to them is absolute.
+clean() {
+  local tools="$RUNNER_TEMP/standards-tools"
+  mkdir -p "$tools/home" "$tools/tmp"
+  env -i -C "$tools/tmp" \
+    PATH="$(dirname "$UV"):$(dirname "$GIT"):/usr/bin:/bin" \
+    HOME="$tools/home" TMPDIR="$tools/tmp" LANG=C.UTF-8 \
+    UV_NO_CONFIG=1 UV_NO_CACHE=1 UV_NO_PROGRESS=1 \
+    UV_PYTHON_INSTALL_DIR="$tools/python" UV_PYTHON_BIN_DIR="$tools/python-bin" \
+    GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+    "$@"
+}
+
+# HARDENED: fail unless <rev> of https://github.com/<repo> is on its default branch,
+# which must be protected: `git fetch <repo> <rev>` alone takes any commit GitHub serves
+# for the repository, a pull request's head (refs/pull/*/head) or a fork's included.
+# Read with API_TOKEN, never the App's token.
+on_default_branch() {
+  local repo="$1" rev="$2" branch protected status
+  branch="$(clean GH_TOKEN="$API_TOKEN" "$GH" api "repos/$repo" --jq .default_branch)" ||
+    fail "could not read $repo's default branch"
+  [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "$repo's default branch is '$branch'"
+  protected="$(clean GH_TOKEN="$API_TOKEN" "$GH" api "repos/$repo/branches/$branch" --jq .protected)" ||
+    fail "could not read $repo's branch $branch"
+  [ "$protected" = true ] || fail "$repo's default branch $branch is not protected: its history proves nothing"
+  status="$(clean GH_TOKEN="$API_TOKEN" "$GH" api "repos/$repo/compare/$branch...$rev" --jq .status)" ||
+    fail "could not compare $rev with $repo's $branch"
+  case "$status" in
+    behind | identical) ;;
+    *) fail "$rev is not on $repo's $branch ($status): only a commit its protected default branch has is installed" ;;
+  esac
+}
+
 # A git checkout of https://github.com/<repo> at the full revision <rev>, in <dir>.
 fetch_rev() {
   local repo="$1" rev="$2" dir="$3"
-  git init -q "$dir"
-  git -C "$dir" fetch -q --depth 1 --no-tags "https://github.com/${repo}.git" "$rev"
-  git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
-  [ "$(git -C "$dir" rev-parse HEAD)" = "$rev" ] || fail "fetched $repo at $rev, and HEAD is not $rev"
+  on_default_branch "$repo" "$rev"
+  clean "$GIT" init -q "$dir"
+  clean "$GIT" -C "$dir" fetch -q --depth 1 --no-tags "https://github.com/${repo}.git" "$rev"
+  clean "$GIT" -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+  [ "$(clean "$GIT" -C "$dir" rev-parse HEAD)" = "$rev" ] || fail "fetched $repo at $rev, and HEAD is not $rev"
 }
 
 # HARDENED: nothing resolved at run time. Every dependency comes from <project>/uv.lock
 # by hash and as a wheel; a git dependency only from a GIT_SOURCES repository at a full
 # revision; and only the project and those git dependencies are built, offline and
-# without build isolation, against the hashed BUILD_REQUIREMENTS. The console script
-# lands in $RUNNER_TEMP/standards-tools/bin, which goes on PATH.
+# without build isolation, against the hashed BUILD_REQUIREMENTS. The interpreter is
+# the uv-managed CPython that the pinned uv installs into a fresh directory, checked
+# against the hash uv carries for it; nothing finds or downloads another one. The
+# console script lands in $RUNNER_TEMP/standards-tools/bin, which goes on PATH.
 hardened_install() {
   local project="$1" tools="$RUNNER_TEMP/standards-tools"
   [ -f "$project/uv.lock" ] || fail "no uv.lock in $project: hardened installs only what it locks"
   [ -f "$project/pyproject.toml" ] || fail "no pyproject.toml in $project"
   mkdir -p "$tools/bin" "$tools/git"
-  uv export -q --frozen --no-dev --no-emit-project --no-header --no-annotate \
+  clean "$UV" export -q --frozen --no-dev --no-emit-project --no-header --no-annotate \
     --project "$project" -o "$tools/export.txt"
   printf '%s\n' "$BUILD_REQUIREMENTS" >"$tools/build.txt"
 
@@ -102,16 +166,20 @@ hardened_install() {
     fi
   done <"$tools/export.txt"
 
-  rm -rf "$tools/venv"
-  uv venv -q --python "$PYTHON" --no-project "$tools/venv"
-  uv pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+  rm -rf "$tools/venv" "$tools/python"
+  clean "$UV" python install -q --no-bin --install-dir "$tools/python" "$PYTHON"
+  local interpreter
+  interpreter="$(clean "$UV" python find --managed-python --no-python-downloads "$PYTHON")"
+  [[ "$interpreter" == "$tools/python/"* ]] || fail "uv found $interpreter, not the CPython it installed in $tools/python"
+  clean "$UV" venv -q --managed-python --no-python-downloads --python "$interpreter" --no-project "$tools/venv"
+  clean "$UV" pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
     -r "$tools/requirements.txt" -r "$tools/build.txt"
-  uv pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation \
+  clean "$UV" pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation \
     "${built[@]}" "$project"
   # Each git dependency records where it came from as a git install would (PEP 610's
   # direct_url.json), so standards_core.revision() and the version-skew row still see it.
   if [ "${#pins[@]}" -gt 0 ]; then
-    "$tools/venv/bin/python" -I - "${pins[@]}" <<'PY'
+    clean "$tools/venv/bin/python" -I - "${pins[@]}" <<'PY'
 import json
 import sys
 from importlib import metadata
@@ -179,7 +247,7 @@ fi
 # setup-uv puts its tool-bin-dir on PATH for later steps, and hardened_install its own
 # bin dir; this step reads them directly.
 if [ "$HARDENED" = true ]; then
-  version="$("$RUNNER_TEMP/standards-tools/bin/$CLI" --version)"
+  version="$(clean "$RUNNER_TEMP/standards-tools/bin/$CLI" --version)"
 else
   version="$("$CLI" --version 2>/dev/null || "$(uv tool dir --bin)/$CLI" --version)"
 fi

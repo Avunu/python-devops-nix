@@ -22,7 +22,7 @@ name: Dependabot auto-merge
 #       uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@<sha> # vX.Y.Z
 #       # with:
 #       #   update-types: major minor patch other
-#       #   exclude-ecosystems: ""
+#       #   exclude-ecosystems: github_actions
 #       #   review-dependencies: actions/create-github-app-token
 #       #   merge-method: squash
 #       # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
@@ -33,8 +33,11 @@ name: Dependabot auto-merge
 # dependabot-update-branches.yml keeps the same pull requests up to date with the base
 # branch. This repository calls both, from auto-merge.yml.
 #
-# Both jobs run on GitHub-hosted ubuntu-latest, whatever runners the caller uses: the one
-# that mints the App's token holds its private key (see the job).
+# Every job runs on GitHub-hosted ubuntu-latest, whatever runners the caller uses: the one
+# that mints the App's token holds its private key (see the job). Two jobs without the
+# key must both say merge before it runs: `policy`, from dependabot/fetch-metadata, and
+# `diff`, from the pull request's own diff with nothing but gh, so a bumped
+# fetch-metadata cannot wave through a pull request that changes what the key job runs.
 #
 # Requires (one-time, in the caller's settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
@@ -55,9 +58,11 @@ on:
         description: >-
           Space-separated package ecosystems whose pull requests a person reviews instead,
           as dependabot/fetch-metadata names them: the segment after dependabot/ in the
-          pull request's branch, such as github_actions or npm_and_yarn. None by default:
-          every ecosystem auto-merges, action bumps included, whose required checks run
-          the bumped actions before the merge.
+          pull request's branch, such as github_actions or npm_and_yarn. With
+          github_actions, a pull request whose diff changes a workflow or an action file
+          (.github/workflows/, .github/actions/, action.yml) is reviewed too, whatever
+          fetch-metadata says. None by default: every ecosystem auto-merges, action bumps
+          included, whose required checks run the bumped actions before the merge.
         type: string
         default: ""
       review-dependencies:
@@ -65,10 +70,12 @@ on:
           Space-separated dependency names whose pull requests a person reviews instead,
           as dependabot/fetch-metadata names them (`actions/create-github-app-token`): a
           pull request that updates any of them, alone or in a group, is not auto-merged,
-          and its auto-merge job, the one that holds APP_PRIVATE_KEY, does not run. A
-          caller that calls this workflow at its own revision (`./.github/workflows/…`)
-          lists actions/create-github-app-token, so a bump of it never runs with the key
-          before a person reviews it. None by default.
+          and its auto-merge job, the one that holds APP_PRIVATE_KEY, does not run. Held
+          when fetch-metadata names one, and when the pull request's diff changes a
+          `<name>@` reference to one (`diff`). A caller that calls this workflow at its
+          own revision (`./.github/workflows/…`) lists every action that runs in a job
+          holding the key, and better excludes github_actions, so a bump of one never
+          runs with the key before a person reviews it. None by default.
         type: string
         default: ""
       merge-method:
@@ -155,14 +162,70 @@ jobs:
           echo "$ECOSYSTEM, $type update: auto-merge $merge"
           echo "merge=$merge" >> "$GITHUB_OUTPUT"
 
+  # Reads the pull request's own diff, from its base to the head this run is for, with
+  # only bash and the runner's gh: no action, so nothing a Dependabot bump changes runs
+  # here. A changed `<name>@` reference to a review-dependencies name, or with
+  # exclude-ecosystems github_actions a changed workflow or action file, holds it. A
+  # diff it cannot read holds it too.
+  diff:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    permissions:
+      contents: read # the compare of base and head
+    outputs:
+      merge: ${{ steps.diff.outputs.merge }}
+    steps:
+      - name: Scan the pull request's diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          EXCLUDE_ECOSYSTEMS: ${{ inputs.exclude-ecosystems }}
+          REVIEW_DEPENDENCIES: ${{ inputs.review-dependencies }}
+        run: |
+          set -euo pipefail
+          merge=true
+          hold() {
+            echo "::notice::$*: reviewed by a person"
+            merge=false
+          }
+          diff="$RUNNER_TEMP/pull-request.diff"
+          if ! gh api -H "Accept: application/vnd.github.diff" "repos/$REPO/compare/$BASE...$HEAD" >"$diff"; then
+            hold "the pull request's diff could not be read"
+          else
+            # The lines it adds or removes, and the files it touches.
+            changed="$(grep -E '^[-+]' "$diff" | grep -vE '^(\+\+\+|---) ' || true)"
+            files="$(grep -E '^diff --git ' "$diff" || true)"
+            for wanted in $REVIEW_DEPENDENCIES; do
+              if ! [[ "$wanted" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]]; then
+                echo "::error::review-dependencies must list dependency names, not '$wanted'"
+                exit 1
+              fi
+              # `<name>@` or `<name>/<path>@`, without case, as a `uses:` names it.
+              if grep -qiE "(^|[^A-Za-z0-9_./-])${wanted//./\\.}(/[^@[:space:]]*)?@" <<<"$changed"; then
+                hold "the diff changes a reference to $wanted (review-dependencies)"
+              fi
+            done
+            if [[ " $EXCLUDE_ECOSYSTEMS " == *" github_actions "* ]] &&
+              grep -qE '(^diff --git a/|/)(\.github/(workflows|actions)/|action\.ya?ml( |$))' <<<"$files"; then
+              hold "the diff changes a workflow or an action (exclude-ecosystems: github_actions)"
+            fi
+          fi
+          echo "diff: auto-merge $merge"
+          echo "merge=$merge" >>"$GITHUB_OUTPUT"
+
   # Mints the App's token and enables auto-merge. It holds APP_PRIVATE_KEY, so it runs
   # on a GitHub-hosted runner, a fresh machine for each job, never on a shared self-hosted
   # one whose earlier jobs (any repository's, a dependency's, a fork's) could read the key
   # or the token. It checks nothing out and runs only GitHub's create-github-app-token
-  # and the runner's gh.
+  # and the runner's gh. Any action in this job could read the key, so a bump of
+  # create-github-app-token in a caller that runs this workflow at its own revision is
+  # held by review-dependencies (or exclude-ecosystems: github_actions) and `diff`.
   auto-merge:
-    needs: policy
-    if: ${{ needs.policy.outputs.merge == 'true' }}
+    needs: [policy, diff]
+    if: ${{ needs.policy.outputs.merge == 'true' && needs.diff.outputs.merge == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Whether the caller passed a GitHub App
@@ -183,6 +246,8 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
+      # Only at the head this run is for, the one `diff` read: a pull request that moved
+      # since merges on the run its new head starts, not on this one.
       - name: Enable auto-merge
         run: |
           set -euo pipefail
@@ -190,8 +255,9 @@ jobs:
             echo "auto-merge is already enabled on $PR_URL"
             exit 0
           fi
-          gh pr merge --auto "--$MERGE_METHOD" "$PR_URL"
+          gh pr merge --auto "--$MERGE_METHOD" --match-head-commit "$HEAD_SHA" "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_METHOD: ${{ inputs.merge-method }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}

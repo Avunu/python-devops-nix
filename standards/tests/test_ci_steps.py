@@ -20,6 +20,7 @@ from standards_core.ci.conventional import SEMVER
 from standards_core.ci.verdict import DecisionRule
 from standards_core.common import github
 from standards_core.common.github import GitHubError, Result
+from standards_core.common.report import ConfigError
 from standards_core.product import CiConfig
 
 REPO = "example/unit"
@@ -523,6 +524,42 @@ class TestAutomerge(FakeCase):
         with mock.patch("builtins.print"):
             self.assertEqual(self.apply("auto"), "merging")
         self.assertIn(("pr", "merge", "--auto", "--squash", PR), fake.clis)
+
+    def test_auto_merges_only_the_verdicts_head(self):
+        fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
+        sha = "c" * 40
+        with mock.patch("builtins.print"):
+            self.assertEqual(self.apply("auto", head_sha=sha), "merging")
+        self.assertIn(
+            ("pr", "merge", "--auto", "--squash", "--match-head-commit", sha, PR),
+            fake.clis,
+        )
+
+    def test_head_sha_must_be_a_full_sha(self):
+        fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
+        with self.assertRaises(ConfigError):
+            self.apply("auto", head_sha="HEAD")
+        self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+
+    def test_cli_passes_the_head_sha(self):
+        fake = self.use(Fake(protected(["ci / lint", "ci / test"])))
+        sha = "d" * 40
+        code, _, err = run_cli(
+            STUB, "ci", "automerge", "--pr-url", PR, "--repo", REPO,
+            "--integration", "develop", "--gates", "lint,test", "--ecosystem", "uv",
+            "--update-type", "version-update:semver-patch", "--policy", "all",
+            "--head-sha", sha,
+        )  # fmt: skip
+        self.assertEqual(code, 0, err)
+        self.assertIn(
+            ("pr", "merge", "--auto", "--squash", "--match-head-commit", sha, PR),
+            fake.clis,
+        )
+        code, _, err = run_cli(
+            STUB, "ci", "enable-automerge", "--pr-url", PR, "--repo", REPO,
+            "--integration", "develop", "--gates", "lint,test", "--head-sha", "abc",
+        )  # fmt: skip
+        self.assertEqual(code, 2, err)
 
     def test_unprotected_labels_with_notice(self):
         fake = self.use(Fake(protected(["ci / lint"])))  # lacks the other gates
