@@ -76,6 +76,8 @@ if [ "$HARDENED" = true ]; then
   # switches are harmless.
   for var in $(compgen -e); do
     case "$var" in
+      # This step's own inputs (action.yml), which the step's env sets over the job's.
+      GIT_SOURCES | PYTHON | UV_SHA256) ;;
       UV_CACHE_DIR | UV_PYTHON_INSTALL_DIR | UV_TOOL_DIR | UV_TOOL_BIN_DIR | UV_NO_CACHE | UV_NO_CONFIG) ;;
       UV_*) fail "hardened refuses $var in the job's environment (setup-uv's paths, UV_NO_CACHE and UV_NO_CONFIG only)" ;;
       GH_TOKEN | GH_PROMPT_DISABLED | GH_NO_UPDATE_NOTIFIER | GH_SPINNER_DISABLED) ;;
