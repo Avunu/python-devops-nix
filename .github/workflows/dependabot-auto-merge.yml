@@ -23,6 +23,7 @@ name: Dependabot auto-merge
 #       # with:
 #       #   update-types: major minor patch other
 #       #   exclude-ecosystems: ""
+#       #   review-dependencies: actions/create-github-app-token
 #       #   merge-method: squash
 #       # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
 #       secrets:
@@ -57,6 +58,17 @@ on:
           pull request's branch, such as github_actions or npm_and_yarn. None by default:
           every ecosystem auto-merges, action bumps included, whose required checks run
           the bumped actions before the merge.
+        type: string
+        default: ""
+      review-dependencies:
+        description: >-
+          Space-separated dependency names whose pull requests a person reviews instead,
+          as dependabot/fetch-metadata names them (`actions/create-github-app-token`): a
+          pull request that updates any of them, alone or in a group, is not auto-merged,
+          and its auto-merge job, the one that holds APP_PRIVATE_KEY, does not run. A
+          caller that calls this workflow at its own revision (`./.github/workflows/…`)
+          lists actions/create-github-app-token, so a bump of it never runs with the key
+          before a person reviews it. None by default.
         type: string
         default: ""
       merge-method:
@@ -106,6 +118,8 @@ jobs:
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           UPDATE_TYPES: ${{ inputs.update-types }}
           EXCLUDE_ECOSYSTEMS: ${{ inputs.exclude-ecosystems }}
+          REVIEW_DEPENDENCIES: ${{ inputs.review-dependencies }}
+          NAMES: ${{ steps.metadata.outputs.dependency-names }}
           MERGE_METHOD: ${{ inputs.merge-method }}
         run: |
           case "$MERGE_METHOD" in
@@ -115,7 +129,23 @@ jobs:
           type=${UPDATE_TYPE#version-update:semver-}
           type=${type:-other}
           merge=true
-          if [[ " $EXCLUDE_ECOSYSTEMS " == *" $ECOSYSTEM "* ]]; then
+          # fetch-metadata lists the names comma-separated; compared one by one, without case.
+          review=""
+          listed=""
+          IFS=', ' read -ra names <<< "$NAMES"
+          for name in "${names[@]}"; do
+            [ -n "$name" ] && listed=1
+            for wanted in $REVIEW_DEPENDENCIES; do
+              if [ "${name,,}" = "${wanted,,}" ]; then review="$name"; fi
+            done
+          done
+          if [ -n "$REVIEW_DEPENDENCIES" ] && [ -z "$listed" ]; then
+            echo "::notice::fetch-metadata names no dependency, so none of review-dependencies can be ruled out: reviewed by a person"
+            merge=false
+          elif [ -n "$review" ]; then
+            echo "::notice::$review updates are reviewed by a person (review-dependencies)"
+            merge=false
+          elif [[ " $EXCLUDE_ECOSYSTEMS " == *" $ECOSYSTEM "* ]]; then
             echo "::notice::$ECOSYSTEM updates are reviewed by a person (exclude-ecosystems)"
             merge=false
           elif [[ " $UPDATE_TYPES " != *" $type "* ]]; then

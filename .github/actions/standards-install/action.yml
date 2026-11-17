@@ -1,9 +1,10 @@
 name: Install a product's standards tools
 description: >-
   Installs a product's standards tools (its console script, built on standards-core)
-  with `uv tool install`, at the engine revision the checkout's flake.lock pins, so the
-  tools a job runs are the ones its sync was rendered with. Exports the expected
-  revision for the skew check.
+  at the engine revision the checkout's flake.lock pins, so the tools a job runs are
+  the ones its sync was rendered with: with `uv tool install`, or with `hardened`, from
+  the engine's committed uv.lock by hash. Exports the expected revision for the skew
+  check.
 
 # A product's workflow job, before any other standards-* action (standards/DESIGN.md
 # §8.5). A caller pins it by SHA, as every action:
@@ -20,6 +21,24 @@ description: >-
 # checkout locks installs from that fork. With `override` (a product's own self-test),
 # the tools are installed from a path in the workspace instead, and the skew check is
 # turned off (<P>_ALLOW_SKEW=1, an empty <P>_EXPECT_REV).
+#
+# `hardened: "true"` is for a job that can hold a secret worth stealing (a GitHub App's
+# private key): nothing it installs is resolved at run time. The engine must be locked
+# from `source` (owner/repo) at a full revision; `project` in it is fetched from
+# https://github.com/<source> at that revision, every dependency is installed from the
+# project's committed uv.lock (`uv export --frozen`) by hash and as a wheel
+# (`--require-hashes --no-build`), a git dependency only from a `git-sources` repository
+# at a full revision, and only the project and those git dependencies are built, offline,
+# against the hashed `build-requirements`. uv is pinned, reads no configuration, and runs
+# without its cache (setup-uv's and UV_NO_CACHE=1). `install-spec` is not used. Off by
+# default, so an existing caller installs as before:
+#
+#     with:
+#       ...
+#       hardened: "true"
+#       source: Kit/kit-nix
+#       project: py/kit_nix_tools
+#       git-sources: <owner>/python-devops-nix
 
 inputs:
   cli:
@@ -31,7 +50,7 @@ inputs:
   install-spec:
     description: >-
       What `uv tool install` installs, with `{owner}`, `{repo}` and `{rev}` replaced by
-      the engine node's locked owner, repository and revision.
+      the engine node's locked owner, repository and revision. Not used with `hardened`.
     required: true
   env-prefix:
     description: The product's environment prefix (`KIT_NIX`); every variable is `<P>_<X>`.
@@ -52,6 +71,31 @@ inputs:
   working-directory:
     description: The checkout whose flake.lock pins the engine.
     default: "."
+  hardened:
+    description: >-
+      "true" installs from the engine's committed uv.lock by hash, with a pinned uv and no
+      cache, from `source` only (see above): for a job that can hold a GitHub App's key.
+    default: "false"
+  source:
+    description: >-
+      With `hardened`: the only owner/repo flake.lock may lock the engine from
+      (`Kit/kit-nix`), compared without case. Not used with `override`.
+    default: ""
+  project:
+    description: >-
+      With `hardened`: the directory in the engine repository (or in `override`) that
+      holds the tools' pyproject.toml and uv.lock (`py/kit_nix_tools`).
+    default: ""
+  git-sources:
+    description: >-
+      With `hardened`: the owner/repo list (space-separated) a git dependency in uv.lock
+      may come from, at a full revision. Empty refuses every git dependency.
+    default: ""
+  build-requirements:
+    description: >-
+      With `hardened`: the build backend the project and its git dependencies are built
+      with, one `name==version --hash=sha256:<hex>` per line.
+    default: "flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c"
 
 outputs:
   rev:
@@ -64,13 +108,22 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - if: inputs.hardened != 'true'
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         # Saving the cache uploads it; from a self-hosted runner that is slow and outlasts
         # the job, so only hosted runners save it.
         enable-cache: ${{ runner.environment == 'github-hosted' }}
         tool-dir: ${{ runner.temp }}/uv-tool-dir
         tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+    # A cache another job saved (one that ran a pull request's code, say) is never
+    # restored here: uv is pinned and runs without one.
+    - if: inputs.hardened == 'true'
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        version: "0.13.6"
+        enable-cache: "false"
 
     - id: install
       shell: bash
@@ -83,4 +136,9 @@ runs:
         PYTHON: ${{ inputs.python }}
         OVERRIDE: ${{ inputs.override }}
         FETCH_TOKEN: ${{ inputs.fetch-token }}
+        HARDENED: ${{ inputs.hardened }}
+        SOURCE: ${{ inputs.source }}
+        PROJECT: ${{ inputs.project }}
+        GIT_SOURCES: ${{ inputs.git-sources }}
+        BUILD_REQUIREMENTS: ${{ inputs.build-requirements }}
       run: bash "$GITHUB_ACTION_PATH/install.sh"

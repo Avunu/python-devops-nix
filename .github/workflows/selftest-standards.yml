@@ -10,6 +10,9 @@ name: selftest-standards
 #             standards-update-branches against a branch no pull request targets
 #   install   `uv tool install` of a product built on standards-core from a git URL, a
 #             path and an override (standards/tests/test_install.py)
+#   hardened  standards-install's hardened mode as a product's key-holding job runs it:
+#             odoo-nix's tools from a flake.lock that locks Avunu/odoo-nix, hash-locked,
+#             and a refusal of the same lock pointing at another repository
 #
 # Nothing here writes to GitHub: the token is read-only, and every step that could
 # write is a dry run or has nothing to act on.
@@ -193,3 +196,76 @@ jobs:
         run: >-
           uv run --no-project --python 3.11 --with-editable standards --with pytest
           pytest -q -p no:cacheprovider standards/tests/test_install.py
+
+  hardened:
+    # GitHub-hosted, where the products' jobs that hold the App's key run this mode.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # odoo-nix v2.8.1's merge commit: its py/odoo_nix_tools/uv.lock takes standards-core
+      # from python-devops-nix by git, so both the hashed and the git paths run.
+      - name: Checkouts that lock odoo-nix, from Avunu and from elsewhere
+        env:
+          REV: 071c77e412a574eeedeea304d149f358f84e1802
+        run: |
+          set -euo pipefail
+          for owner in Avunu someone-else; do
+            mkdir -p "$RUNNER_TEMP/lock-$owner"
+            jq -n --arg owner "$owner" --arg rev "$REV" '{
+              nodes: {root: {inputs: {"odoo-nix": "odoo-nix"}},
+                      "odoo-nix": {locked: {type: "github", owner: $owner, repo: "odoo-nix", rev: $rev}}},
+              root: "root", version: 7}' > "$RUNNER_TEMP/lock-$owner/flake.lock"
+          done
+
+      - id: install
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-Avunu
+
+      - name: The hash-locked tools
+        env:
+          VERSION: ${{ steps.install.outputs.version }}
+          REV: ${{ steps.install.outputs.rev }}
+        run: |
+          set -euo pipefail
+          [ "$VERSION" = 2.8.1 ] || { echo "::error::version output is '$VERSION'"; exit 1; }
+          [ "$REV" = 071c77e412a574eeedeea304d149f358f84e1802 ] || { echo "::error::rev output is '$REV'"; exit 1; }
+          [ "$ODOO_NIX_EXPECT_REV" = "$REV" ] || { echo "::error::ODOO_NIX_EXPECT_REV is '$ODOO_NIX_EXPECT_REV'"; exit 1; }
+          [ "$UV_NO_CACHE" = 1 ] || { echo "::error::UV_NO_CACHE is not exported"; exit 1; }
+          [ "$(command -v odoo-nix)" = "$RUNNER_TEMP/standards-tools/bin/odoo-nix" ] \
+            || { echo "::error::odoo-nix on PATH is $(command -v odoo-nix)"; exit 1; }
+          # standards-core came from git, and says at which commit (the version-skew row).
+          core="$("$RUNNER_TEMP/standards-tools/venv/bin/python" -I -c 'import standards_core; print(standards_core.revision())')"
+          [ "$core" = 623a91761baed55e66967d56559dd086b2df9f59 ] || { echo "::error::standards-core revision is '$core'"; exit 1; }
+
+      - id: elsewhere
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-someone-else
+
+      - name: A lock from another repository is refused
+        env:
+          OUTCOME: ${{ steps.elsewhere.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install from someone-else/odoo-nix was '$OUTCOME'"; exit 1; }

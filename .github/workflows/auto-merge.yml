@@ -6,6 +6,11 @@ name: auto-merge
 # is brought up to date (dependabot-update-branches.yml). The products call them pinned to a
 # commit; this repository calls its own copies at the same revision.
 #
+# But one: a pull request that bumps actions/create-github-app-token is reviewed by a person
+# (review-dependencies). On a pull request this repository runs its own copy of
+# dependabot-auto-merge.yml at the pull request's head, so its auto-merge job would hand
+# APP_PRIVATE_KEY to the bumped action before anyone has looked at it.
+#
 # The org's GitHub App (the variable AVUNU_CI_APP_ID, or a Dependabot secret of that name,
 # and the secret AVUNU_CI_PRIVATE_KEY) enables auto-merge and updates the branches, so a
 # merge raises a push that starts check.yml and release.yml on main, and an updated branch
@@ -29,6 +34,8 @@ jobs:
       contents: write # gh pr merge --auto
       pull-requests: write # gh pr merge --auto
     uses: ./.github/workflows/dependabot-auto-merge.yml
+    with:
+      review-dependencies: actions/create-github-app-token
     # A Dependabot run sees only Dependabot secrets: the App's ID is one too.
     secrets:
       APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
