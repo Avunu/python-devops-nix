@@ -10,6 +10,11 @@ name: selftest-standards
 #             standards-update-branches against a branch no pull request targets
 #   install   `uv tool install` of a product built on standards-core from a git URL, a
 #             path and an override (standards/tests/test_install.py)
+#   hardened  standards-install's hardened mode as a product's key-holding job runs it:
+#             odoo-nix's tools from a flake.lock that locks Avunu/odoo-nix, hash-locked,
+#             and refusals of the same lock pointing at another repository and at a
+#             commit that is not on odoo-nix's main, of GH_HOST in the environment,
+#             and of a uv in the tool cache that is not the pinned binary
 #
 # Nothing here writes to GitHub: the token is read-only, and every step that could
 # write is a dry run or has nothing to act on.
@@ -193,3 +198,165 @@ jobs:
         run: >-
           uv run --no-project --python 3.11 --with-editable standards --with pytest
           pytest -q -p no:cacheprovider standards/tests/test_install.py
+
+  hardened:
+    # GitHub-hosted, where the products' jobs that hold the App's key run this mode.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # odoo-nix v2.8.1's merge commit: its py/odoo_nix_tools/uv.lock takes standards-core
+      # from python-devops-nix by git, so both the hashed and the git paths run.
+      # 929e392 is the head of odoo-nix#169, closed without merging: git fetch serves it
+      # (refs/pull/169/head), but it is not on odoo-nix's main.
+      - name: Checkouts that lock odoo-nix, from Avunu, from elsewhere, and off main
+        env:
+          REV: 071c77e412a574eeedeea304d149f358f84e1802
+          UNMERGED: 929e392cd8b6bfc22e945718a4a6cee18fb186a1
+        run: |
+          set -euo pipefail
+          lock() {
+            mkdir -p "$RUNNER_TEMP/lock-$1"
+            jq -n --arg owner "$2" --arg rev "$3" '{
+              nodes: {root: {inputs: {"odoo-nix": "odoo-nix"}},
+                      "odoo-nix": {locked: {type: "github", owner: $owner, repo: "odoo-nix", rev: $rev}}},
+              root: "root", version: 7}' > "$RUNNER_TEMP/lock-$1/flake.lock"
+          }
+          lock Avunu Avunu "$REV"
+          lock someone-else someone-else "$REV"
+          lock unmerged Avunu "$UNMERGED"
+
+      - id: install
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-Avunu
+
+      - name: The hash-locked tools
+        env:
+          VERSION: ${{ steps.install.outputs.version }}
+          REV: ${{ steps.install.outputs.rev }}
+        run: |
+          set -euo pipefail
+          [ "$VERSION" = 2.8.1 ] || { echo "::error::version output is '$VERSION'"; exit 1; }
+          [ "$REV" = 071c77e412a574eeedeea304d149f358f84e1802 ] || { echo "::error::rev output is '$REV'"; exit 1; }
+          [ "$ODOO_NIX_EXPECT_REV" = "$REV" ] || { echo "::error::ODOO_NIX_EXPECT_REV is '$ODOO_NIX_EXPECT_REV'"; exit 1; }
+          [ "$UV_NO_CACHE" = 1 ] || { echo "::error::UV_NO_CACHE is not exported"; exit 1; }
+          [ "$UV_NO_CONFIG" = 1 ] || { echo "::error::UV_NO_CONFIG is not exported"; exit 1; }
+          # The venv's interpreter is the CPython the pinned uv installed, not the runner's.
+          grep -qx "home = $RUNNER_TEMP/standards-tools/python/.*" "$RUNNER_TEMP/standards-tools/venv/pyvenv.cfg" \
+            || { echo "::error::the venv's interpreter is not uv's: $(grep '^home' "$RUNNER_TEMP/standards-tools/venv/pyvenv.cfg")"; exit 1; }
+          [ "$(command -v odoo-nix)" = "$RUNNER_TEMP/standards-tools/bin/odoo-nix" ] \
+            || { echo "::error::odoo-nix on PATH is $(command -v odoo-nix)"; exit 1; }
+          # Later steps find the uv whose binary was checked, not setup-uv's.
+          [ "$(command -v uv)" = "$RUNNER_TEMP/standards-uv/uv" ] \
+            || { echo "::error::uv on PATH is $(command -v uv)"; exit 1; }
+          # standards-core came from git, and says at which commit (the version-skew row).
+          core="$("$RUNNER_TEMP/standards-tools/venv/bin/python" -I -c 'import standards_core; print(standards_core.revision())')"
+          [ "$core" = 623a91761baed55e66967d56559dd086b2df9f59 ] || { echo "::error::standards-core revision is '$core'"; exit 1; }
+
+      - id: elsewhere
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-someone-else
+
+      - name: A lock from another repository is refused
+        env:
+          OUTCOME: ${{ steps.elsewhere.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install from someone-else/odoo-nix was '$OUTCOME'"; exit 1; }
+
+      - id: unmerged
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-unmerged
+
+      - name: A commit that is not on the source's default branch is refused
+        env:
+          OUTCOME: ${{ steps.unmerged.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install of an unmerged odoo-nix commit was '$OUTCOME'"; exit 1; }
+
+      # gh would send GH_TOKEN, the App's token in a product's key job, to GH_HOST.
+      - id: gh-host
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        env:
+          GH_HOST: example.invalid
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-Avunu
+
+      - name: GH_HOST in the job's environment is refused
+        env:
+          OUTCOME: ${{ steps.gh-host.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install with GH_HOST set was '$OUTCOME'"; exit 1; }
+
+      # Last, since it changes the runner's tool cache: setup-uv finds 0.13.6 there and
+      # checks nothing, so install.sh's own check of the binary is what refuses it.
+      - name: Change the uv in the tool cache
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' uv; do
+            printf '\n' >>"$uv"
+            echo "changed $uv"
+            found=1
+          done < <(find "$RUNNER_TOOL_CACHE/uv/0.13.6" -type f -name uv -print0)
+          [ "$found" = 1 ] || { echo "::error::no uv 0.13.6 in the tool cache"; exit 1; }
+
+      - id: tampered
+        continue-on-error: true
+        uses: ./.github/actions/standards-install
+        with:
+          cli: odoo-nix
+          engine-input: odoo-nix
+          env-prefix: ODOO_NIX
+          install-spec: "unused with hardened"
+          hardened: "true"
+          source: Avunu/odoo-nix
+          project: py/odoo_nix_tools
+          git-sources: Avunu/python-devops-nix
+          working-directory: ${{ runner.temp }}/lock-Avunu
+
+      - name: A uv in the tool cache that is not the pinned binary is refused
+        env:
+          OUTCOME: ${{ steps.tampered.outcome }}
+        run: |
+          [ "$OUTCOME" = failure ] || { echo "::error::the install with a changed cached uv was '$OUTCOME'"; exit 1; }

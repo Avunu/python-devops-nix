@@ -20,7 +20,14 @@ description: >-
 #
 # The token needs Contents and Pull requests write. A GitHub App's token makes the
 # merge raise a push that starts the integration branch's workflows; GITHUB_TOKEN's
-# raises none.
+# raises none. fetch-metadata reads the pull request with the job's own github.token,
+# never `token`; the job needs Pull requests read for it. Auto-merge is enabled only
+# while `head-sha`, the head this run's metadata and verdict are for, is the head (`gh pr
+# merge --match-head-commit`, which GitHub checks when it enables auto-merge, not when
+# it merges): a pull request that moved since is labelled for review, and the run its
+# new head starts decides again, turning auto-merge off if it labels that head for
+# review. `--head-sha` is passed only to a CLI whose `ci automerge` takes it
+# (standards-core after 1.5.0); an older one runs as before, with a warning.
 
 inputs:
   cli:
@@ -58,6 +65,12 @@ inputs:
   working-directory:
     description: The checkout of the integration branch.
     default: "."
+  head-sha:
+    description: >-
+      The pull request head the verdict is for: auto-merge merges only that commit.
+      The event's head by default; a job that pushes to the pull request first (a
+      relock) passes the commit it pushed.
+    default: ${{ github.event.pull_request.head.sha }}
 
 outputs:
   result:
@@ -70,7 +83,9 @@ runs:
     - id: meta
       uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
       with:
-        github-token: ${{ inputs.token }}
+        # Never the App's token: this action could read the job's key anyway, but it is
+        # not handed the token as well.
+        github-token: ${{ github.token }}
 
     - id: automerge
       shell: bash
@@ -92,6 +107,7 @@ runs:
         GROUP: ${{ steps.meta.outputs.dependency-group }}
         NAMES: ${{ steps.meta.outputs.dependency-names }}
         DIRECTORY: ${{ steps.meta.outputs.directory }}
+        HEAD_SHA: ${{ inputs.head-sha }}
       run: |
         set -euo pipefail
         [[ "$CLI" =~ ^[a-z][a-z0-9-]*$ ]] || {
@@ -103,6 +119,15 @@ runs:
           --ecosystem "$ECOSYSTEM" --update-type "$UPDATE_TYPE"
           --dependency-group "$GROUP" --dependency-names "$NAMES"
           --directory "${DIRECTORY:-/}")
+        if [ -n "$HEAD_SHA" ]; then
+          # A CLI built on an older standards-core refuses the option (exit 2).
+          usage="$("$CLI" ci automerge --help 2>/dev/null || true)"
+          if [[ "$usage" == *--head-sha* ]]; then
+            args+=(--head-sha "$HEAD_SHA")
+          else
+            echo "::warning title=standards-deps-automerge::$CLI ci automerge takes no --head-sha (standards-core 1.5.0 or older): auto-merge is enabled without --match-head-commit until the product relocks"
+          fi
+        fi
         [ -z "$GATES" ] || args+=(--gates "$GATES")
         [ -z "$ENGINE_REPO" ] || args+=(--engine-repo "$ENGINE_REPO")
         while IFS= read -r param; do

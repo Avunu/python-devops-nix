@@ -5,22 +5,32 @@ works where the repository allows it; a profile may turn ``dependabot.auto-merge
 but leave ``repo-policy`` off, so neither can be assumed. Before any ``gh pr merge
 --auto`` the branch's rules and classic protection must require every enabled gate's
 context (``ci.check_context``). If they don't, or the merge call fails (auto-merge
-disabled for the repository), the PR is labelled ``needs-review`` with a notice naming
+disabled for the repository, or the PR's head is no longer the ``head_sha`` the verdict
+was made for), the PR is labelled ``needs-review`` with a notice naming
 ``<cli> repo doctor``, and the step still succeeds. Every label is created (``--force``,
 idempotent) before it is applied.
+
+GitHub checks ``--match-head-commit`` when auto-merge is enabled, not when it merges,
+and leaves auto-merge on when the PR moves (a Dependabot group refreshed in place). So
+a verdict that labels the PR ``needs-review`` also turns off auto-merge an earlier
+head's run enabled (``disable``).
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from standards_core.ci import labels, notice, verdict
 from standards_core.common import github
+from standards_core.common.report import ConfigError
 
 if TYPE_CHECKING:
     from standards_core.product import Product
+
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def doctor(product: Product) -> str:
@@ -66,6 +76,21 @@ def auto_merge_enabled(pr_url: str) -> bool:
         return False
 
 
+def disable(pr_url: str) -> None:
+    """Turn off auto-merge on a PR this run labels for review, if an earlier head's run
+    enabled it: GitHub would otherwise merge the new head once its checks pass."""
+    if not auto_merge_enabled(pr_url):
+        return
+    res = github.cli("pr", "merge", "--disable-auto", pr_url)
+    if res.code != 0:
+        notice(
+            f"could not turn off auto-merge on {pr_url}, which is labelled"
+            f" needs-review: {res.stderr.strip()}"
+        )
+        return
+    notice(f"auto-merge turned off on {pr_url}: it is labelled needs-review")
+
+
 def enable(
     product: Product,
     pr_url: str,
@@ -73,11 +98,17 @@ def enable(
     integration: str,
     gates: Sequence[str],
     merge_method: str,
+    head_sha: str = "",
 ) -> str:
     """``gh pr merge --auto`` when the gates protect ``integration``; else label
-    ``needs-review``. Returns ``merging`` or ``needs-review``."""
+    ``needs-review``. With ``head_sha`` (the head the verdict was made for), auto-merge
+    is enabled only while that commit is the head (``--match-head-commit``, checked at
+    enable time, not at the merge). Returns ``merging`` or ``needs-review``."""
+    if head_sha and not _SHA.fullmatch(head_sha):
+        raise ConfigError(f"--head-sha must be a full commit SHA, not {head_sha!r}")
     if not github.gates_protected(product, repo, integration, gates):
         label(product, pr_url, "needs-review", repo)
+        disable(pr_url)
         contexts = ", ".join(github.gate_contexts(product, gates)) or "(no gates)"
         notice(
             f"not enabling auto-merge: {integration} does not require every enabled"
@@ -87,7 +118,8 @@ def enable(
     if auto_merge_enabled(pr_url):
         print(f"auto-merge is already enabled on {pr_url}")
         return "merging"
-    res = github.cli("pr", "merge", "--auto", f"--{merge_method}", pr_url)
+    match = ["--match-head-commit", head_sha] if head_sha else []
+    res = github.cli("pr", "merge", "--auto", f"--{merge_method}", *match, pr_url)
     if res.code != 0:
         label(product, pr_url, "needs-review", repo)
         notice(
@@ -121,6 +153,7 @@ def apply(
     integration: str,
     gates: Sequence[str],
     merge_method: str,
+    head_sha: str = "",
     relock_state: str = "",
     moved: Sequence[str] | None = None,
 ) -> str:
@@ -134,7 +167,8 @@ def apply(
         close(product, pr_url, moved or [])
         return "closed"
     if decision == verdict.AUTO:
-        return enable(product, pr_url, repo, integration, gates, merge_method)
+        return enable(product, pr_url, repo, integration, gates, merge_method, head_sha)
     label(product, pr_url, "needs-review", repo)
+    disable(pr_url)
     print(f"labelled {pr_url} needs-review")
     return "needs-review"

@@ -157,6 +157,7 @@ def run_automerge(args: argparse.Namespace) -> int:
         integration=args.integration,
         gates=_gates(args),
         merge_method=args.merge_method,
+        head_sha=args.head_sha,
         relock_state=args.relock,
         moved=_csv(args.moved),
     )
@@ -174,6 +175,7 @@ def run_enable(args: argparse.Namespace) -> int:
         args.integration,
         _gates(args),
         args.merge_method,
+        head_sha=args.head_sha,
     )
     output(result=result)
     return CLEAN
@@ -512,6 +514,12 @@ def _merge_args(s: _Step) -> None:
         "how auto-merge merges",
         default="squash",
         choices=("squash", "merge", "rebase"),
+    )
+    s.add(
+        "--head-sha",
+        "the PR head the verdict is for: auto-merge is enabled only while it is the"
+        " head (gh pr merge --match-head-commit)",
+        default="",
     )
 
 

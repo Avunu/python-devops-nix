@@ -20,6 +20,7 @@ from standards_core.ci.conventional import SEMVER
 from standards_core.ci.verdict import DecisionRule
 from standards_core.common import github
 from standards_core.common.github import GitHubError, Result
+from standards_core.common.report import ConfigError
 from standards_core.product import CiConfig
 
 REPO = "example/unit"
@@ -524,6 +525,42 @@ class TestAutomerge(FakeCase):
             self.assertEqual(self.apply("auto"), "merging")
         self.assertIn(("pr", "merge", "--auto", "--squash", PR), fake.clis)
 
+    def test_auto_merges_only_the_verdicts_head(self):
+        fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
+        sha = "c" * 40
+        with mock.patch("builtins.print"):
+            self.assertEqual(self.apply("auto", head_sha=sha), "merging")
+        self.assertIn(
+            ("pr", "merge", "--auto", "--squash", "--match-head-commit", sha, PR),
+            fake.clis,
+        )
+
+    def test_head_sha_must_be_a_full_sha(self):
+        fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
+        with self.assertRaises(ConfigError):
+            self.apply("auto", head_sha="HEAD")
+        self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+
+    def test_cli_passes_the_head_sha(self):
+        fake = self.use(Fake(protected(["ci / lint", "ci / test"])))
+        sha = "d" * 40
+        code, _, err = run_cli(
+            STUB, "ci", "automerge", "--pr-url", PR, "--repo", REPO,
+            "--integration", "develop", "--gates", "lint,test", "--ecosystem", "uv",
+            "--update-type", "version-update:semver-patch", "--policy", "all",
+            "--head-sha", sha,
+        )  # fmt: skip
+        self.assertEqual(code, 0, err)
+        self.assertIn(
+            ("pr", "merge", "--auto", "--squash", "--match-head-commit", sha, PR),
+            fake.clis,
+        )
+        code, _, err = run_cli(
+            STUB, "ci", "enable-automerge", "--pr-url", PR, "--repo", REPO,
+            "--integration", "develop", "--gates", "lint,test", "--head-sha", "abc",
+        )  # fmt: skip
+        self.assertEqual(code, 2, err)
+
     def test_unprotected_labels_with_notice(self):
         fake = self.use(Fake(protected(["ci / lint"])))  # lacks the other gates
         with mock.patch("builtins.print") as p:
@@ -631,6 +668,40 @@ class TestAutomerge(FakeCase):
         with mock.patch("builtins.print"):
             self.assertEqual(self.apply("auto"), "merging")
         self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+
+    def test_review_turns_off_auto_merge_an_earlier_head_enabled(self):
+        """GitHub keeps auto-merge on when the PR moves; a held head turns it off."""
+        on = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+        fake = self.use(Fake(cli_answers={("pr", "view"): on}))
+        with mock.patch("builtins.print") as p:
+            self.assertEqual(self.apply("review"), "needs-review")
+        self.assertIn(("pr", "merge", "--disable-auto", PR), fake.clis)
+        self.assertIn("auto-merge turned off", printed(p))
+        fake = self.use(Fake(protected(["ci / lint"]), {("pr", "view"): on}))
+        with mock.patch("builtins.print"):
+            self.assertEqual(self.apply("auto"), "needs-review")
+        self.assertIn(("pr", "merge", "--disable-auto", PR), fake.clis)
+        self.assertFalse(any("--auto" in c for c in fake.clis))
+
+    def test_review_leaves_auto_merge_off_alone(self):
+        fake = self.use(Fake())
+        with mock.patch("builtins.print"):
+            self.assertEqual(self.apply("review"), "needs-review")
+        self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+
+    def test_a_failed_disable_is_a_notice(self):
+        on = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+        self.use(
+            Fake(
+                cli_answers={
+                    ("pr", "view"): on,
+                    ("pr", "merge"): Result(1, "", "forbidden"),
+                }
+            )
+        )
+        with mock.patch("builtins.print") as p:
+            self.assertEqual(self.apply("review"), "needs-review")
+        self.assertIn(f"could not turn off auto-merge on {PR}", printed(p))
 
     def test_auto_merge_enabled_reads_garbage_as_off(self):
         self.use(Fake(cli_answers={("pr", "view"): Result(0, "not json")}))
