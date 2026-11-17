@@ -75,7 +75,7 @@ class TestRepoPolicy(unittest.TestCase):
         policy = repo_policy.from_dir(repo_policy.self_dir(STUB))
         self.assertEqual(
             [rs["name"] for rs in policy.rulesets],
-            ["main", "release-* (release automation only)", "v* tags"],
+            ["main", "release (release automation only)", "v* tags"],
         )
         for rs in policy.rulesets:
             self.validate(STUB, rs)

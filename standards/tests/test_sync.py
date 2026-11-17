@@ -237,7 +237,7 @@ class TestLocks(CheckoutCase):
         self.assertEqual(code, 1, out)
         self.assertIn(
             "stub-nix (locked from github:example/stub-nix/main, flake.nix has"
-            " github:example/stub-nix/release-1)",
+            " github:example/stub-nix/release)",
             out,
         )
         with mock.patch.dict(os.environ, {"STUB_NIX_ALLOW_SKEW": "1"}):

@@ -78,7 +78,7 @@ class TestDefaults(unittest.TestCase):
                 "m", "h", "hl", "l", "b {name}", "e {name}", "<{name}>", "</{name}>"
             ),
             HeaderKind("#"),
-            Engine("x", "o/x", "release-{major}", "k", "spec", "x-*", "x-init"),
+            Engine("x", "o/x", "release", "k", "spec", "x-*", "x-init"),
             Pins(".dev-dist/pins"),
             Paths(),
             Modules(api.CORE_MODULES),

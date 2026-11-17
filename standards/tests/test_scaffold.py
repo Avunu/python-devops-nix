@@ -753,10 +753,9 @@ class TestContext(unittest.TestCase):
             {
                 "rev": "a" * 40,
                 "version": "1.0.0",
-                "major": 1,
                 "owner": "fork",
                 "name": "stub-nix",
-                "url": "github:example/stub-nix/release-1",
+                "url": "github:example/stub-nix/release",
             },
         )
         self.assertIs(ctx.stub_nix, ctx.engine)
@@ -1229,7 +1228,7 @@ class TestTomlMerge(unittest.TestCase):
 
 FLAKE = """{
   inputs = {
-    stub-nix.url = "github:Example/Stub-Nix/release-1";
+    stub-nix.url = "github:Example/Stub-Nix/release";
     nixpkgs.follows = "stub-nix/nixpkgs";
     self.submodules = true;
     core = { url = "github:example/core/18.0"; flake = false; };
@@ -1260,7 +1259,7 @@ class TestFlakeInputs(unittest.TestCase):
                 "extra": "path:/x",
                 "my.unit": "git+https://git.example.org/u.git?ref=main",
                 "nixpkgs": "follows:stub-nix/nixpkgs",
-                "stub-nix": "github:example/stub-nix/release-1",
+                "stub-nix": "github:example/stub-nix/release",
             },
         )
         self.assertEqual(engine.flake_input_specs("{ }"), {})

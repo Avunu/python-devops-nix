@@ -59,7 +59,7 @@ RENDERED = """# Unit-specific Nix goes in nix/local.nix.
   description = "demo_unit: A demo unit";
 
   inputs = {
-    stub-nix.url = "github:example/stub-nix/release-1";
+    stub-nix.url = "github:example/stub-nix/release";
     nixpkgs.follows = "stub-nix/nixpkgs";
     framework = {
       url = "github:example/framework/version-16";
@@ -233,7 +233,7 @@ class TestParity(unittest.TestCase):
                 "nixpkgs": "follows:stub-nix/nixpkgs",
                 "other": "github:o/other/v2",
                 "standards-profile": "github:example/profile",
-                "stub-nix": "github:example/stub-nix/release-1",
+                "stub-nix": "github:example/stub-nix/release",
             },
         )
 
@@ -433,7 +433,7 @@ FLAKE = """{
   outputs = { kit-nix, ... }@inputs: kit-nix.lib.mkFlake { inherit inputs; } { };
 }
 """
-BLOCK_URL = "github:example/kit-nix/release-1"
+BLOCK_URL = "github:example/kit-nix/release"
 
 
 class TestClaims(KitCase):
@@ -458,7 +458,7 @@ class TestClaims(KitCase):
         self.assertIn('    core = {\n      url = "github:example/core/18.0";\n', text)
 
     def test_case_differences_in_a_forge_url_are_equal(self):
-        self.flake('    kit-nix.url = "github:Example/Kit-Nix/release-1";\n')
+        self.flake('    kit-nix.url = "github:Example/Kit-Nix/release";\n')
         code, _, err = self.fn("sync", "--write")
         self.assertEqual(code, 0, err)
 

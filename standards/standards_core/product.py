@@ -176,7 +176,7 @@ def header_kind(product: Product, kind: str) -> HeaderKind | None:
 class Engine:
     flake_input: str  # "kit-nix": the root input every checkout locks
     repo: str  # "example/kit-nix": owner/name when the lock names none
-    release_branch: str  # "release-{major}": the moving branch the default URL follows
+    release_branch: str  # "release": the moving branch the default URL follows
     url_key: str  # "dev-shell.kit-nix-url": cfg key that replaces the default flake URL
     # "kit-nix-tools @
     # git+https://github.com/{owner}/{repo}@{rev}#subdirectory=py/kit_nix_tools"
