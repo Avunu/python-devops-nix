@@ -586,6 +586,16 @@ class Product:
         if marks.block_begin == marks.block_end:
             out.append("markers.block_begin and markers.block_end are equal")
 
+        # The core used to format a per-major template here; it now takes the branch as
+        # written, so an old template would land in every checkout's flake URL.
+        branch = self.engine.release_branch
+        if not branch or "{" in branch or "}" in branch:
+            out.append(
+                f"engine.release_branch {branch!r} is not a branch name: the core no"
+                " longer formats a {major} template; name the branch,"
+                ' "release"'
+            )
+
         gates = self.ci.gates
         if len(set(gates)) != len(gates):
             out.append("ci.gates lists a gate twice")

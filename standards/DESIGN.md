@@ -547,6 +547,8 @@ Any violation raises `ValueError` naming the field.
 - Every `version_schemes`, `branching` and `handlers` key is new: shadowing a core name is refused.
 - `markers.block_begin` and `markers.block_end` each contain `{name}` exactly once. So do `html_begin` and `html_end`.
 - `markers.block_begin != markers.block_end`.
+- `engine.release_branch` is a branch name, not empty and without `{` or `}`: the core uses it as written, so an
+  old per-major `{major}` template is refused rather than copied into checkouts' flake URLs.
 - `ci.gates` are unique, and `check_context` contains `{gate}`.
 - `fixtures` is non-empty when `hooks.write_fixture` is set, and the other way round.
 - `data_root` is an existing directory.
