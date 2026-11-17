@@ -53,8 +53,8 @@ if "FAKE_CHILD_RESULT" in os.environ and child and "{result}" in os.environ:
 sys.exit(0 if argv[:1] == ["eval"] else int(os.environ.get("FAKE_NIX_CODE", "0")))
 """
 
-# The URL a rendered flake.nix gives the engine by default (release-<major>).
-BRANCH = "release-1"
+# The URL a rendered flake.nix gives the engine by default (its release branch).
+BRANCH = "release"
 URL = f"github:example/stub-nix/{BRANCH}"
 PINNED = "github:example/stub-nix/v1.0.0"
 
@@ -660,7 +660,7 @@ class TestReleaseBranchPreflight(FakeNix):
         self.assertIn(
             f"https://github.com/example/stub-nix has no {BRANCH} branch yet", err
         )
-        self.assertIn("stub-nix v1.0.0 is tagged", err)
+        self.assertIn("the next stub-nix release is tagged", err)
         self.assertEqual(git(self.root, "status", "--porcelain"), "")
         self.assertEqual(self.calls(), [])
 

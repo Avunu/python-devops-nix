@@ -131,7 +131,7 @@ entry.
 | `floors.py` | frappe `scaffold/floors.py` | all | — |
 | `render.py` | frappe `scaffold/render.py` | the sandbox, `StrictUndefined` / trim / lstrip / keep_trailing_newline, `_NoLinkLoader`, `template_files`, `render_string`, `evaluate` (the `when` evaluator, unchanged), the filters `json`, `jsonc`, `json_string`, `nix_string`, `nix_attr`, `yaml_json`, `glob_to_regex`, and the `rev`/`pin` helpers | `MARKER`/`BASE`/`header()` → `header(product, kind, local, note)` (§5.1). `environment(product)` uses a `ChoiceLoader` over the roots (§4.6). `render(product, template, ctx, current, *, directory)` builds its helpers per render over the final context, as frappe does: `rev`, `pin`, plus `hooks.render_helpers(ctx, current)` (Frappe value: `{"gen": configs.Gen(ctx)}`; the **render → configs** blocker). A helper name that shadows `rev`, `pin` or a context key is `RuntimeError`. `url_template` → `{key}` substitution from `hooks.url_placeholders(ctx)`, an **ordered** sequence of `(key, value)` pairs applied in order (Frappe value: `app_hyphen`, `app`, `repo`, so `{app_hyphen}` is replaced before `{app}`). Extra filters come from `product.jinja_filters` |
 | `manifest.py` | frappe `scaffold/manifest.py` | `Entry`, `Retire`, `Manifest`, `parse` (duplicate refusal, floors merge), `profile_retire`, `extra_entries` | the module check uses `product.modules.names`; `STRATEGIES` adds `jsonc-merge` and `sentinel`; `HEADERS` comes from the core kinds plus `product.header_kinds`. New entry keys (§4.3). Duplicates are keyed on `(path, block)`. Retire `paths`/`except` are brace-expanded on load; `only_section` is read as `only_sections: [it]`. `VITE_REGISTER` is dropped, and `ships(product, path)` stays generic. **Resolves the blocker** manifest → `config.MODULES` |
-| `context.py` | frappe `scaffold/context.py` | `NS`, `ns`, `ShallowHistory`, `History`, `ever`, `first_commit_year` | `App` → `Checkout`. `build()` makes only the core keys (§3.5) and merges `hooks.template_globals` (context keys only; per-render helpers such as `gen` are `hooks.render_helpers`, see `render.py`). Dropped from the core: `PYTHON`, `FRAPPE_NIX_REPO`, `GATES`, `COMPAT_MODULES`, `siblings`, `tools_deps`, `app_version`, every `*_shipped` flag, `vue_typescript5`, `package_json_live`, `precommit_live`. `UNMANAGED_DIRS` → `product.paths.not_source`. `frappe_nix_major` → `engine_major(version)`. `default_frappe_nix_url` → `engine_url(product, cfg)`. **Resolves the blockers** context → `known_apps`, `discover`, `hooks` and `manifest.ships`, and the `policy_shipped` `find_spec` (the plan's hidden dependency becomes a product flag through `template_globals`) |
+| `context.py` | frappe `scaffold/context.py` | `NS`, `ns`, `ShallowHistory`, `History`, `ever`, `first_commit_year` | `App` → `Checkout`. `build()` makes only the core keys (§3.5) and merges `hooks.template_globals` (context keys only; per-render helpers such as `gen` are `hooks.render_helpers`, see `render.py`). Dropped from the core: `PYTHON`, `FRAPPE_NIX_REPO`, `GATES`, `COMPAT_MODULES`, `siblings`, `tools_deps`, `app_version`, every `*_shipped` flag, `vue_typescript5`, `package_json_live`, `precommit_live`. `UNMANAGED_DIRS` → `product.paths.not_source`. `frappe_nix_major` is dropped: the engine branch is `engine.release_branch`, whatever the major. `default_frappe_nix_url` → `engine_url(product, cfg)`. **Resolves the blockers** context → `known_apps`, `discover`, `hooks` and `manifest.ships`, and the `policy_shipped` `find_spec` (the plan's hidden dependency becomes a product flag through `template_globals`) |
 | `discover.py` | frappe `scaffold/discover.py` | `gitmodules`, `github_workflows` | `facts(product, checkout, cfg, modules) = {**core facts, **hooks.discover(checkout, cfg, modules)}`. A product key that shadows a core key is a `RuntimeError` |
 | `defaults.py` | frappe `scaffold/defaults.py` | `snapshot_at`, `changes`, `_flat`, `warn_changed` | `_CALLER` is built from `engine.caller_stem`. Messages use `identity.name` and `identity.table` |
 | `fixtures.py` | frappe `scaffold/fixtures.py` + `commands/profile.py` `_throwaway` | the throwaway git repository (isolated env, no hooks, no signing) | `Fixture` dataclass (§3.4); `throwaway(product, root, profile_dir, name, fixture)` calls `hooks.write_fixture` |
@@ -296,7 +296,7 @@ class HeaderKind:
 class Engine:
     flake_input: str  # "kit-nix": the root input every checkout locks
     repo: str  # "example/kit-nix": owner/name when the lock names none
-    release_branch: str  # "release-{major}": the moving branch the default URL follows
+    release_branch: str  # "release": the moving branch the default URL follows
     url_key: str  # "dev-shell.kit-nix-url": cfg key that replaces the default flake URL
     install_spec: str  # "kit-nix-tools @ git+https://github.com/{owner}/{repo}@{rev}#subdirectory=py/kit_nix_tools"
     caller_stem: str  # "kit-*": reusable workflow file stem glob, matched as <stem>.ya?ml
@@ -547,6 +547,8 @@ Any violation raises `ValueError` naming the field.
 - Every `version_schemes`, `branching` and `handlers` key is new: shadowing a core name is refused.
 - `markers.block_begin` and `markers.block_end` each contain `{name}` exactly once. So do `html_begin` and `html_end`.
 - `markers.block_begin != markers.block_end`.
+- `engine.release_branch` is a branch name, not empty and without `{` or `}`: the core uses it as written, so an
+  old per-major `{major}` template is refused rather than copied into checkouts' flake URLs.
 - `ci.gates` are unique, and `check_context` contains `{gate}`.
 - `fixtures` is non-empty when `hooks.write_fixture` is set, and the other way round.
 - `data_root` is an existing directory.
@@ -631,7 +633,7 @@ keys, plus `template_globals`:
 | `branches` | `{"integration": cfg["integration-branch"], "release": release_branch or None}`, with `release_branch` from the facts (§3.3). Other branch lists (Dependabot's per-series targets) are product module parameters (§5.2) |
 | `gates` | `hooks.gates(...)` |
 | `discover` | core facts plus product facts |
-| `engine`, and `ctx[identity.report_key]` (the same object) | `{rev, version, major, owner, name, url}` from the lock node, the product version and `engine_url` |
+| `engine`, and `ctx[identity.report_key]` (the same object) | `{rev, version, owner, name, url}` from the lock node, the product version and `engine_url` |
 | `floors` | the manifest floors |
 | `options` | `{"force": bool, **sync.options(args)}` |
 | `first_commit_year` | `context.first_commit_year(root)` |
@@ -1382,7 +1384,7 @@ of its flags at the slot frappe had it (frappe: `--init-listing` after `--only`)
    profile is not locked, and runs `hooks.preflight` and `check_engine_url`. Any item ≥ 2 → exit.
 2. `sync.phase_a_before(plan, runner, args)`. For odoo projects, this is the submodule bootstrap.
 3. `require_release_branch`: unless dry-run, offline, URL override, or a lock already on the branch. It checks the
-   engine repository URL `https://github.com/{engine.repo}` and the branch `engine.release_branch.format(major=…)`.
+   engine repository URL `https://github.com/{engine.repo}` and the branch `engine.release_branch`.
 4. Write the table. Apply the phase-`a` items (including the `sentinel` inputs block). Stage.
 5. Lock: `nix flake lock` when the input set or a spec differs; `nix flake update <engine.flake_input>` when its
    `original` is not the rendered URL; `--override-input <engine> $<PREFIX>_URL_OVERRIDE` under the override.
@@ -1933,7 +1935,7 @@ Each stub is an installable directory: a `pyproject.toml` depending on `standard
 | Field | Value |
 |---|---|
 | `identity` | name and cli `stub-nix`, table `stub-nix`, `STUB_NIX`, report key `stub_nix`, `stub-init --sync` |
-| `engine` | `example/stub-nix`, `release-{major}`, caller stem `stub-*` |
+| `engine` | `example/stub-nix`, `release`, caller stem `stub-*` |
 | modules | the core six plus `editorconfig`, `python-lint`, `tests`, `hygiene`, `extras`. `extras` needs `commits`, and is GitHub-only |
 | branching | `develop+version` (tags flow; `release_pattern` `refs/heads/version-*`) and `main+tags` |
 | version scheme | `stub-major`: it refuses `!`, `BREAKING CHANGE` and `Release-As` with another major |
@@ -2470,8 +2472,7 @@ Deviations made while implementing, with the reason for each.
   `release_ref_needed(product, root, url)`, `release_branch_exists/release_branch_rev(product, root, branch)`;
   `phase_a_lock(runner, inputs, url)`, `require_release_branch(runner, url)`, `maybe_reexec(runner, argv,
   lock_changed)` and `locked_engine_version(runner)` read the product from the `Runner`. New helpers:
-  `release_branch(product)` (`engine.release_branch` at the running major), `engine_repo_url(product)`,
-  `dry_run_lock(product, root, url)` (the node a dry run renders phase B against) and `reexec_argv(product, argv)`
+  `engine_repo_url(product)`, `dry_run_lock(product, root, url)` (the node a dry run renders phase B against) and `reexec_argv(product, argv)`
   (`sync.reexec_argv`, else `nix run --no-pure-eval .#<init_app> -- --sync <argv>`).
 - **`--skip-lock` skips every phase-A Nix step**, the release-branch check included (and the preflight's), as §6.3's
   offline phase A says; in frappe it only skips the bench relock. `--only` locks and hands over when it names
@@ -2483,7 +2484,7 @@ Deviations made while implementing, with the reason for each.
   `nix eval` as data (`<PREFIX>_LOCKED_REV` holds `{"node": …, "file": …}`), so no product value is spliced into
   the expression either.
 - **Release-branch refusal text** is neutral: `"https://github.com/<engine.repo> has no <branch> branch yet: the
-  checkout's flake follows it, and it is created when <identity.name> v<major>.0.0 is tagged. Nothing was written;
+  checkout's flake follows it, and it is created when the next <identity.name> release is tagged. Nothing was written;
   sync works from that release on."` No parity output compares it.
 - **`common/skew.py`** has `expect_rev_problems`, `caller_problems`, `core_problems` and `caller_pattern` beside
   `problems`; items are `flake.lock` (or the workflow) with strategy `skew`, exit 3. The expect-rev and caller

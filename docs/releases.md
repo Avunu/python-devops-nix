@@ -4,7 +4,7 @@ description: How python-devops-nix is versioned and released, what a breaking ch
 nav_title: Releases
 order: 3
 tags: [releases, versioning, ci]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 # Releases
@@ -13,7 +13,7 @@ python-devops-nix is released with [release-please](https://github.com/googleapi
 
 ## How a release is cut
 
-`.github/workflows/release.yml` runs on every push to `main`. release-please keeps one release pull request open, `chore(main): release X.Y.Z`, which moves `version.txt`, `.release-please-manifest.json` and `CHANGELOG.md`, and standards-core's version in `standards/pyproject.toml` and `standards/standards_core/__init__.py` (release-please's extra files), so the distribution a product installs from a release's commit carries that release's version. Merging it tags `vX.Y.Z`, and `release.yml` fast-forwards the `release-<major>` branch to the tag (`release-1` for every `v1.*`). It never moves the branch any other way, and a new major starts a new branch.
+`.github/workflows/release.yml` runs on every push to `main`. release-please keeps one release pull request open, `chore(main): release X.Y.Z`, which moves `version.txt`, `.release-please-manifest.json` and `CHANGELOG.md`, and standards-core's version in `standards/pyproject.toml` and `standards/standards_core/__init__.py` (release-please's extra files), so the distribution a product installs from a release's commit carries that release's version. Merging it tags `vX.Y.Z`, and `release.yml` fast-forwards the `release` branch to the tag, whatever its major. It never moves the branch any other way. The old `release-1` branch is frozen at its last release and will be deleted.
 
 The version comes from the commits merged since the last release:
 
@@ -46,11 +46,11 @@ The release pull request is pushed with `GITHUB_TOKEN`, and a push made with it 
 
 A product pins a release, never a commit of `main`:
 
--   The flake input at a release branch. `release-1` only ever points at a 1.x release, so `github:Avunu/python-devops-nix/release-1` locks to the latest one, and Dependabot's nix entry moves the lock only when a release moves the branch.
+-   The flake input at the release branch. `release` carries every release, so `github:Avunu/python-devops-nix/release` locks to the latest one. A product is kept safe by its pinned `flake.lock` and by CI, not by the branch name: Dependabot's nix entry moves the lock only when a release moves the branch, and the product's checks must pass before that pull request merges, a new major included.
 -   The reusable workflow and the actions at a tag's commit, with the version in a comment, as every other action is pinned: `@<sha> # v1.0.0`. Dependabot's github-actions entry moves both.
 
 Until the first release, both products pin a commit of `main` ([CI](conventions.md#ci)).
 
 ## Rollback
 
-Rollback is the product's: it pins a base revision. A product that needs to go back moves its pin to an earlier release, the flake input's lock or the `uses:` commit, and nothing here changes. Tags are not moved or deleted, and a bad release is fixed by the next one. No ruleset enforces this or the fast-forward-only `release-*` branches yet: the only ruleset protects `main`.
+Rollback is the product's: it pins a base revision. A product that needs to go back moves its pin to an earlier release, the flake input's lock or the `uses:` commit, and nothing here changes. Tags are not moved or deleted, and a bad release is fixed by the next one. No ruleset enforces this or the fast-forward-only `release` branch yet: the only ruleset protects `main`.

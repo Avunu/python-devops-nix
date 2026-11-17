@@ -186,12 +186,6 @@ def engine_repo_url(product: Product) -> str:
     return f"https://github.com/{product.engine.repo}"
 
 
-def release_branch(product: Product) -> str:
-    """The engine branch the default flake URL follows: ``release-<major>``."""
-    major = context.engine_major(product.identity.version)
-    return product.engine.release_branch.format(major=major)
-
-
 def release_ref_needed(product: Product, root: Path, url: str) -> bool:
     """Whether phase A's lock would fetch the engine's release branch: the flake follows
     the default URL, and there is no ``flake.lock`` or its engine node was locked from
@@ -249,7 +243,7 @@ def release_branch_rev(product: Product, root: Path, branch: str) -> str | None:
 
 def require_release_branch(runner: Runner, url: str) -> None:
     """Refuse, before anything is written, when the release branch the rendered flake
-    follows does not exist: it is created when the engine's ``v<major>.0.0`` is tagged,
+    follows does not exist: it is created when the engine's next release is tagged,
     and ``nix flake lock`` would otherwise fail halfway through. A network failure is
     left to the lock step to report. An ``engine.url_key`` value is the checkout's own
     choice and is not checked, nor is a lock already on the branch."""
@@ -261,13 +255,12 @@ def require_release_branch(runner: Runner, url: str) -> None:
         or not release_ref_needed(product, runner.root, url)
     ):
         return
-    branch = release_branch(product)
+    branch = product.engine.release_branch
     if release_branch_exists(product, runner.root, branch) is False:
-        major = context.engine_major(product.identity.version)
         raise EnvError(
             f"{engine_repo_url(product)} has no {branch} branch yet: the checkout's"
-            f" flake follows it, and it is created when {product.identity.name}"
-            f" v{major}.0.0 is tagged. Nothing was written; sync works from that"
+            f" flake follows it, and it is created when the next {product.identity.name}"
+            " release is tagged. Nothing was written; sync works from that"
             " release on."
         )
 
@@ -277,7 +270,7 @@ def dry_run_lock(product: Product, root: Path, url: str) -> dict | None:
     when phase A's lock would take it (``None`` otherwise, or when it can't tell)."""
     if override_url(product) or not release_ref_needed(product, root, url):
         return None
-    rev = release_branch_rev(product, root, release_branch(product))
+    rev = release_branch_rev(product, root, product.engine.release_branch)
     if rev is None:
         return None
     owner, _, name = product.engine.repo.partition("/")

@@ -120,17 +120,10 @@ def default_load_checkout(product: Product, root: Path) -> Checkout:
     return Checkout(root=root, name=name, config=doc, tracked=tracked)
 
 
-def engine_major(version: str) -> int:
-    """The engine major a checkout's flake tracks (``release-<major>``): 1 before 1.0."""
-    head = version.split(".", 1)[0]
-    return max(1, int(head)) if head.isdigit() else 1
-
-
 def default_engine_url(product: Product) -> str:
-    """The flake URL of the engine's release branch for this product version."""
+    """The flake URL of the engine's release branch."""
     engine = product.engine
-    branch = engine.release_branch.format(major=engine_major(product.identity.version))
-    return f"github:{engine.repo}/{branch}"
+    return f"github:{engine.repo}/{engine.release_branch}"
 
 
 def engine_url(product: Product, cfg: Mapping[str, Any]) -> str:
@@ -260,7 +253,6 @@ def build(
             "engine": {
                 "rev": lock.get("rev") or "",
                 "version": identity.version,
-                "major": engine_major(identity.version),
                 "owner": lock.get("owner") or owner,
                 "name": lock.get("repo") or name,
                 "url": engine_url(product, cfg),

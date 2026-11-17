@@ -1070,28 +1070,28 @@ class TestFastForward(FakeCase):
         self.assertEqual(fake.writes(), [])
 
     def test_an_engines_first_release_dry_run(self):
-        """An engine's release.yml: release-1 does not exist yet, v1.0.0 creates it."""
+        """An engine's release.yml: no release branch yet, v1.0.0 creates it."""
         routes = {
             ("GET", f"repos/{REPO}/git/ref/tags/v1.0.0"): {
                 "object": {"type": "commit", "sha": self.SHA}
             },
-            ("GET", f"repos/{REPO}/git/ref/heads/release-1"): 404,
+            ("GET", f"repos/{REPO}/git/ref/heads/release"): 404,
         }
         fake = self.use(Fake(routes))
         out_file = self.output_file()
         code, out, err = run_cli(
-            STUB, "ci", "fast-forward", "--repo", REPO, "--release-branch", "release-1",
+            STUB, "ci", "fast-forward", "--repo", REPO, "--release-branch", "release",
             "--sha", self.SHA, "--tag", "v1.0.0", "--version-scheme", "semver",
             "--tag-prefix", "v", "--dry-run",
         )  # fmt: skip
         self.assertEqual(code, 0, out + err)
         self.assertEqual(fake.writes(), [])
         self.assertIn(
-            f'dry run: POST repos/{REPO}/git/refs {{"ref": "refs/heads/release-1",'
+            f'dry run: POST repos/{REPO}/git/refs {{"ref": "refs/heads/release",'
             f' "sha": "{self.SHA}"}}',
             out,
         )
-        self.assertIn(f"release-1 = v1.0.0 = {self.SHA}", out)
+        self.assertIn(f"release = v1.0.0 = {self.SHA}", out)
         self.assertEqual(out_file.read_text(), "moved=true\n")
 
     def test_an_engines_next_release_dry_run_patches(self):
@@ -1099,19 +1099,19 @@ class TestFastForward(FakeCase):
             ("GET", f"repos/{REPO}/git/ref/tags/v1.1.0"): {
                 "object": {"type": "commit", "sha": self.SHA}
             },
-            ("GET", f"repos/{REPO}/git/ref/heads/release-1"): {
+            ("GET", f"repos/{REPO}/git/ref/heads/release"): {
                 "object": {"sha": "1" * 40}
             },
         }
         self.use(Fake(routes))
         code, out, err = run_cli(
-            STUB, "ci", "fast-forward", "--repo", REPO, "--release-branch", "release-1",
+            STUB, "ci", "fast-forward", "--repo", REPO, "--release-branch", "release",
             "--sha", self.SHA, "--tag", "v1.1.0", "--version-scheme", "semver",
             "--tag-prefix", "v", "--dry-run",
         )  # fmt: skip
         self.assertEqual(code, 0, out + err)
         self.assertIn(
-            f"dry run: PATCH repos/{REPO}/git/refs/heads/release-1"
+            f"dry run: PATCH repos/{REPO}/git/refs/heads/release"
             f' {{"force": false, "sha": "{self.SHA}"}}',
             out,
         )

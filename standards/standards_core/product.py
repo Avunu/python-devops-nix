@@ -176,7 +176,7 @@ def header_kind(product: Product, kind: str) -> HeaderKind | None:
 class Engine:
     flake_input: str  # "kit-nix": the root input every checkout locks
     repo: str  # "example/kit-nix": owner/name when the lock names none
-    release_branch: str  # "release-{major}": the moving branch the default URL follows
+    release_branch: str  # "release": the moving branch the default URL follows
     url_key: str  # "dev-shell.kit-nix-url": cfg key that replaces the default flake URL
     # "kit-nix-tools @
     # git+https://github.com/{owner}/{repo}@{rev}#subdirectory=py/kit_nix_tools"
@@ -585,6 +585,16 @@ class Product:
                 out.append(f"markers.{attr} must contain {{name}} exactly once")
         if marks.block_begin == marks.block_end:
             out.append("markers.block_begin and markers.block_end are equal")
+
+        # The core used to format a per-major template here; it now takes the branch as
+        # written, so an old template would land in every checkout's flake URL.
+        branch = self.engine.release_branch
+        if not branch or "{" in branch or "}" in branch:
+            out.append(
+                f"engine.release_branch {branch!r} is not a branch name: the core no"
+                " longer formats a {major} template; name the branch,"
+                ' "release"'
+            )
 
         gates = self.ci.gates
         if len(set(gates)) != len(gates):

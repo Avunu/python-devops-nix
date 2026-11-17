@@ -11,11 +11,10 @@ name: release
 #                   release pull request's branch while its `checks` check is absent on the
 #                   head. Its jobs are the checks main requires, `downstream` included, so a
 #                   release merges only once frappe-nix and odoo-nix build against it.
-#   fast-forward    moves release-<major> (release-1 for v1.* tags) to the new tag: a PATCH
-#                   with force=false, so it only ever fast-forwards, or a POST on a major's
-#                   first release, which leaves the previous major's branch where its last
-#                   release put it. It then fails unless the branch and the tag are the
-#                   same commit.
+#   fast-forward    moves the `release` branch to the new tag, whatever its major: a PATCH
+#                   with force=false, so it only ever fast-forwards, or a POST when the
+#                   branch does not exist yet. It then fails unless the branch and the tag
+#                   are the same commit.
 #
 # The daily cron catches merges that raise no push (an auto-merge enabled with
 # GITHUB_TOKEN) and retries a dispatch that failed. It never runs on a pull request, so
@@ -97,9 +96,9 @@ jobs:
     runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
-      contents: write # move release-<major>
+      contents: write # move release
     steps:
-      - name: Fast-forward release-<major> to the new tag, and check it
+      - name: Fast-forward release to the new tag, and check it
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -111,9 +110,7 @@ jobs:
             echo "::error::release-please's tag ${TAG@Q} is not vX.Y.Z"
             exit 1
           fi
-          major="${TAG#v}"
-          major="${major%%.*}"
-          branch="release-$major"
+          branch=release
           tagged=$(gh api "repos/$REPO/commits/$TAG" -q .sha)
           if [ "$tagged" != "$SHA" ]; then
             echo "::error::$TAG is $tagged, not release-please's $SHA"

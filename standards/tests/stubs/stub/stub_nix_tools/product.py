@@ -66,7 +66,7 @@ MARKERS = Markers(
 ENGINE = Engine(
     flake_input="stub-nix",
     repo="example/stub-nix",
-    release_branch="release-{major}",
+    release_branch="release",
     url_key="dev-shell.stub-nix-url",
     install_spec=(
         "stub-nix-tools @ git+https://github.com/{owner}/{repo}@{rev}"

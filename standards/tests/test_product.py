@@ -78,7 +78,7 @@ class TestDefaults(unittest.TestCase):
                 "m", "h", "hl", "l", "b {name}", "e {name}", "<{name}>", "</{name}>"
             ),
             HeaderKind("#"),
-            Engine("x", "o/x", "release-{major}", "k", "spec", "x-*", "x-init"),
+            Engine("x", "o/x", "release", "k", "spec", "x-*", "x-init"),
             Pins(".dev-dist/pins"),
             Paths(),
             Modules(api.CORE_MODULES),
@@ -285,6 +285,16 @@ class TestPostInitRules(unittest.TestCase):
             "are equal",
             markers=replace(marks, block_end=marks.block_begin),
         )
+
+    def test_engine_release_branch(self):
+        for branch in ("stable-{major}", "stable-{}", "stable}", ""):
+            with self.subTest(branch=branch):
+                message = self.refused(
+                    "engine.release_branch",
+                    engine=replace(STUB.engine, release_branch=branch),
+                )
+                self.assertIn('name the branch, "release"', message)
+        product(engine=replace(STUB.engine, release_branch="release"))
 
     def test_ci(self):
         self.refused("ci.gates", ci=CiConfig(gates=("lint", "lint")))

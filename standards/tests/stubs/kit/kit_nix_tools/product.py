@@ -88,7 +88,7 @@ MARKERS = Markers(
 ENGINE = Engine(
     flake_input="kit-nix",
     repo="example/kit-nix",
-    release_branch="release-{major}",
+    release_branch="release",
     url_key="dev-shell.kit-nix-url",
     install_spec=(
         "kit-nix-tools @ git+https://github.com/{owner}/{repo}@{rev}"
