@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.0](https://github.com/Avunu/python-devops-nix/compare/v1.5.0...v1.6.0) (2026-11-18)
+
+
+### Features
+
+* **release:** ship from a single release branch ([#75](https://github.com/Avunu/python-devops-nix/issues/75)) ([7e15da6](https://github.com/Avunu/python-devops-nix/commit/7e15da6b870daab04d56ab00f0817ecee193a97c))
+
+
+### Bug Fixes
+
+* **ci:** run the App-token jobs on GitHub-hosted runners ([#72](https://github.com/Avunu/python-devops-nix/issues/72)) ([e76d5d8](https://github.com/Avunu/python-devops-nix/commit/e76d5d850b35e4d0abc58fae6617713764f3683a))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#70](https://github.com/Avunu/python-devops-nix/issues/70)) ([5e4003c](https://github.com/Avunu/python-devops-nix/commit/5e4003c42a2f8c31d4f8509061cf660bddaad31e))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#74](https://github.com/Avunu/python-devops-nix/issues/74)) ([7356f36](https://github.com/Avunu/python-devops-nix/commit/7356f3648ac55bbb4e979c80a2036a19eea51690))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#76](https://github.com/Avunu/python-devops-nix/issues/76)) ([a80943a](https://github.com/Avunu/python-devops-nix/commit/a80943a7b67d74d5e3f1af0d829d354245ca5347))
+
 ## [1.5.0](https://github.com/Avunu/python-devops-nix/compare/v1.4.0...v1.5.0) (2026-11-10)
 
 
