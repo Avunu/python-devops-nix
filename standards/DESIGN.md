@@ -657,7 +657,7 @@ The core ships `data/schema/core.schema.json` with `$defs`:
 | `extra-file` | `{path, template, strategy: whole\|seed, module (as above), when, header}`, where `header` is `{"$ref": "#/$defs/header-kind"}` |
 | `header-kind` | composed: core kinds plus `product.header_kinds` |
 | `core-modules` | the parameter schemas of the core modules (§4.2) |
-| `profile-ref` | the `profile` pattern: `minimal`, `recommended(@N.M)?`, `github:`, `gitlab:`, `git+https://`, `./` |
+| `profile-ref` | the `profile` pattern: `minimal`, `recommended(@N.M)?`, `github:`, `gitlab:`, `git+https://`, `./`; composed: `(recommended\|deployment)(@N.M)?` for a product that ships a `deployment@*` (§4.4) |
 | `fleet-entry-core` | `repo` (pattern `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`), `private` (bool), `documentation` (`^https://`), `profile` (string), `integration_branch` (string), `branches` (array of strings, `minItems` 1) |
 
 The product ships `schema/modules.schema.json`, whose `$defs` hold:
@@ -783,8 +783,8 @@ follows it the same way. A deployment project has no release flow: no release to
 no release branch. Conformance refuses a `deployment@*` that turns `releases` on, and resolution refuses a
 checkout (or an org profile) built on one that turns it on. `config.FAMILIES` is `("recommended", "deployment")`;
 `builtin_names` lists `minimal`, then each family's snapshots, oldest first; `config.families(product)` is the
-plain names the product has (`recommended`, and `deployment` when it ships a snapshot), which `extends` and the
-error texts list. A product that ships no `deployment@*` sees no change.
+plain names the product has (`recommended`, and `deployment` when it ships a snapshot), which `extends`, the
+checkout's `profile` pattern (`profile-ref`, composed per product) and the error texts list. A product that ships no `deployment@*` sees no change.
 
 Merge order, unchanged from frappe §8.4:
 

@@ -224,6 +224,20 @@ class TestDeploymentProfiles(unittest.TestCase):
             config.ConfigError, "stub-nix ships no deployment snapshot"
         ):
             config.builtin_name(STUB, "deployment")
+        ref = schema.load(STUB, "core.schema.json")["$defs"]["profile-ref"]
+        self.assertNotIn("deployment", ref["pattern"])
+        self.assertNotIn("deployment", ref["description"])
+        for name in ("deployment", "bogus"):
+            with self.subTest(profile=name):
+                with self.assertRaises(config.ConfigError) as caught:
+                    config.resolve_doc(STUB, self.app(profile=name), on_github=True)
+                self.assertNotIn("deployment snapshot", str(caught.exception))
+                self.assertNotIn("|deployment", str(caught.exception))
+
+    def test_checkouts_may_name_it(self):
+        ref = schema.load(self.product, "core.schema.json")["$defs"]["profile-ref"]
+        self.assertIn("|(recommended|deployment)(@", ref["pattern"])
+        self.assertIn("deployment or a snapshot deployment@<minor>", ref["description"])
 
     def test_resolves_with_releases_off(self):
         for name in ("deployment", "deployment@1.0"):

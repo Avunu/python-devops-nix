@@ -86,7 +86,24 @@ def core_schema(product: Product, doc: dict) -> dict:
     }
     checks = defs["core-modules"]["repo-policy"]["properties"]["required-checks"]
     checks["anyOf"][1]["items"] = {"enum": list(product.ci.gates)}
+    _profile_ref(product, defs["profile-ref"])
     return doc
+
+
+def _profile_ref(product: Product, ref: dict) -> None:
+    """``profile-ref`` widened to each snapshot family the product ships beyond
+    ``recommended`` (``deployment``); a product with none keeps the core's pattern."""
+    from standards_core.common import config
+
+    families = config.families(product)
+    if families == ["recommended"]:
+        return
+    alternatives = "|".join(re.escape(f) for f in families)
+    ref["pattern"] = ref["pattern"].replace("|recommended(@", f"|({alternatives})(@", 1)
+    names = ", ".join(f"{f} or a snapshot {f}@<minor>" for f in families)
+    ref["description"] = ref["description"].replace(
+        "recommended or a snapshot recommended@<minor>", names, 1
+    )
 
 
 def module_defs(product: Product) -> dict[str, dict]:

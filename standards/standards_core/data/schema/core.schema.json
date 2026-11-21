@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "core.schema.json",
   "title": "The definitions every product's profile, checkout table and fleet schemas share",
-  "$comment": "standards_core.common.compose builds profile.schema.json, app.schema.json and fleet.schema.json from these and the product's modules.schema.json (DESIGN §4.1). The enums that depend on the product (header-kind, releases.branching, releases.version-scheme, repo-policy.required-checks) are filled in per product when this file is loaded.",
+  "$comment": "standards_core.common.compose builds profile.schema.json, app.schema.json and fleet.schema.json from these and the product's modules.schema.json (DESIGN §4.1). The enums that depend on the product (header-kind, releases.branching, releases.version-scheme, repo-policy.required-checks) and the snapshot families profile-ref names are filled in per product when this file is loaded.",
   "$defs": {
     "org": {
       "type": "object",
@@ -159,9 +159,9 @@
     },
     "profile-ref": {
       "type": "string",
-      "pattern": "^(minimal|(recommended|deployment)(@[0-9]+\\.[0-9]+)?|github:.+|gitlab:.+|git\\+https://.+|\\./[^/].*)$",
+      "pattern": "^(minimal|recommended(@[0-9]+\\.[0-9]+)?|github:.+|gitlab:.+|git\\+https://.+|\\./[^/].*)$",
       "default": "minimal",
-      "description": "A built-in name (minimal, recommended or a snapshot recommended@<minor>; deployment or deployment@<minor> where the product ships them), an org profile flake URL (github:, gitlab:, git+https://) or an in-repo profile ./<dir>. Absent means minimal."
+      "description": "A built-in name (minimal, recommended or a snapshot recommended@<minor>), an org profile flake URL (github:, gitlab:, git+https://) or an in-repo profile ./<dir>. Absent means minimal."
     },
     "fleet-entry-core": {
       "type": "object",
