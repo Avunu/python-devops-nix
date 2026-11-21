@@ -158,6 +158,19 @@ def _schemas(product: Product) -> list[str]:
     return out
 
 
+def _releases_on(product: Product, doc: dict) -> bool:
+    """Whether a built-in profile leaves ``releases`` on, its table filled with the
+    profile schema's defaults as resolution fills it: a snapshot that leaves the key
+    out still turns it on where the module's schema defaults it on."""
+    defaults = schema.defaults(product, config.PROFILE_SCHEMA).get("releases", {})
+    table = doc.get("releases", {})
+    if not isinstance(table, dict):
+        return False
+    return config._switch(
+        {"releases": config._fill_defaults(table, defaults)}, "releases"
+    )
+
+
 def _profiles(product: Product) -> list[str]:
     out: list[str] = []
     if "minimal.toml" not in product_roots(product).listdir("profiles"):
@@ -176,12 +189,7 @@ def _profiles(product: Product) -> list[str]:
             f"profile {stem}",
             lambda d=doc, s=stem: config.validate_profile(product, d, s, org=False),
         )
-        releases = doc.get("releases")
-        if (
-            config.family_of(stem) == config.DEPLOYMENT
-            and isinstance(releases, dict)
-            and releases.get("enable") is True
-        ):
+        if config.family_of(stem) == config.DEPLOYMENT and _releases_on(product, doc):
             out.append(
                 f"profile {stem} turns on releases: a deployment project has no"
                 " release flow"

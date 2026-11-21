@@ -70,6 +70,27 @@ class TestBrokenCopies(unittest.TestCase):
             conformance.check(broken, render=False),
         )
 
+    def test_a_deployment_snapshot_without_releases_takes_the_schema_default(self):
+        """A snapshot that leaves ``releases`` out is on where the module's schema
+        defaults it on, as resolution would have it."""
+        from test_profiles import deployment_snapshot
+
+        text = deployment_snapshot().replace("[releases]\nenable = false\n\n", "")
+        self.assertNotIn("[releases]", text)
+        (self.data / "profiles" / "deployment@1.0.toml").write_text(text)
+        self.assertEqual(conformance.check(self.product, render=False), [])
+        on = product_copy(STUB, Path(self.tmp.name) / "on")
+        (on.data_root / "profiles" / "deployment@1.0.toml").write_text(text)
+        path = on.data_root / "schema" / "modules.schema.json"
+        doc = json.loads(path.read_text())
+        doc["$defs"]["modules"]["releases"]["properties"]["enable"]["default"] = True
+        path.write_text(json.dumps(doc))
+        self.assertIn(
+            "profile deployment@1.0 turns on releases: a deployment project has no"
+            " release flow",
+            conformance.check(on, render=False),
+        )
+
     def edit_json(self, rel, edit):
         path = self.data / rel
         doc = json.loads(path.read_text())
