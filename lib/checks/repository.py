@@ -6,7 +6,10 @@
 `pins` (docs/conventions.md, CI): every `uses:` in .github/workflows and in
 .github/actions is pinned by a full commit SHA, or a `docker://` image by its
 sha256 digest, with a trailing comment, which by convention names the version.
-A local `./` path is exempt.
+A local `./` path is exempt. Where .github/workflows/actions.lock exists, an
+action a workflow step uses may instead be pinned by an exact release tag
+(`vX.Y.Z`), which gh-actions-lock locks. A reusable workflow call and a
+composite action's steps keep the SHA.
 
 `dependabot` (docs/conventions.md, Dependabot): every ecosystem in
 .github/dependabot.yml has the commit prefix, the seven-day cooldown and one
@@ -29,6 +32,9 @@ from pathlib import Path
 import yaml
 
 PIN = re.compile(r"[^@\s]+@[0-9a-f]{40}|docker://[^@\s]+@sha256:[0-9a-f]{64}")
+# An exact release tag of an action: owner/repo[/path]@vX.Y.Z.
+TAG = re.compile(r"[A-Za-z0-9_.-]+/[^@\s]+@v[0-9]+\.[0-9]+\.[0-9]+")
+LOCK = Path(".github/workflows/actions.lock")
 COOLDOWN_DAYS = 7
 
 
@@ -42,28 +48,35 @@ def sequence(node: yaml.Node | None) -> list[yaml.Node]:
     return node.value if isinstance(node, yaml.SequenceNode) else []
 
 
-def uses_nodes(root: yaml.Node) -> Iterator[yaml.Node]:
-    # A workflow's jobs.<id>.uses (a reusable workflow) and
-    # jobs.<id>.steps[].uses; a composite action's runs.steps[].uses.
+def uses_nodes(root: yaml.Node) -> Iterator[tuple[yaml.Node, bool]]:
+    # Each `uses:` with whether it is a workflow step's action, the one kind a
+    # release tag may pin. A job's jobs.<id>.uses is a reusable workflow, and a
+    # composite action's runs.steps[].uses stays on the SHA.
     top = mapping(root)
-    jobs = [mapping(job) for job in mapping(top.get("jobs")).values()]
-    steps = [step for job in jobs for step in sequence(job.get("steps"))]
-    steps += sequence(mapping(top.get("runs")).get("steps"))
-    for holder in jobs + [mapping(step) for step in steps]:
-        if "uses" in holder:
-            yield holder["uses"]
+    for job_node in mapping(top.get("jobs")).values():
+        job = mapping(job_node)
+        if "uses" in job:
+            yield job["uses"], False
+        for step in sequence(job.get("steps")):
+            if "uses" in mapping(step):
+                yield mapping(step)["uses"], True
+    for step in sequence(mapping(top.get("runs")).get("steps")):
+        if "uses" in mapping(step):
+            yield mapping(step)["uses"], False
 
 
-def pin_findings(path: Path, rel: str) -> Iterator[str]:
+def pin_findings(path: Path, rel: str, lockable: bool) -> Iterator[str]:
     text = path.read_text()
     root = yaml.compose(text)
     if root is None:
         return
     lines = text.splitlines()
-    for node in uses_nodes(root):
+    for node, step in uses_nodes(root):
         where = f"{rel}:{node.start_mark.line + 1}"
         ref = node.value if isinstance(node, yaml.ScalarNode) else ""
         if ref.startswith("./"):
+            continue
+        if lockable and step and TAG.fullmatch(ref):
             continue
         if not PIN.fullmatch(ref):
             by = "sha256 digest" if ref.startswith("docker://") else "full commit SHA"
@@ -98,17 +111,20 @@ def pins(product_dir: Path) -> int:
     if not files:
         print(".github/workflows: no workflow found")
         return 1
+    lockable = (product_dir / LOCK).is_file()
     findings = [
         line
         for path in files
-        for line in pin_findings(path, str(path.relative_to(product_dir)))
+        for line in pin_findings(path, str(path.relative_to(product_dir)), lockable)
     ]
     for line in findings:
         print(line)
     if findings:
         print(
             f"{len(findings)} action(s) not pinned. Pin each by its full commit SHA,"
-            " with its version in a trailing comment (docs/conventions.md, CI)."
+            " with its version in a trailing comment, or, in a workflow step where"
+            " .github/workflows/actions.lock exists, by its exact release tag"
+            " (docs/conventions.md, CI)."
         )
         return 1
     print(f"every action in {len(files)} file(s) is pinned")
