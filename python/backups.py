@@ -703,6 +703,8 @@ class Backups:
             "--at",
             help="ISO 8601 date or time, or a backup's name, or a leading part of either",
         )
+        # A layout without optional roles adds no --<role> flag to set it.
+        fe.set_defaults(roles=None)
         for role in self.optional:
             fe.add_argument(
                 f"--{role.replace('_', '-')}",

@@ -260,6 +260,12 @@ class DirectoryStore(Case):
             self.assertEqual(self.b.main(["list", "prod"]), 0)
             self.assertEqual(self.b.main(["folders"]), 0)
         self.assertEqual(out.getvalue().split(), [*NAMES, "other", "prod"])
+        # A layout with no optional roles fetches from the command line too.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            argv = ["fetch", "prod", "--dest", str(self.cache)]
+            self.assertEqual(self.b.main(argv), 0)
+        self.assertEqual(json.loads(out.getvalue())["name"], NAMES[-1])
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.assertEqual(self.b.main(["list", "other"]), 1)
