@@ -5,23 +5,32 @@ each. ``--repo`` defaults to ``$GITHUB_REPOSITORY``; the GitHub steps use the to
 ``gh`` holds (``GH_TOKEN``). Where a step's ``--gates`` or release configuration is
 omitted, it is read from the checkout in the current directory, as sync renders it.
 
-=====================  ==========================================  =====================
-step                   prints                                      ``$GITHUB_OUTPUT``
-=====================  ==========================================  =====================
-``verdict``            ``auto`` | ``review`` | ``relock`` |        ``verdict``
-                       ``close``
-``automerge``          what it did                                 ``result``
-``enable-automerge``   what it did                                 ``result``
-``relock-inputs``      ``ok`` | ``rollout-input-moved``            ``state``, ``moved``
-``relock-patch``       ``empty=true|false``                        ``empty``
-``refuse-workflows``   the workflow paths (exit 1) or nothing      —
-``dispatch-ci``        each dispatch                               ``dispatched``
-``sweep``              each dispatch                               ``dispatched``
-``update-branches``    what it did to each bot PR that was behind  ``updated``
-``fast-forward``       ``<branch> = [<tag> = ]<sha>``              ``moved``
-``bump``               each unit's new version                     ``bumped``, ``sha``
-``drift``              one line per issue                          —
-=====================  ==========================================  =====================
+======================  ==========================================  =====================
+step                    prints                                      ``$GITHUB_OUTPUT``
+======================  ==========================================  =====================
+``verdict``             ``auto`` | ``review`` | ``relock`` |        ``verdict``
+                        ``close``
+``automerge``           what it did                                 ``result``
+``enable-automerge``    what it did                                 ``result``
+``verify-relock``       ``ok`` | ``needs-review``, and why (exit 1  ``decision``
+                        on ``reject``)
+``relock-inputs``       ``ok`` | ``rollout-input-moved``            ``state``, ``moved``
+``relock-patch``        ``empty=true|false``                        ``empty``
+``apply-relock-patch``  the index's changes (exit 1 on a refusal)   —
+``refuse-workflows``    the workflow paths (exit 1) or nothing      —
+``dispatch-ci``         each dispatch                               ``dispatched``
+``sweep``               each dispatch                               ``dispatched``
+``update-branches``     what it did to each bot PR that was behind  ``updated``
+``fast-forward``        ``<branch> = [<tag> = ]<sha>``              ``moved``
+``bump``                each unit's new version                     ``bumped``, ``sha``
+``drift``               one line per issue                          —
+======================  ==========================================  =====================
+
+``apply-relock-patch`` is relock-push's check of relock-plan's patch: it refuses a
+rename, copy, mode change, symlink, path under ``.github/`` or path the product's
+``ci.relock_patch_paths`` does not name, and applies the patch to the index only when its
+text passes. ``verify-relock`` asks the product's ``ci.verify_relock`` what the relocked
+files say, against a commit the integration branch holds, before a token is minted.
 
 ``--set KEY=JSON`` (repeatable) overrides a dotted configuration key for the step;
 ``--param KEY=JSON`` (repeatable) gives a decision-table parameter, a JSON list of
@@ -215,6 +224,35 @@ def run_relock_patch(args: argparse.Namespace) -> int:
         return DRIFT
     print(f"empty={'true' if empty else 'false'}")
     output(empty="true" if empty else "false")
+    return CLEAN
+
+
+def run_apply_relock_patch(args: argparse.Namespace) -> int:
+    from standards_core.ci import error, relock
+
+    root = Path.cwd()
+    problems = relock.apply_patch(args.product, root, Path(args.patch))
+    if problems:
+        for problem in problems:
+            error(f"refusing the relock patch: {problem}")
+        return DRIFT
+    print(repo.git(root, "diff", "--cached", "--stat", "HEAD"), end="")
+    return CLEAN
+
+
+def run_verify_relock(args: argparse.Namespace) -> int:
+    from standards_core.ci import error, output, relock
+
+    res = relock.verify(args.product, Path(args.repo_dir), args.base, args.head)
+    decision = res.decision()
+    print(decision)
+    for reason in res.reasons():
+        print(f"  {reason}")
+    if decision == relock.REJECT:
+        for reason in res.rejects:
+            error(f"refusing the relock: {reason}")
+        return DRIFT
+    output(decision=decision)
     return CLEAN
 
 
@@ -588,6 +626,20 @@ def register(subparsers: argparse._SubParsersAction, product: Product) -> None:
     steps.append(s)
 
     s = step(
+        "verify-relock",
+        "check what a relock's files say before they are pushed (ci.verify_relock)",
+        run_verify_relock,
+    )
+    s.add(
+        "--base",
+        "a commit the integration branch holds (full object id)",
+        required=True,
+    )
+    s.add("--head", "the commit or tree to push (full object id)", required=True)
+    s.add("--repo-dir", "the git repository holding both (default: .)", default=".")
+    steps.append(s)
+
+    s = step(
         "relock-inputs",
         f"whether a nix PR moves {engine} or standards-profile",
         run_relock_inputs,
@@ -605,6 +657,15 @@ def register(subparsers: argparse._SubParsersAction, product: Product) -> None:
         run_relock_patch,
     )
     s.add("--out", "where the patch goes", required=True)
+    steps.append(s)
+
+    s = step(
+        "apply-relock-patch",
+        "check relock-plan's patch against ci.relock_patch_paths and apply it to the"
+        " index",
+        run_apply_relock_patch,
+    )
+    s.add("--patch", "the patch relock-plan uploaded", required=True)
     steps.append(s)
 
     s = step(

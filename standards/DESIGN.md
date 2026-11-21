@@ -489,6 +489,8 @@ class CiConfig:
     ci_workflow: str = "ci.yml"  # audit A5's workflow; under post-merge-bump it must run on push (§11.4)
     nightly_workflow: str = ""  # audit A5's nightly; "" → none
     arg_aliases: Mapping[str, str] = mapping_field()  # old `ci` flag → "--new-flag" or "--param <k>"/"--set <k>" (§8.1)
+    relock_patch_paths: tuple[str, ...] = ()  # globs `ci apply-relock-patch` lets a relock patch touch (§8.1); () → none
+    verify_relock: Callable[[Path, str, str], Verification] | None = None  # (root, base, head) → `ci verify-relock` (§8.1)
 
 
 # --- the product --------------------------------------------------------------------
@@ -1580,8 +1582,10 @@ reusable workflows (`--frappe-nix-repo`, `--docs-patterns`, `--frappe-major`) ru
 | `verdict` | `verdict` | §8.3 |
 | `automerge` | `result` | |
 | `enable-automerge` | `result` | |
+| `verify-relock` | `decision` | **new**: `ok` / `needs-review` (exit 0) or `reject` (exit 1, nothing pushed), from `ci.verify_relock(root, base, head)`, a `relock.Verification` of rejects and reviews; `--base` and `--head` are full object ids; no hook is exit 2 |
 | `relock-inputs` | `state`, `moved` | |
 | `relock-patch` | `empty` | |
+| `apply-relock-patch` | — | **new**: relock-push's check of relock-plan's patch, the products' "check and apply" shell step as a core step. The patch text first (no rename, copy or mode change; mode 100644 only), then `git apply --index`, then each index entry against `HEAD`: added, modified or deleted, mode 100644, no symlink, not under `.github/`, and matched by a `ci.relock_patch_paths` glob (`globs.match`); an empty patch is refused. A refusal is exit 1; no globs is exit 2 |
 | `refuse-workflows` | — | |
 | `dispatch-ci` | `dispatched` | |
 | `sweep` | `dispatched` | |

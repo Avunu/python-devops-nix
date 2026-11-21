@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
+    from standards_core.ci.relock import Verification
     from standards_core.ci.verdict import DecisionRule
     from standards_core.commands.policy import PrContext
     from standards_core.commands.repo.audit import Audit, RowSpec
@@ -469,6 +470,12 @@ class CiConfig:
     nightly_workflow: str = ""  # audit A5's nightly; "" → none
     # old `ci` flag → "--new-flag" or "--param <k>"/"--set <k>" (§8.1)
     arg_aliases: Mapping[str, str] = mapping_field()
+    # globs of the paths `ci apply-relock-patch` lets a relock patch touch (§8.1);
+    # () → the product pushes no relock patch
+    relock_patch_paths: tuple[str, ...] = ()
+    # (root, base, head) → what the relocked files say, for `ci verify-relock` (§8.1);
+    # None → the step is exit 2
+    verify_relock: Callable[[Path, str, str], Verification] | None = None
 
 
 # --- the product --------------------------------------------------------------------
@@ -608,6 +615,19 @@ class Product:
                 out.append(
                     f"ci.arg_aliases[{key!r}] = {value!r} is not --<flag>,"
                     " --param <key> or --set <key>"
+                )
+
+        for glob in self.ci.relock_patch_paths:
+            pure = PurePosixPath(glob)
+            if (
+                not glob
+                or pure.is_absolute()
+                or "\\" in glob
+                or any(part in ("", ".", "..", ".github") for part in glob.split("/"))
+            ):
+                out.append(
+                    f"ci.relock_patch_paths: {glob!r} is not a relative POSIX glob"
+                    " outside .github/"
                 )
 
         if bool(self.fixtures) != (self.hooks.write_fixture is not None):

@@ -1,6 +1,7 @@
 """relock-plan and relock-push's helpers (DESIGN §8): the rollout-input check, the
 relock patch, and the workflow-path refusal."""
 
+import dataclasses
 import json
 import os
 import subprocess
@@ -163,6 +164,214 @@ class TestRelockPatch(Repo):
         self.assertEqual(code, 1)
         self.assertIn("::error::relock would change a workflow", out)
         self.assertIn("run stub-nix repo rollout", out)
+
+
+def with_ci(product, **ci):
+    return dataclasses.replace(product, ci=dataclasses.replace(product.ci, **ci))
+
+
+SITE = with_ci(STUB, relock_patch_paths=("nix/vendor-hash", "nix/locks/**"))
+
+
+class TestApplyRelockPatch(Repo):
+    """relock-push's check of relock-plan's patch (``ci.relock_patch_paths``)."""
+
+    def setUp(self):
+        super().setUp()
+        (self.root / "nix").mkdir()
+        (self.root / "nix/vendor-hash").write_text("sha256-" + "A" * 43 + "=\n")
+        (self.root / "nix/tool.sh").write_text("#!/bin/sh\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "vendor hash")
+        self.head = git(self.root, "rev-parse", "HEAD").strip()
+        self.patch = Path(self.tmp.name) / "relock.patch"
+
+    def make_patch(self, change):
+        """``change`` the work tree, write it as relock-plan's patch, and reset."""
+        change(self.root)
+        git(self.root, "add", "-A")
+        self.patch.write_text(git(self.root, "diff", "--cached", "--binary"))
+        git(self.root, "reset", "-q", "--hard", self.head)
+        git(self.root, "clean", "-qfdx")
+
+    def apply(self, product=SITE):
+        return self.cli(
+            "ci", "apply-relock-patch", "--patch", str(self.patch), product=product
+        )
+
+    def staged(self):
+        return git(self.root, "diff", "--cached", "--name-only").split()
+
+    def test_an_allowed_patch_is_applied_to_the_index(self):
+        def change(root):
+            (root / "nix/vendor-hash").write_text("sha256-" + "B" * 43 + "=\n")
+            (root / "nix/locks/x").mkdir(parents=True)
+            (root / "nix/locks/x/lock.json").write_text("{}\n")
+
+        self.make_patch(change)
+        code, out, err = self.apply()
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("2 files changed", out)
+        self.assertEqual(self.staged(), ["nix/locks/x/lock.json", "nix/vendor-hash"])
+
+    def test_a_path_not_named_is_refused(self):
+        self.make_patch(lambda root: (root / "README.md").write_text("x\n"))
+        code, out, _ = self.apply()
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "::error::refusing the relock patch: 'README.md': not a path this job"
+            " pushes",
+            out,
+        )
+
+    def test_a_deletion_of_a_named_path_is_allowed(self):
+        self.make_patch(lambda root: (root / "nix/vendor-hash").unlink())
+        code, out, err = self.apply()
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.staged(), ["nix/vendor-hash"])
+
+    def test_workflows_are_refused_whatever_the_globs_say(self):
+        product = with_ci(STUB, relock_patch_paths=("**",))
+        self.make_patch(
+            lambda root: (root / ".github/workflows/ci.yml").write_text("name: x\n")
+        )
+        code, out, _ = self.apply(product)
+        self.assertEqual(code, 1)
+        self.assertIn("'.github/workflows/ci.yml': path", out)
+
+    def test_a_mode_change_is_refused_before_anything_is_applied(self):
+        self.make_patch(lambda root: (root / "nix/vendor-hash").chmod(0o755))
+        code, out, _ = self.apply()
+        self.assertEqual(code, 1)
+        self.assertIn("changes a file's mode", out)
+        self.assertEqual(self.staged(), [])
+
+    def test_a_rename_is_refused(self):
+        def change(root):
+            git(root, "mv", "nix/tool.sh", "nix/vendor-hash.sh")
+
+        change(self.root)
+        self.patch.write_text(git(self.root, "diff", "--cached", "-M", "--binary"))
+        git(self.root, "reset", "-q", "--hard", self.head)
+        code, out, _ = self.apply()
+        self.assertEqual(code, 1)
+        self.assertIn("renames or copies a file", out)
+        self.assertEqual(self.staged(), [])
+
+    def test_a_symlink_is_refused(self):
+        def change(root):
+            (root / "nix/locks").mkdir()
+            (root / "nix/locks/link").symlink_to("../../pyproject.toml")
+
+        self.make_patch(change)
+        code, out, _ = self.apply()
+        self.assertEqual(code, 1)
+        self.assertIn("a file mode other than 100644", out)
+        self.assertEqual(self.staged(), [])
+
+    def test_an_empty_patch_is_refused(self):
+        self.patch.write_text("")
+        code, out, _ = self.apply()
+        self.assertEqual(code, 1)
+        self.assertIn("the patch changes nothing", out)
+
+    def test_a_patch_that_does_not_apply_is_refused(self):
+        self.make_patch(lambda root: (root / "nix/vendor-hash").write_text("x\n"))
+        (self.root / "nix/vendor-hash").write_text("moved on\n")
+        git(self.root, "commit", "-qam", "moved")
+        code, out, _ = self.apply()
+        self.assertEqual(code, 1)
+        self.assertIn("the patch does not apply", out)
+
+    def test_a_product_naming_no_paths_pushes_nothing(self):
+        self.make_patch(lambda root: (root / "nix/vendor-hash").write_text("x\n"))
+        code, _, err = self.apply(STUB)
+        self.assertEqual(code, 2)
+        self.assertIn("names no ci.relock_patch_paths", err)
+
+    def test_the_globs_are_checked_when_the_product_is_built(self):
+        for glob in ("", "/nix/x", "../x", "nix/../x", ".github/workflows/*", "a\\b"):
+            with (
+                self.subTest(glob=glob),
+                self.assertRaisesRegex(ValueError, "ci.relock_patch_paths"),
+            ):
+                with_ci(STUB, relock_patch_paths=(glob,))
+
+
+class TestVerifyRelock(Repo):
+    """``ci verify-relock`` asks the product's ``ci.verify_relock``."""
+
+    def product(self, rejects=(), reviews=()):
+        calls = []
+
+        def verify(root, base, head):
+            calls.append((root, base, head))
+            return relock.Verification(list(rejects), list(reviews))
+
+        return with_ci(STUB, verify_relock=verify), calls
+
+    def verify(self, product, head=None, *extra):
+        tree = head or git(self.root, "write-tree").strip()
+        return self.cli(
+            "ci",
+            "verify-relock",
+            "--base",
+            self.base,
+            "--head",
+            tree,
+            *extra,
+            product=product,
+        )
+
+    def test_ok(self):
+        product, calls = self.product()
+        out_file = Path(self.tmp.name) / "out"
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(out_file)}):
+            code, out, err = self.verify(product)
+        self.assertEqual((code, out), (0, "ok\n"), err)
+        self.assertEqual(out_file.read_text(), "decision=ok\n")
+        root, base, head = calls[0]
+        self.assertEqual((root, base), (Path("."), self.base))
+        self.assertEqual(head, git(self.root, "write-tree").strip())
+
+    def test_needs_review(self):
+        product, _ = self.product(reviews=["a new package: example/new"])
+        code, out, _ = self.verify(product)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out.splitlines(),
+            ["needs-review", "  needs-review: a new package: example/new"],
+        )
+
+    def test_reject_fails_the_step(self):
+        product, _ = self.product(
+            rejects=["evil.example is not a source"], reviews=["x"]
+        )
+        out_file = Path(self.tmp.name) / "out"
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(out_file)}):
+            code, out, _ = self.verify(product)
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines()[0], "reject")
+        self.assertIn("::error::refusing the relock: evil.example is not a source", out)
+        self.assertFalse(out_file.exists())
+
+    def test_object_ids_and_a_missing_hook_are_exit_2(self):
+        product, calls = self.product()
+        code, _, err = self.verify(product, "HEAD")
+        self.assertEqual(code, 2)
+        self.assertIn("--head 'HEAD' is not a full object id", err)
+        self.assertEqual(calls, [])
+        code, _, err = self.verify(STUB)
+        self.assertEqual(code, 2)
+        self.assertIn("stub-nix has no ci.verify_relock", err)
+
+    def test_decision(self):
+        self.assertEqual(relock.Verification().decision(), relock.OK)
+        self.assertEqual(relock.Verification(reviews=["x"]).decision(), relock.REVIEW)
+        self.assertEqual(
+            relock.Verification(["a"], ["x", "x"]).reasons(),
+            ["reject: a", "needs-review: x"],
+        )
 
 
 class TestRefuseWorkflows(Repo):
