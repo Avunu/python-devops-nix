@@ -1,7 +1,8 @@
-"""The changed-defaults warning for a checkout on the floating ``recommended``.
+"""The changed-defaults warning for a checkout on the floating ``recommended`` (or
+another family's plain name, ``deployment``).
 
 Plain ``recommended`` means the newest ``recommended@<minor>`` snapshot of the running
-product. When an engine bump moves it to a newer snapshot, sync (and so ``repo
+product, and plain ``deployment`` the newest ``deployment@<minor>``. When an engine bump moves it to a newer snapshot, sync (and so ``repo
 rollout``) prints each value that changed and suggests pinning the old snapshot, so the
 bump PR says in its own log which defaults moved. Exit codes don't change.
 
@@ -67,12 +68,14 @@ def head_version(product: Product, root: Path) -> Version | None:
 
 
 def _snapshot_version(name: str) -> Version:
-    return Version(name.removeprefix("recommended@"))
+    return Version(name.partition("@")[2])
 
 
-def snapshot_at(product: Product, version: Version) -> str | None:
-    """The ``recommended@<minor>`` that plain ``recommended`` meant in ``version``."""
-    names = [n for n in config.builtin_names(product) if n.startswith("recommended@")]
+def snapshot_at(
+    product: Product, version: Version, family: str = "recommended"
+) -> str | None:
+    """The ``<family>@<minor>`` that plain ``<family>`` meant in ``version``."""
+    names = [n for n in config.builtin_names(product) if n.startswith(f"{family}@")]
     cap = Version(f"{version.major}.{version.minor}")
     older = [n for n in names if _snapshot_version(n) <= cap]
     return max(older, key=_snapshot_version) if older else None
@@ -101,20 +104,22 @@ def changes(product: Product, old: str, new: str) -> list[str]:
 
 
 def warn_changed(product: Product, root: Path, plan: Any) -> list[str]:
-    """Print (and return) the warning when ``recommended`` moved since ``HEAD``."""
-    if plan.cfg.get("profile") != "recommended":
+    """Print (and return) the warning when ``recommended`` (or another family's plain
+    name) moved since ``HEAD``."""
+    family = plan.cfg.get("profile")
+    if family not in config.FAMILIES:
         return []
     at_head = head_version(product, root)
     if at_head is None:
         return []
-    old = snapshot_at(product, at_head)
-    new = config.builtin_name(product, "recommended")
+    old = snapshot_at(product, at_head, family)
+    new = config.builtin_name(product, family)
     if old is None or old == new:
         return []
     identity = product.identity
     lines = [
         (
-            f'profile = "recommended" now resolves to {new} (it was {old} at HEAD);'
+            f'profile = "{family}" now resolves to {new} (it was {old} at HEAD);'
             " changed defaults:"
         ),
         *(f"  {c}" for c in changes(product, old, new)),

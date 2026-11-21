@@ -8,17 +8,18 @@ in their own suites, and from the command line::
 which prints each problem and exits 1 when there is any.
 
 The static part: the product builds; every core module is present;
-``modules.schema.json`` defines exactly the product's modules, each with ``enable``;
-the composed schemas load; every built-in profile validates and ``minimal`` turns on only
-the required module; every manifest fragment parses, names known handlers, has its
-templates and resolves its ``uses`` keys; and every variable the product's data names
-with a core suffix starts with ``<env_prefix>_``.
+``modules.schema.json`` defines exactly the product's modules, each with ``enable``; the
+composed schemas load; every built-in profile validates, ``minimal`` turns on only the
+required module and no ``deployment@*`` turns on ``releases``; every manifest fragment
+parses, names known handlers, has its templates and resolves its ``uses`` keys; and
+every variable the product's data names with a core suffix starts with
+``<env_prefix>_``.
 
-The render part: every fixture checkout (``Product.fixtures``), under ``minimal`` and
-every ``recommended@*``, syncs with ``sync --write --offline``, then (with the locks an
-offline sync leaves to Nix and the lock commands faked) checks clean with ``sync
---check``, and a second write changes no byte; every ``seed_template`` holds its entry's
-anchor.
+The render part: every fixture checkout (``Product.fixtures``), under ``minimal``, every
+``recommended@*`` and every ``deployment@*``, syncs with ``sync --write --offline``,
+then (with the locks an offline sync leaves to Nix and the lock commands faked) checks
+clean with ``sync --check``, and a second write changes no byte; every ``seed_template``
+holds its entry's anchor.
 
 The CI part: every decision rule names a verdict and an update kind that exist; the
 labels name modules the product has; every gate's required context is distinct, the
@@ -175,6 +176,16 @@ def _profiles(product: Product) -> list[str]:
             f"profile {stem}",
             lambda d=doc, s=stem: config.validate_profile(product, d, s, org=False),
         )
+        releases = doc.get("releases")
+        if (
+            config.family_of(stem) == config.DEPLOYMENT
+            and isinstance(releases, dict)
+            and releases.get("enable") is True
+        ):
+            out.append(
+                f"profile {stem} turns on releases: a deployment project has no"
+                " release flow"
+            )
         if stem == "minimal":
             on = [
                 m

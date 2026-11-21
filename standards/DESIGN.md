@@ -776,6 +776,16 @@ The product root holds `profiles/minimal.toml` and `profiles/recommended@<minor>
 released (S42). Plain `recommended` means the newest snapshot. `builtin_names`, `builtin_name`, `builtin_profile`
 and `is_builtin` are copied, reading through the roots.
 
+**Deployment projects** (new). A product whose targets include deployment projects (a site, or another repository
+that is deployed rather than released) also ships `profiles/deployment@<minor>.toml`, a second snapshot family:
+plain `deployment` means its newest snapshot, as `recommended` does its own, and the changed-defaults warning
+follows it the same way. A deployment project has no release flow: no release tool (release-please), no tags and
+no release branch. Conformance refuses a `deployment@*` that turns `releases` on, and resolution refuses a
+checkout (or an org profile) built on one that turns it on. `config.FAMILIES` is `("recommended", "deployment")`;
+`builtin_names` lists `minimal`, then each family's snapshots, oldest first; `config.families(product)` is the
+plain names the product has (`recommended`, and `deployment` when it ships a snapshot), which `extends` and the
+error texts list. A product that ships no `deployment@*` sees no change.
+
 Merge order, unchanged from frappe §8.4:
 
 1. built-in (`profile` itself, or the org profile's `extends`) ← org (locked `standards-profile`, or `./<dir>`) ←

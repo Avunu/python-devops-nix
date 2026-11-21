@@ -159,9 +159,9 @@
     },
     "profile-ref": {
       "type": "string",
-      "pattern": "^(minimal|recommended(@[0-9]+\\.[0-9]+)?|github:.+|gitlab:.+|git\\+https://.+|\\./[^/].*)$",
+      "pattern": "^(minimal|(recommended|deployment)(@[0-9]+\\.[0-9]+)?|github:.+|gitlab:.+|git\\+https://.+|\\./[^/].*)$",
       "default": "minimal",
-      "description": "A built-in name (minimal, recommended or a snapshot recommended@<minor>), an org profile flake URL (github:, gitlab:, git+https://) or an in-repo profile ./<dir>. Absent means minimal."
+      "description": "A built-in name (minimal, recommended or a snapshot recommended@<minor>; deployment or deployment@<minor> where the product ships them), an org profile flake URL (github:, gitlab:, git+https://) or an in-repo profile ./<dir>. Absent means minimal."
     },
     "fleet-entry-core": {
       "type": "object",

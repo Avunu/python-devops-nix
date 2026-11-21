@@ -130,7 +130,7 @@ def _org(product: Product) -> dict:
 def _extends(product: Product) -> dict:
     from standards_core.common import config
 
-    names = ["minimal", "recommended", *config.builtin_names(product)]
+    names = ["minimal", *config.families(product), *config.builtin_names(product)]
     alternatives = "|".join(re.escape(n) for n in dict.fromkeys(names))
     return {
         "type": "string",
