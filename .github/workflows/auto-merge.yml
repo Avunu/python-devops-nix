@@ -1,8 +1,8 @@
 name: auto-merge
 
 # This repository's Dependabot pull requests, through the reusable workflows the products
-# call: the nix and pre-commit ones auto-merge once the required checks ("lint", "checks",
-# "downstream") pass, and each one that falls behind main is brought up to date
+# call: the nix, pre-commit and uv ones auto-merge once the required checks ("lint",
+# "checks", "downstream") pass, and each one that falls behind main is brought up to date
 # (dependabot-update-branches.yml). The products call them pinned to a commit; this
 # repository calls its own copies at the same revision.
 #

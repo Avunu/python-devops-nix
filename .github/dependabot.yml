@@ -1,6 +1,6 @@
 version: 2
 
-# Keeps this repository's dependencies up to date. The nix and pre-commit pull requests
+# Keeps this repository's dependencies up to date. The nix, pre-commit and uv pull requests
 # auto-merge once the required checks go green; every one is kept up to date with main (see
 # .github/workflows/auto-merge.yml, which calls the reusable dependabot-auto-merge.yml and
 # dependabot-update-branches.yml). The github-actions pull request is reviewed by a person:
@@ -60,4 +60,21 @@ updates:
       prefix: "fix(deps)"
     groups:
       github-actions:
+        patterns: ["*"]
+
+  # standards-core's Python dependencies (standards/pyproject.toml and its uv.lock). The
+  # products install standards-core from this repository, from the committed uv.lock when a
+  # job runs hardened, so a bump ships to them: `fix(deps)`.
+  - package-ecosystem: uv
+    directory: /standards
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "fix(deps)"
+    labels:
+      - dependencies
+    groups:
+      uv:
         patterns: ["*"]
