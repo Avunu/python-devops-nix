@@ -49,7 +49,7 @@ A product pins a release, never a commit of `main`:
 -   The flake input at the release branch. `release` carries every release, so `github:Avunu/python-devops-nix/release` locks to the latest one. A product is kept safe by its pinned `flake.lock` and by CI, not by the branch name: Dependabot's nix entry moves the lock only when a release moves the branch, and the product's checks must pass before that pull request merges, a new major included.
 -   The reusable workflow and the actions at a tag's commit, with the version in a comment, as every other action is pinned: `@<sha> # v1.0.0`. Dependabot's github-actions entry moves both.
 
-Until the first release, both products pin a commit of `main` ([CI](conventions.md#ci)).
+Both products pin a release's commit, with its version in the comment ([CI](conventions.md#ci)).
 
 ## Rollback
 
