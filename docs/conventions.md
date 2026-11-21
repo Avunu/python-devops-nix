@@ -1,8 +1,8 @@
 ---
 title: Conventions
-description: How frappe-nix and odoo-nix name and do the jobs they both do, and where each product stands on each decision.
+description: How frappe-nix and odoo-nix name and do the jobs they both do, where each product stands on each decision, and the repository conventions wordpress-nix also follows.
 order: 1
-tags: [conventions, frappe-nix, odoo-nix]
+tags: [conventions, frappe-nix, odoo-nix, wordpress-nix]
 updated: 2026-11-21
 ---
 
