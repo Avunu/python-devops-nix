@@ -13,6 +13,16 @@ rec {
   # `_backups.py`, and construct `Backups(label=…, env_prefix=…, layout=…)`.
   module = ../python/backups.py;
 
+  # Layouts the base ships, for a backup naming that is not one product's own
+  # but the cluster's: pass one as `fetch`'s `layout`.
+  #
+  #   wordpress  <prefix>/wordpress/<slug>/<YYYYMMDD-HHMMSS>.sql.gz, the
+  #              development-restore dumps the cluster's backup uploads; read
+  #              one site at a time, with the scope wordpress/<slug>
+  layouts = {
+    wordpress = ../python/backup_layouts/wordpress.py;
+  };
+
   # The command: `<label>-backup-fetch {list,folders,fetch}`.
   #
   #   label      the product's name: message prefix, rclone remote, command name
@@ -91,7 +101,7 @@ rec {
     }:
     let
       checks = (import ./checks { inherit lib; }).mk { inherit pkgs product; };
-      layouts = ../tests/fixtures/backup-layouts;
+      fixtures = ../tests/fixtures/backup-layouts;
       run =
         attr:
         let
@@ -100,14 +110,22 @@ rec {
             inherit pkgs python;
             label = "stub-nix";
             envPrefix = "STUB";
-            layout = layouts + "/timestamp_folders.py";
+            layout = fixtures + "/timestamp_folders.py";
             legacyEnv.BACKUP_SOURCE = "STUB_BACKUP_SOURCE";
+          };
+          wordpress = fetch {
+            inherit pkgs python;
+            label = "stub-nix";
+            envPrefix = "STUB";
+            layout = layouts.wordpress;
+            name = "stub-nix-wordpress-backup-fetch";
           };
         in
         ''
           echo "== ${attr} (${python.version})"
-          ${python.interpreter} -I ${../tests/test_backups.py} ${../python} ${layouts} 2>&1
+          ${python.interpreter} -I ${../tests/test_backups.py} ${../python} ${fixtures} 2>&1
           bash ${../tests/backups.sh} ${lib.getExe command}
+          bash ${../tests/backups-wordpress.sh} ${lib.getExe wordpress}
         '';
     in
     checks.script name {
