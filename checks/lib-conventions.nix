@@ -323,6 +323,64 @@ mk.script "lib-conventions" { } ''
     ".github/workflows: no workflow found"
   ]}
 
+  # With .github/workflows/actions.lock, a workflow step's exact release tag
+  # passes, and so does a SHA with its comment. A reusable workflow call, a
+  # composite action's step, a branch and a major-only tag do not; and without
+  # the lock, an exact tag does not pass either.
+  echo "a SHA passes with a lock: ${pins (stub.variant "locked" "touch .github/workflows/actions.lock")}"
+  echo "a release tag passes with a lock: ${pins (
+    stub.variant "tag-locked" ''
+      sed -i 's|checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1|checkout@v7.0.1|' .github/workflows/check.yml
+      touch .github/workflows/actions.lock
+    ''
+  )}"
+  ${stub.expectFailure
+    (pins (
+      stub.variant "tag-unlocked" "sed -i 's|checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1|checkout@v7.0.1|' .github/workflows/check.yml"
+    ))
+    [
+      ".github/workflows/check.yml:7: actions/checkout@v7.0.1 is not pinned by a full commit SHA"
+      "1 action(s) not pinned"
+    ]
+  }
+  ${stub.expectFailure
+    (pins (
+      stub.variant "tag-reusable" ''
+        sed -i 's|dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 # main (no release yet)|dependabot-auto-merge.yml@v1.6.0|' .github/workflows/check.yml
+        touch .github/workflows/actions.lock
+      ''
+    ))
+    [
+      ".github/workflows/check.yml:10: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@v1.6.0 is not pinned by a full commit SHA"
+      "1 action(s) not pinned"
+    ]
+  }
+  ${stub.expectFailure
+    (pins (
+      stub.variant "tag-composite" ''
+        sed -i 's|j178/prek-action@44924fe9ef4a6f88253c4b6b1bf11c689d3ce53d|j178/prek-action@v3.1.0|' .github/actions/setup/action.yml
+        touch .github/workflows/actions.lock
+      ''
+    ))
+    [
+      ".github/actions/setup/action.yml:5: j178/prek-action@v3.1.0 is not pinned by a full commit SHA"
+      "1 action(s) not pinned"
+    ]
+  }
+  ${stub.expectFailure
+    (pins (
+      stub.variant "branch-locked" ''
+        sed -i 's|checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1|checkout@main|; s|download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333|download-artifact@v8|' .github/workflows/check.yml
+        touch .github/workflows/actions.lock
+      ''
+    ))
+    [
+      ".github/workflows/check.yml:7: actions/checkout@main is not pinned by a full commit SHA"
+      ".github/workflows/check.yml:15: actions/download-artifact@v8 is not pinned by a full commit SHA"
+      "2 action(s) not pinned"
+    ]
+  }
+
   # Dependabot: a wrong prefix, a missing cooldown, no catch-all group, a
   # development ecosystem not listed, one listed but with the release prefix, a
   # stale listing, and no file at all. `directories:` matches a listing too.

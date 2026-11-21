@@ -148,6 +148,8 @@ let
     # docs/conventions.md, CI: every `uses:` in .github/workflows and
     # .github/actions is pinned by a full commit SHA, or a `docker://` image by
     # its sha256 digest, with a trailing comment. A local `./` path is exempt.
+    # Where .github/workflows/actions.lock exists, a workflow step's action may
+    # instead be pinned by an exact release tag.
     ciPins =
       {
         pkgs,
