@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/Avunu/python-devops-nix/compare/v1.6.0...v1.7.0) (2026-11-22)
+
+
+### Features
+
+* **standards:** hooks for deployment projects (relock patch paths, deployment profile) ([#84](https://github.com/Avunu/python-devops-nix/issues/84)) ([7391ef9](https://github.com/Avunu/python-devops-nix/commit/7391ef964c14e16e6dc29d77bb905274bb4e5774))
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#77](https://github.com/Avunu/python-devops-nix/issues/77)) ([86d5f25](https://github.com/Avunu/python-devops-nix/commit/86d5f25598958db0072af0c0911dce2d21240b96))
+* **deps:** update flit-core requirement in /standards in the uv group ([#81](https://github.com/Avunu/python-devops-nix/issues/81)) ([4d68bbc](https://github.com/Avunu/python-devops-nix/commit/4d68bbc3a5232e0afd83de39e3f89459948424a8))
+* **docs:** the pin is a release's commit, now that releases exist ([74768fa](https://github.com/Avunu/python-devops-nix/commit/74768fac52a9300dab319bd035ba9e3b26125f80))
+
 ## [1.6.0](https://github.com/Avunu/python-devops-nix/compare/v1.5.0...v1.6.0) (2026-11-18)
 
 
