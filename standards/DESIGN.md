@@ -489,6 +489,8 @@ class CiConfig:
     ci_workflow: str = "ci.yml"  # audit A5's workflow; under post-merge-bump it must run on push (§11.4)
     nightly_workflow: str = ""  # audit A5's nightly; "" → none
     arg_aliases: Mapping[str, str] = mapping_field()  # old `ci` flag → "--new-flag" or "--param <k>"/"--set <k>" (§8.1)
+    relock_patch_paths: tuple[str, ...] = ()  # globs `ci apply-relock-patch` lets a relock patch touch (§8.1); () → none
+    verify_relock: Callable[[Path, str, str], Verification] | None = None  # (root, base, head) → `ci verify-relock` (§8.1)
 
 
 # --- the product --------------------------------------------------------------------
@@ -655,7 +657,7 @@ The core ships `data/schema/core.schema.json` with `$defs`:
 | `extra-file` | `{path, template, strategy: whole\|seed, module (as above), when, header}`, where `header` is `{"$ref": "#/$defs/header-kind"}` |
 | `header-kind` | composed: core kinds plus `product.header_kinds` |
 | `core-modules` | the parameter schemas of the core modules (§4.2) |
-| `profile-ref` | the `profile` pattern: `minimal`, `recommended(@N.M)?`, `github:`, `gitlab:`, `git+https://`, `./` |
+| `profile-ref` | the `profile` pattern: `minimal`, `recommended(@N.M)?`, `github:`, `gitlab:`, `git+https://`, `./`; composed: `(recommended\|deployment)(@N.M)?` for a product that ships a `deployment@*` (§4.4) |
 | `fleet-entry-core` | `repo` (pattern `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`), `private` (bool), `documentation` (`^https://`), `profile` (string), `integration_branch` (string), `branches` (array of strings, `minItems` 1) |
 
 The product ships `schema/modules.schema.json`, whose `$defs` hold:
@@ -773,6 +775,16 @@ load (`eslint.config.{js,mjs,ts}`).
 The product root holds `profiles/minimal.toml` and `profiles/recommended@<minor>.toml`. Both are frozen once
 released (S42). Plain `recommended` means the newest snapshot. `builtin_names`, `builtin_name`, `builtin_profile`
 and `is_builtin` are copied, reading through the roots.
+
+**Deployment projects** (new). A product whose targets include deployment projects (a site, or another repository
+that is deployed rather than released) also ships `profiles/deployment@<minor>.toml`, a second snapshot family:
+plain `deployment` means its newest snapshot, as `recommended` does its own, and the changed-defaults warning
+follows it the same way. A deployment project has no release flow: no release tool (release-please), no tags and
+no release branch. Conformance refuses a `deployment@*` that turns `releases` on, and resolution refuses a
+checkout (or an org profile) built on one that turns it on. `config.FAMILIES` is `("recommended", "deployment")`;
+`builtin_names` lists `minimal`, then each family's snapshots, oldest first; `config.families(product)` is the
+plain names the product has (`recommended`, and `deployment` when it ships a snapshot), which `extends`, the
+checkout's `profile` pattern (`profile-ref`, composed per product) and the error texts list. A product that ships no `deployment@*` sees no change.
 
 Merge order, unchanged from frappe §8.4:
 
@@ -1580,8 +1592,10 @@ reusable workflows (`--frappe-nix-repo`, `--docs-patterns`, `--frappe-major`) ru
 | `verdict` | `verdict` | §8.3 |
 | `automerge` | `result` | |
 | `enable-automerge` | `result` | |
+| `verify-relock` | `decision` | **new**: `ok` / `needs-review` (exit 0) or `reject` (exit 1, nothing pushed), from `ci.verify_relock(root, base, head)`, a `relock.Verification` of rejects and reviews; `--base` and `--head` are full object ids; no hook is exit 2 |
 | `relock-inputs` | `state`, `moved` | |
 | `relock-patch` | `empty` | |
+| `apply-relock-patch` | — | **new**: relock-push's check of relock-plan's patch, the products' "check and apply" shell step as a core step. The patch text first (no rename, copy or mode change; mode 100644 only), then `git apply --index`, then each index entry against `HEAD`: added, modified or deleted, mode 100644, no symlink, not under `.github/`, and matched by a `ci.relock_patch_paths` glob (`globs.match`); an empty patch is refused. A refusal is exit 1; no globs is exit 2 |
 | `refuse-workflows` | — | |
 | `dispatch-ci` | `dispatched` | |
 | `sweep` | `dispatched` | |

@@ -8,17 +8,18 @@ in their own suites, and from the command line::
 which prints each problem and exits 1 when there is any.
 
 The static part: the product builds; every core module is present;
-``modules.schema.json`` defines exactly the product's modules, each with ``enable``;
-the composed schemas load; every built-in profile validates and ``minimal`` turns on only
-the required module; every manifest fragment parses, names known handlers, has its
-templates and resolves its ``uses`` keys; and every variable the product's data names
-with a core suffix starts with ``<env_prefix>_``.
+``modules.schema.json`` defines exactly the product's modules, each with ``enable``; the
+composed schemas load; every built-in profile validates, ``minimal`` turns on only the
+required module and no ``deployment@*`` turns on ``releases``; every manifest fragment
+parses, names known handlers, has its templates and resolves its ``uses`` keys; and
+every variable the product's data names with a core suffix starts with
+``<env_prefix>_``.
 
-The render part: every fixture checkout (``Product.fixtures``), under ``minimal`` and
-every ``recommended@*``, syncs with ``sync --write --offline``, then (with the locks an
-offline sync leaves to Nix and the lock commands faked) checks clean with ``sync
---check``, and a second write changes no byte; every ``seed_template`` holds its entry's
-anchor.
+The render part: every fixture checkout (``Product.fixtures``), under ``minimal``, every
+``recommended@*`` and every ``deployment@*``, syncs with ``sync --write --offline``,
+then (with the locks an offline sync leaves to Nix and the lock commands faked) checks
+clean with ``sync --check``, and a second write changes no byte; every ``seed_template``
+holds its entry's anchor.
 
 The CI part: every decision rule names a verdict and an update kind that exist; the
 labels name modules the product has; every gate's required context is distinct, the
@@ -157,6 +158,19 @@ def _schemas(product: Product) -> list[str]:
     return out
 
 
+def _releases_on(product: Product, doc: dict) -> bool:
+    """Whether a built-in profile leaves ``releases`` on, its table filled with the
+    profile schema's defaults as resolution fills it: a snapshot that leaves the key
+    out still turns it on where the module's schema defaults it on."""
+    defaults = schema.defaults(product, config.PROFILE_SCHEMA).get("releases", {})
+    table = doc.get("releases", {})
+    if not isinstance(table, dict):
+        return False
+    return config._switch(
+        {"releases": config._fill_defaults(table, defaults)}, "releases"
+    )
+
+
 def _profiles(product: Product) -> list[str]:
     out: list[str] = []
     if "minimal.toml" not in product_roots(product).listdir("profiles"):
@@ -175,6 +189,11 @@ def _profiles(product: Product) -> list[str]:
             f"profile {stem}",
             lambda d=doc, s=stem: config.validate_profile(product, d, s, org=False),
         )
+        if config.family_of(stem) == config.DEPLOYMENT and _releases_on(product, doc):
+            out.append(
+                f"profile {stem} turns on releases: a deployment project has no"
+                " release flow"
+            )
         if stem == "minimal":
             on = [
                 m

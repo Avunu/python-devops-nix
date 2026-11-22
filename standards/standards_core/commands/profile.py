@@ -10,8 +10,9 @@ every template in its ``templates/`` render for each of the product's fixture
 checkouts (``Product.fixtures``), each a throwaway git repository using the profile
 in-repo.
 
-``list`` prints ``minimal`` and every ``recommended@<minor>`` snapshot with its
-description, marking the one plain ``recommended`` means.
+``list`` prints ``minimal`` and every ``recommended@<minor>`` snapshot (and
+``deployment@<minor>``, when the product ships them) with its description, marking the
+one each plain name means.
 
 Exit codes as sync's: 0, 2 (invalid) or 3 (environment).
 """
@@ -189,14 +190,16 @@ def validate(args: argparse.Namespace) -> int:
 
 
 def list_profiles(args: argparse.Namespace) -> int:
-    """Each built-in with its description, marking the one plain ``recommended`` means."""
+    """Each built-in with its description, marking the one each plain name means."""
     product = args.product
     names = config.builtin_names(product)
-    try:
-        newest = config.builtin_name(product, "recommended")
-    except ConfigError:
-        newest = None
-    labels = {n: n + ("  (recommended)" if n == newest else "") for n in names}
+    newest: dict[str, str] = {}
+    for family in config.families(product):
+        try:
+            newest[config.builtin_name(product, family)] = family
+        except ConfigError:
+            continue
+    labels = {n: n + (f"  ({newest[n]})" if n in newest else "") for n in names}
     width = max(len(label) for label in labels.values())
     for name in names:
         description = config.builtin_profile(product, name)[1].get("description", "")

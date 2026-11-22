@@ -139,36 +139,63 @@ class Resolved:
 # --- built-in profiles -------------------------------------------------------------------
 
 
+# Built-in profile families: `profiles/<family>@<minor>.toml` snapshots, the plain name
+# meaning the newest. `recommended` is every product's; `deployment` is the profile of
+# a deployment project (a site or other deployed repository: no release flow, so no
+# release tool, tags or release branch), which a product ships only when it has such
+# targets (DESIGN §4.4).
+FAMILIES = ("recommended", "deployment")
+DEPLOYMENT = "deployment"
+
+
 @cache
-def _snapshots(product: Product) -> dict[Version, str]:
-    """``recommended@<minor>`` files, by their version."""
+def _snapshots(product: Product, family: str = "recommended") -> dict[Version, str]:
+    """``<family>@<minor>`` files, by their version."""
     out = {}
     for name in product_roots(product).listdir("profiles"):
         stem = name.removesuffix(".toml")
-        if name.endswith(".toml") and stem.startswith("recommended@"):
+        if name.endswith(".toml") and stem.startswith(f"{family}@"):
             try:
-                out[Version(stem.removeprefix("recommended@"))] = stem
+                out[Version(stem.removeprefix(f"{family}@"))] = stem
             except InvalidVersion:
                 continue
     return out
 
 
+def families(product: Product) -> list[str]:
+    """The plain names of the snapshot families: ``recommended`` always, and each other
+    family the product ships a snapshot of."""
+    return [f for f in FAMILIES if f == "recommended" or _snapshots(product, f)]
+
+
+def family_of(name: str) -> str | None:
+    """The family a profile name (plain or a snapshot) belongs to, or ``None``."""
+    for family in FAMILIES:
+        if name == family or name.startswith(f"{family}@"):
+            return family
+    return None
+
+
 def builtin_names(product: Product) -> list[str]:
-    """``minimal`` and every ``recommended@<minor>`` snapshot, oldest first."""
-    snapshots = _snapshots(product)
-    return ["minimal", *(snapshots[v] for v in sorted(snapshots))]
+    """``minimal`` and every snapshot of each family, oldest first within a family."""
+    out = ["minimal"]
+    for family in FAMILIES:
+        snapshots = _snapshots(product, family)
+        out += [snapshots[v] for v in sorted(snapshots)]
+    return out
 
 
 def builtin_name(product: Product, name: str) -> str:
-    """The file stem a built-in profile name means: plain ``recommended`` is the newest snapshot."""
-    snapshots = _snapshots(product)
-    if name == "recommended":
+    """The file stem a built-in profile name means: a plain family name (``recommended``)
+    is its newest snapshot."""
+    if name in FAMILIES:
+        snapshots = _snapshots(product, name)
         if not snapshots:
-            raise ConfigError(f"{product.identity.name} ships no recommended snapshot")
+            raise ConfigError(f"{product.identity.name} ships no {name} snapshot")
         return snapshots[max(snapshots)]
     if name in builtin_names(product):
         return name
-    names = ", ".join(["recommended", *builtin_names(product)])
+    names = ", ".join([*families(product), *builtin_names(product)])
     raise ConfigError(f"no built-in profile {name!r} (built-ins: {names})")
 
 
@@ -185,7 +212,7 @@ def builtin_profile(product: Product, name: str) -> tuple[str, dict]:
 
 
 def is_builtin(profile: str) -> bool:
-    return profile in ("minimal", "recommended") or profile.startswith("recommended@")
+    return profile == "minimal" or family_of(profile) is not None
 
 
 # --- layers ------------------------------------------------------------------------------
@@ -552,6 +579,12 @@ def resolve_doc(
     notices: list[str] = []
     github = host in (None, "github.com") if on_github is None else on_github
     modules = _modules(product, cfg, app, github, notices, provisional=provisional)
+    if family_of(stem) == DEPLOYMENT and modules.get("releases"):
+        raise ConfigError(
+            f"profile {name!r} is a deployment project's (built on {stem}), which has"
+            " no release flow: no release tool, tags or release branch; turn releases"
+            " off"
+        )
     return Resolved(
         cfg=cfg,
         modules=modules,

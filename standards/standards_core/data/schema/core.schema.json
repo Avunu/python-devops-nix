@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "core.schema.json",
   "title": "The definitions every product's profile, checkout table and fleet schemas share",
-  "$comment": "standards_core.common.compose builds profile.schema.json, app.schema.json and fleet.schema.json from these and the product's modules.schema.json (DESIGN §4.1). The enums that depend on the product (header-kind, releases.branching, releases.version-scheme, repo-policy.required-checks) are filled in per product when this file is loaded.",
+  "$comment": "standards_core.common.compose builds profile.schema.json, app.schema.json and fleet.schema.json from these and the product's modules.schema.json (DESIGN §4.1). The enums that depend on the product (header-kind, releases.branching, releases.version-scheme, repo-policy.required-checks) and the snapshot families profile-ref names are filled in per product when this file is loaded.",
   "$defs": {
     "org": {
       "type": "object",

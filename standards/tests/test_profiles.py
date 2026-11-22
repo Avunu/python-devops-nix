@@ -170,6 +170,142 @@ class TestChangedDefaults(unittest.TestCase):
         self.assertEqual(defaults.warn_changed(self.product, root, pinned), [])
 
 
+def deployment_snapshot(releases: bool = False) -> str:
+    """The stub's ``recommended@1.0`` as a deployment project's snapshot: the same
+    modules, with ``releases`` off unless ``releases``."""
+    text = data_path(STUB, "profiles/recommended@1.0.toml").read_text()
+    text = text.replace('name = "recommended"', 'name = "deployment"')
+    head, _, rest = text.partition("[releases]\n")
+    _, _, tail = rest.partition("\n\n")
+    on = "true" if releases else "false"
+    return f"{head}[releases]\nenable = {on}\n\n{tail}"
+
+
+class TestDeploymentProfiles(unittest.TestCase):
+    """``deployment@<minor>``: the second snapshot family, a deployment project's
+    profile, which has no release flow."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.product = product_copy(STUB, Path(self.tmp.name))
+        profiles = self.product.data_root / "profiles"
+        (profiles / "deployment@1.0.toml").write_text(deployment_snapshot())
+
+    def app(self, **table):
+        return {
+            "project": {"name": "demo_site"},
+            "tool": {"stub-nix": {"schema": 1, "major": 1, **table}},
+        }
+
+    def test_names(self):
+        product = self.product
+        self.assertEqual(
+            config.builtin_names(product),
+            ["minimal", "recommended@1.0", "deployment@1.0"],
+        )
+        self.assertEqual(config.families(product), ["recommended", "deployment"])
+        self.assertEqual(config.builtin_name(product, "deployment"), "deployment@1.0")
+        self.assertEqual(config.builtin_name(product, "recommended"), "recommended@1.0")
+        self.assertTrue(config.is_builtin("deployment"))
+        self.assertTrue(config.is_builtin("deployment@1.0"))
+        with self.assertRaises(config.ConfigError) as caught:
+            config.builtin_name(product, "deployment@9.9")
+        self.assertIn(
+            "built-ins: recommended, deployment, minimal, recommended@1.0,"
+            " deployment@1.0",
+            str(caught.exception),
+        )
+
+    def test_a_product_without_one_is_unchanged(self):
+        self.assertEqual(config.families(STUB), ["recommended"])
+        self.assertNotIn("deployment", " ".join(config.builtin_names(STUB)))
+        with self.assertRaisesRegex(
+            config.ConfigError, "stub-nix ships no deployment snapshot"
+        ):
+            config.builtin_name(STUB, "deployment")
+        ref = schema.load(STUB, "core.schema.json")["$defs"]["profile-ref"]
+        self.assertNotIn("deployment", ref["pattern"])
+        self.assertNotIn("deployment", ref["description"])
+        for name in ("deployment", "bogus"):
+            with self.subTest(profile=name):
+                with self.assertRaises(config.ConfigError) as caught:
+                    config.resolve_doc(STUB, self.app(profile=name), on_github=True)
+                self.assertNotIn("deployment snapshot", str(caught.exception))
+                self.assertNotIn("|deployment", str(caught.exception))
+
+    def test_checkouts_may_name_it(self):
+        ref = schema.load(self.product, "core.schema.json")["$defs"]["profile-ref"]
+        self.assertIn("|(recommended|deployment)(@", ref["pattern"])
+        self.assertIn("deployment or a snapshot deployment@<minor>", ref["description"])
+
+    def test_resolves_with_releases_off(self):
+        for name in ("deployment", "deployment@1.0"):
+            with self.subTest(profile=name):
+                r = config.resolve_doc(
+                    self.product, self.app(profile=name), on_github=True
+                )
+                self.assertEqual(r.profile["name"], "deployment@1.0")
+                self.assertFalse(r.modules["releases"])
+                self.assertTrue(r.modules["dependabot"])
+                self.assertTrue(r.modules["ci"])
+
+    def test_releases_on_is_refused(self):
+        with self.assertRaisesRegex(
+            config.ConfigError, "deployment project's .* no release flow"
+        ):
+            config.resolve_doc(
+                self.product,
+                self.app(profile="deployment", releases={"enable": True}),
+                on_github=True,
+            )
+
+    def test_org_profiles_may_extend_it(self):
+        extends = schema.load(self.product, "profile.schema.json")
+        pattern = extends["properties"]["extends"]["pattern"]
+        self.assertIn("deployment", pattern)
+        self.assertIn("deployment@1\\.0", pattern)
+
+    def test_listed_with_the_snapshot_each_name_means(self):
+        code, out, err = run_cli(self.product, "profile", "list", cwd=self.tmp.name)
+        self.assertEqual(code, 0, err)
+        lines = out.splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[1].startswith("recommended@1.0  (recommended)  "), out)
+        self.assertTrue(lines[2].startswith("deployment@1.0  (deployment)    "), out)
+
+    def test_changed_defaults_follow_the_family(self):
+        profiles = self.product.data_root / "profiles"
+        (profiles / "deployment@1.1.toml").write_text(
+            deployment_snapshot().replace("line-length = 88", "line-length = 100", 1)
+        )
+        self.assertEqual(
+            defaults.snapshot_at(self.product, Version("1.0.2"), "deployment"),
+            "deployment@1.0",
+        )
+        self.assertEqual(
+            defaults.snapshot_at(self.product, Version("1.1.0"), "deployment"),
+            "deployment@1.1",
+        )
+        root = Path(self.tmp.name) / "site"
+        (root / ".github" / "workflows").mkdir(parents=True)
+        git(root, "init", "-q")
+        (root / ".github" / "workflows" / "ci.yml").write_text(
+            "jobs:\n  lint:\n    uses: example/stub-nix/.github/workflows/"
+            f"stub-lint.yml@{'a' * 40} # v1.0.3\n"
+        )
+        git(root, "add", "-A")
+        git(root, "commit", "-q", "-m", "ci")
+        plan = SimpleNamespace(cfg={"profile": "deployment"})
+        lines = defaults.warn_changed(self.product, root, plan)
+        self.assertEqual(
+            lines[0],
+            'profile = "deployment" now resolves to deployment@1.1 (it was'
+            " deployment@1.0 at HEAD); changed defaults:",
+        )
+        self.assertIn("  editorconfig.line-length: 88 → 100", lines)
+
+
 ORG_PROFILE = """\
 schema = 1
 name = "example-org"

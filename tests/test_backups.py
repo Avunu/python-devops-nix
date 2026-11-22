@@ -31,6 +31,10 @@ import backups
 
 dumps = backups.load_layout(LAYOUTS / "database_dumps.py", "database_dumps")
 folders = backups.load_layout(LAYOUTS / "timestamp_folders.py", "timestamp_folders")
+# The layout the base ships (lib.backups.layouts.wordpress), beside the module.
+wordpress = backups.load_layout(
+    Path(backups.__file__).parent / "backup_layouts" / "wordpress.py", "wordpress"
+)
 
 NAMES = [
     "2026_10_01_03_00_00.dump",
@@ -260,10 +264,81 @@ class DirectoryStore(Case):
             self.assertEqual(self.b.main(["list", "prod"]), 0)
             self.assertEqual(self.b.main(["folders"]), 0)
         self.assertEqual(out.getvalue().split(), [*NAMES, "other", "prod"])
+        # A layout with no optional roles fetches from the command line too.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            argv = ["fetch", "prod", "--dest", str(self.cache)]
+            self.assertEqual(self.b.main(argv), 0)
+        self.assertEqual(json.loads(out.getvalue())["name"], NAMES[-1])
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.assertEqual(self.b.main(["list", "other"]), 1)
         self.assertTrue(err.getvalue().startswith("stub-nix: no backups under "))
+
+
+class WordPressLayout(Case):
+    """lib.backups.layouts.wordpress: wordpress/<slug>/<ts>.sql.gz, one site per
+    scope."""
+
+    DUMPS = (
+        "20261101-030000.sql.gz",
+        "20261102_030000.sql.gz",
+        "20261103-030000.sql.gz",
+    )
+
+    def setUp(self):
+        super().setUp()
+        root = self.tmp / "bucket"
+        for name in self.DUMPS:
+            make(root / "wordpress" / "example" / name, f"dump {name}")
+        make(root / "wordpress" / "other" / "20261201-030000.sql.gz", "other site")
+        # Not backups: must never be selected.
+        for junk in (
+            "notes.txt",
+            "20261104-030000.sql",
+            "20261104-030000.sql.gz.partial",
+            "latest.sql.gz",
+            "2026-11-04.sql.gz",
+        ):
+            make(root / "wordpress" / "example" / junk, "x")
+        make(root / "wordpress" / "example" / "nested" / "20261105-030000.sql.gz", "x")
+        os.environ["STUB_NIX_BACKUP_SOURCE"] = str(root)
+        self.b = backups.Backups(label="stub-nix", env_prefix="STUB", layout=wordpress)
+
+    def test_sites_and_their_dumps(self):
+        with self.b.store() as store:
+            self.assertEqual(self.b.folders(store, "wordpress"), ["example", "other"])
+            sets = self.b.sets(store, "wordpress/example")
+        self.assertEqual([s.name for s in sets], list(self.DUMPS))
+        self.assertEqual(sets[1].at, datetime(2026, 11, 2, 3, 0, 0))
+
+    def test_fetch_and_at(self):
+        with self.b.store() as store:
+            newest = self.b.fetch(store, "wordpress/example", dest=self.cache)
+            older = self.b.fetch(
+                store, "wordpress/example", dest=self.cache, at="2026-11-02"
+            )
+        self.assertEqual(newest.backup.name, self.DUMPS[-1])
+        manifest = older.manifest()
+        self.assertEqual(manifest["scope"], "wordpress/example")
+        self.assertEqual(manifest["available"], {"database": True})
+        self.assertEqual(
+            Path(manifest["database"]).read_text(), f"dump {self.DUMPS[1]}"
+        )
+
+    def test_an_empty_dump_is_refused_before_the_download(self):
+        make(
+            self.tmp / "bucket" / "wordpress" / "example" / "20261110-030000.sql.gz", ""
+        )
+        with self.b.store() as store, self.assertRaises(backups.BackupError) as ctx:
+            self.b.fetch(store, "wordpress/example", dest=self.cache)
+        self.assertIn("20261110-030000.sql.gz is empty", ctx.exception.message)
+        self.assertFalse(self.cache.exists() and any(self.cache.rglob("*.sql.gz")))
+
+    def test_no_dumps_names_the_layout(self):
+        with self.b.store() as store, self.assertRaises(backups.BackupError) as ctx:
+            self.b.fetch(store, "wordpress", dest=self.cache)
+        self.assertIn("wordpress/<slug>", "\n".join(ctx.exception.details))
 
 
 class Credentials(Case):

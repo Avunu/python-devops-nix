@@ -4,7 +4,7 @@ description: What python-devops-nix exports, from the secrets toolkit to the Nix
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-11-03
+updated: 2026-11-21
 ---
 
 # Library reference
@@ -23,6 +23,7 @@ Every function takes `pkgs` and the product's names (label, prefix, option path)
 | `lib.secrets.roles`, `lib.secrets.rulesJSONOf` | The role definitions (`backupAccess`), and the recipients map agecheck compares against. |
 | `lib.backups.fetch { pkgs, label, envPrefix, layout, legacyEnv ? { } }` | `<label>-backup-fetch {list,folders,fetch}`: list, download and cache backups over S3 (rclone, `<P>_NIX_RCLONE`) or from a directory. `layout` parses an object listing into backup sets. |
 | `lib.backups.module`, `lib.backups.check` | python/backups.py, for a product that imports the fetch layer in-process, and its tests. |
+| `lib.backups.layouts.wordpress` | The layout of a WordPress site's development-restore dumps, which the cluster writes rather than a product: `wordpress/<slug>/<YYYYMMDD-HHMMSS>.sql.gz`, read one site at a time with the scope `wordpress/<slug>`. Pass it as `fetch`'s `layout`. |
 
 Conventions: [Secrets](conventions.md#secrets), [Restore](conventions.md#restore).
 
