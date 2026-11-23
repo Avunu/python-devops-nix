@@ -53,6 +53,24 @@
           "aarch64-darwin"
         ];
 
+        # This flake's package set: nixpkgs that allows exactly one unfree
+        # package, google-chrome, which the darwin pdfkiln wrapper runs
+        # (packages/pdfkiln.nix). Nothing else here is unfree-allowed.
+        # `_module.args.pkgs` is how flake-parts sets perSystem's `pkgs`; its
+        # nixpkgs module only supplies the default, which this replaces.
+        imports = [
+          {
+            perSystem =
+              { system, ... }:
+              {
+                _module.args.pkgs = import nixpkgs {
+                  inherit system;
+                  config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "google-chrome" ];
+                };
+              };
+          }
+        ];
+
         flake = {
           # lib/<name>.nix is `{ lib }: { … }` and becomes lib.<name>: pure
           # functions that take `pkgs` and the product's names as arguments.
