@@ -168,6 +168,17 @@ class Command(unittest.TestCase):
         self.run_cli("install", "--force")
         self.assertEqual(len(self.calls()), 3)
 
+    def test_a_linked_node_modules_is_left_alone(self) -> None:
+        # Another shell linked a read-only tree there: npm ci would fail on it.
+        path = self.add("npm")
+        store = self.tmp / "store-node-modules"
+        store.mkdir()
+        (path / "node_modules").symlink_to(store)
+        code, _, err = self.run_cli("install")
+        self.assertEqual((code, self.calls()), (0, []))
+        self.assertIn("node_modules is a link", err)
+        self.assertEqual(list(store.iterdir()), [])
+
     def test_ci_mode_installs_nothing(self) -> None:
         self.add("npm")
         code, _, _ = self.run_cli("install", ci="1")
