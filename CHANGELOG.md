@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0](https://github.com/Avunu/python-devops-nix/compare/v1.7.0...v1.8.0) (2026-11-23)
+
+
+### Features
+
+* **standards:** add the pdfkiln wkhtmltopdf replacement ([#85](https://github.com/Avunu/python-devops-nix/issues/85)) ([ae29cfe](https://github.com/Avunu/python-devops-nix/commit/ae29cfea802459878aef2785a393d51ce535537a))
+
+
+### Bug Fixes
+
+* **standards:** allow google-chrome in the flake's package set, for darwin ([#87](https://github.com/Avunu/python-devops-nix/issues/87)) ([13d0b49](https://github.com/Avunu/python-devops-nix/commit/13d0b49dee7c3600c9d220bc25479bdbb62a6e03))
+
 ## [1.7.0](https://github.com/Avunu/python-devops-nix/compare/v1.6.0...v1.7.0) (2026-11-22)
 
 
