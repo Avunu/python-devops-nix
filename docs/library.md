@@ -4,12 +4,12 @@ description: What python-devops-nix exports, from the secrets toolkit to the Nix
 nav_title: Library
 order: 2
 tags: [reference, nix, lib]
-updated: 2026-11-21
+updated: 2026-11-23
 ---
 
 # Library reference
 
-The flake has nixpkgs and flake-parts as its only inputs. Each output is read from one directory: `lib/<name>.nix` (or `lib/<name>/default.nix`) is `lib.<name>`, with a kebab-case file name as a camelCase attribute (`lib/db-nocow.nix` is `lib.dbNocow`), and `checks/<name>.nix` is `checks.<system>.<name>`. `flakeModules` is read from `modules/`, which is empty today. Python sits in `python/`, standards-core (a Python distribution of its own) in `standards/`, and the stub products and fixtures the checks run against sit in `tests/` (standards-core's in `standards/tests/`).
+The flake has nixpkgs and flake-parts as its only inputs. Each output is read from one directory: `lib/<name>.nix` (or `lib/<name>/default.nix`) is `lib.<name>`, with a kebab-case file name as a camelCase attribute (`lib/db-nocow.nix` is `lib.dbNocow`), `packages/<name>.nix` is `packages.<system>.<name>`, and `checks/<name>.nix` is `checks.<system>.<name>`. `flakeModules` is read from `modules/`, which is empty today. Python sits in `python/`, standards-core (a Python distribution of its own) in `standards/`, and the stub products and fixtures the checks run against sit in `tests/` (standards-core's in `standards/tests/`).
 
 Every function takes `pkgs` and the product's names (label, prefix, option path) as arguments, and none names a product. The `check` functions are the base's own tests, which a product can also build against its interpreters. Each takes `{ pkgs, product ? …, name ? …, interpreters ? … }` and runs on every interpreter a preset names.
 
@@ -105,6 +105,12 @@ Conventions: [Production](conventions.md#production), [Logging](conventions.md#l
 | `lib.containers.healthcheck <command>`, `lib.containers.second` | An image's `Healthcheck`: the command every 30 seconds, 10 seconds to answer, 3 retries, and failures in the first 120 seconds not counted. Durations are nanoseconds, and `second` is one. |
 
 Conventions: [Images](conventions.md#images).
+
+## Packages
+
+| Export | What it does |
+| --- | --- |
+| `packages.<system>.pdfkiln` | `@pdfkiln/pdfkiln` 1.3.0 from the npm registry, pinned by its hash and unpacked as published (`packages/pdfkiln.nix`): a drop-in replacement for wkhtmltopdf that renders with Chromium. Its commands are `wkhtmltopdf`, `wkhtmltoimage` and `pdfkiln`, each a wrapper that sets `PDFKILN_CHROMIUM`, which selects the browser, so pdfkiln never downloads one. The browser is nixpkgs' `chromium` on Linux and nixpkgs' `google-chrome` on darwin, through its `google-chrome-stable` wrapper. `google-chrome` is unfree and this flake's nixpkgs does not allow unfree packages, so the darwin output does not evaluate yet. |
 
 ## Repository
 
