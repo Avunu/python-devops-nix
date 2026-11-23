@@ -344,6 +344,16 @@ def install(target: Target, label: str, *, force: bool = False) -> bool:
                 "and commit the lockfile"
             )
         return True
+    modules = target.path / "node_modules"
+    if modules.is_symlink():
+        # Linked in from elsewhere, typically the Nix store's read-only tree
+        # that the addon repository's own shell puts there: an install would
+        # try to empty it (EACCES) and has nowhere to leave its marker.
+        say(
+            label,
+            f"{target.key}: node_modules is a link to {os.readlink(modules)}; leaving it",
+        )
+        return True
     mark = sentinel(target, label)
     want = fingerprint(target)
     if not force and mark.is_file() and mark.read_text().strip() == want:
