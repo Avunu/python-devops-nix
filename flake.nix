@@ -70,6 +70,10 @@
         perSystem =
           { pkgs, ... }:
           {
+            # packages/<name>.nix is `{ pkgs, … }: derivation`, called with callPackage,
+            # and becomes packages.<system>.<name>.
+            packages = lib.mapAttrs (_: path: pkgs.callPackage path { }) (entries ./packages);
+
             # checks/<name>.nix is `{ pkgs, self }: derivation` and becomes
             # checks.<system>.<name>. CI builds every one of them.
             checks = lib.mapAttrs (_: path: import path { inherit pkgs self; }) (entries ./checks);
