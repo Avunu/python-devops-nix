@@ -1768,7 +1768,7 @@ These are copied (§2.4). The update-branches bot rule:
 Every action:
 
 - is `runs: using: composite`;
-- pins every `uses:` by SHA with a version comment (the `ci-pins` check);
+- pins every `uses:` by SHA with a version comment, or a reusable workflow of Avunu by its release tag (the `ci-pins` check);
 - passes inputs through `env:`, never interpolated into scripts (the zizmor template-injection rule);
 - names the product CLI through the `cli` input, so no product name is hard-coded.
 

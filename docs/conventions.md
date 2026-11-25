@@ -603,7 +603,7 @@ The pieces in the NixOS modules ([library](library.md#production)), adopted in f
 
 -   **Convention:** an action is pinned by the rule for its kind of `uses:`, and a floating branch ref is never allowed:
     -   **A workflow step's action**, which gh-actions-lock can pin: an exact release tag (`vX.Y.Z`). The repository needs its lock file, `.github/workflows/actions.lock`, for a tag. A full commit SHA with the version in a trailing comment is accepted there too, which is how the products and this repository pin today.
-    -   **A reusable workflow call** (`uses: owner/repo/.github/workflows/x.yml@ref`): a full commit SHA with the version in a trailing comment, because gh-actions-lock does not cover reusable workflows.
+    -   **A reusable workflow call** (`uses: owner/repo/.github/workflows/x.yml@ref`): a full commit SHA with the version in a trailing comment, because gh-actions-lock does not cover reusable workflows. A reusable workflow of an Avunu repository may instead name its exact release tag (`@vX.Y.Z`); the lock does not cover that either, so the tag stays a name rather than a commit. Any other owner's reusable workflow keeps the SHA.
     -   **A composite action's steps** (`.github/actions/*/action.yml`) that call remote actions: a full commit SHA with the version in a trailing comment, because gh-actions-lock refuses to lock them without `--ignore-local-actions`.
     -   **A floating branch ref** is never allowed, in any of these places.
 

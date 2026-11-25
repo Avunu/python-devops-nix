@@ -324,9 +324,10 @@ mk.script "lib-conventions" { } ''
   ]}
 
   # With .github/workflows/actions.lock, a workflow step's exact release tag
-  # passes, and so does a SHA with its comment. A reusable workflow call, a
-  # composite action's step, a branch and a major-only tag do not; and without
-  # the lock, an exact tag does not pass either.
+  # passes, and so does a SHA with its comment. A reusable workflow call to an
+  # Avunu repository passes with its exact release tag. A reusable call to another
+  # owner, a composite action's step, a branch and a major-only tag do not; and
+  # without the lock, a step's exact tag does not pass either.
   echo "a SHA passes with a lock: ${pins (stub.variant "locked" "touch .github/workflows/actions.lock")}"
   echo "a release tag passes with a lock: ${pins (
     stub.variant "tag-locked" ''
@@ -343,15 +344,30 @@ mk.script "lib-conventions" { } ''
       "1 action(s) not pinned"
     ]
   }
+  echo "a release tag passes on an Avunu reusable workflow: ${pins (
+    stub.variant "tag-reusable" ''
+      sed -i 's|dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 # main (no release yet)|dependabot-auto-merge.yml@v1.6.0|' .github/workflows/check.yml
+    ''
+  )}"
   ${stub.expectFailure
     (pins (
-      stub.variant "tag-reusable" ''
-        sed -i 's|dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 # main (no release yet)|dependabot-auto-merge.yml@v1.6.0|' .github/workflows/check.yml
-        touch .github/workflows/actions.lock
+      stub.variant "tag-reusable-other-owner" ''
+        sed -i 's|Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 # main (no release yet)|acme/tools/.github/workflows/dependabot-auto-merge.yml@v1.6.0|' .github/workflows/check.yml
       ''
     ))
     [
-      ".github/workflows/check.yml:10: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@v1.6.0 is not pinned by a full commit SHA"
+      ".github/workflows/check.yml:10: acme/tools/.github/workflows/dependabot-auto-merge.yml@v1.6.0 is not pinned by a full commit SHA"
+      "1 action(s) not pinned"
+    ]
+  }
+  ${stub.expectFailure
+    (pins (
+      stub.variant "branch-reusable" ''
+        sed -i 's|dependabot-auto-merge.yml@51c31525e5a1f2ed0d3e4b8b8c0b9c9a2f0f3e11 # main (no release yet)|dependabot-auto-merge.yml@main|' .github/workflows/check.yml
+      ''
+    ))
+    [
+      ".github/workflows/check.yml:10: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@main is not pinned by a full commit SHA or exact release tag (vX.Y.Z)"
       "1 action(s) not pinned"
     ]
   }
