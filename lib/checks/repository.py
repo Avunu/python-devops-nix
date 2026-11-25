@@ -8,8 +8,9 @@
 sha256 digest, with a trailing comment, which by convention names the version.
 A local `./` path is exempt. Where .github/workflows/actions.lock exists, an
 action a workflow step uses may instead be pinned by an exact release tag
-(`vX.Y.Z`), which gh-actions-lock locks. A reusable workflow call and a
-composite action's steps keep the SHA.
+(`vX.Y.Z`), which gh-actions-lock locks. A reusable workflow call to an Avunu
+repository may also be pinned by its exact release tag; any other reusable call
+and a composite action's steps keep the SHA. A branch is never a pin.
 
 `dependabot` (docs/conventions.md, Dependabot): every ecosystem in
 .github/dependabot.yml has the commit prefix, the seven-day cooldown and one
@@ -48,21 +49,27 @@ def sequence(node: yaml.Node | None) -> list[yaml.Node]:
     return node.value if isinstance(node, yaml.SequenceNode) else []
 
 
-def uses_nodes(root: yaml.Node) -> Iterator[tuple[yaml.Node, bool]]:
-    # Each `uses:` with whether it is a workflow step's action, the one kind a
-    # release tag may pin. A job's jobs.<id>.uses is a reusable workflow, and a
-    # composite action's runs.steps[].uses stays on the SHA.
+def uses_nodes(root: yaml.Node) -> Iterator[tuple[yaml.Node, str]]:
+    # Each `uses:` with its kind. A workflow step's action is "step", the kind a
+    # lock may pin by release tag. A job's jobs.<id>.uses is "reusable", a
+    # reusable workflow call. A composite action's runs.steps[].uses is
+    # "composite", which stays on the SHA.
     top = mapping(root)
     for job_node in mapping(top.get("jobs")).values():
         job = mapping(job_node)
         if "uses" in job:
-            yield job["uses"], False
+            yield job["uses"], "reusable"
         for step in sequence(job.get("steps")):
             if "uses" in mapping(step):
-                yield mapping(step)["uses"], True
+                yield mapping(step)["uses"], "step"
     for step in sequence(mapping(top.get("runs")).get("steps")):
         if "uses" in mapping(step):
-            yield mapping(step)["uses"], False
+            yield mapping(step)["uses"], "composite"
+
+
+def avunu_release_tag(ref: str) -> bool:
+    """A reusable workflow of an Avunu repository, at an exact release tag."""
+    return ref.startswith("Avunu/") and TAG.fullmatch(ref) is not None
 
 
 def pin_findings(path: Path, rel: str, lockable: bool) -> Iterator[str]:
@@ -71,15 +78,22 @@ def pin_findings(path: Path, rel: str, lockable: bool) -> Iterator[str]:
     if root is None:
         return
     lines = text.splitlines()
-    for node, step in uses_nodes(root):
+    for node, kind in uses_nodes(root):
         where = f"{rel}:{node.start_mark.line + 1}"
         ref = node.value if isinstance(node, yaml.ScalarNode) else ""
         if ref.startswith("./"):
             continue
-        if lockable and step and TAG.fullmatch(ref):
+        if lockable and kind == "step" and TAG.fullmatch(ref):
+            continue
+        if kind == "reusable" and avunu_release_tag(ref):
             continue
         if not PIN.fullmatch(ref):
-            by = "sha256 digest" if ref.startswith("docker://") else "full commit SHA"
+            if ref.startswith("docker://"):
+                by = "sha256 digest"
+            elif kind == "reusable" and ref.startswith("Avunu/"):
+                by = "full commit SHA or exact release tag (vX.Y.Z)"
+            else:
+                by = "full commit SHA"
             yield f"{where}: {ref} is not pinned by a {by}"
             continue
         if not trailing_comment(lines, node):
@@ -122,9 +136,9 @@ def pins(product_dir: Path) -> int:
     if findings:
         print(
             f"{len(findings)} action(s) not pinned. Pin each by its full commit SHA,"
-            " with its version in a trailing comment, or, in a workflow step where"
-            " .github/workflows/actions.lock exists, by its exact release tag"
-            " (docs/conventions.md, CI)."
+            " with its version in a trailing comment, or by its exact release tag where"
+            " the convention allows one: a workflow step where .github/workflows/actions.lock"
+            " exists, or a reusable workflow of Avunu (docs/conventions.md, CI)."
         )
         return 1
     print(f"every action in {len(files)} file(s) is pinned")
