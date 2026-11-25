@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.9.0](https://github.com/Avunu/python-devops-nix/compare/v1.8.0...v1.9.0) (2026-11-25)
+
+
+### Features
+
+* **conventions:** allow an Avunu reusable workflow at its exact release tag ([#92](https://github.com/Avunu/python-devops-nix/issues/92)) ([4ba057a](https://github.com/Avunu/python-devops-nix/commit/4ba057ad07e1fefd0a735261d61bc162a67c579c))
+
+
+### Bug Fixes
+
+* **deps:** bump the github-actions group across 2 directories with 2 updates ([#90](https://github.com/Avunu/python-devops-nix/issues/90)) ([47df1f5](https://github.com/Avunu/python-devops-nix/commit/47df1f5d4536ac8c02dadaebe1880977384a3cee))
+* **node:** leave a linked node_modules alone on install ([#88](https://github.com/Avunu/python-devops-nix/issues/88)) ([d2c6a74](https://github.com/Avunu/python-devops-nix/commit/d2c6a74d122e2683ac445ee43329b9694a7c80a4))
+
 ## [1.8.0](https://github.com/Avunu/python-devops-nix/compare/v1.7.0...v1.8.0) (2026-11-23)
 
 
