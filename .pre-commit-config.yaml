@@ -29,7 +29,7 @@ repos:
 
   # ruff fixes the imports, then lints, then formats the result, with ruff.toml.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.5
+    rev: v0.17.6
     hooks:
       - id: ruff-check
         name: ruff import sorter
