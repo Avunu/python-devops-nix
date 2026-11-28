@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.1](https://github.com/Avunu/python-devops-nix/compare/v1.9.0...v1.9.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **deps:** bump pyyaml from 6.0.3 to 6.0.4 in /standards in the uv group ([#96](https://github.com/Avunu/python-devops-nix/issues/96)) ([efea9e2](https://github.com/Avunu/python-devops-nix/commit/efea9e26567b5f3af9cef4dcb4a5984bd9bacf27))
+* **deps:** bump the github-actions group across 2 directories with 2 updates ([#93](https://github.com/Avunu/python-devops-nix/issues/93)) ([0423b4a](https://github.com/Avunu/python-devops-nix/commit/0423b4a293b4eff7cb03c27f85eb51e975c5e359))
+
 ## [1.9.0](https://github.com/Avunu/python-devops-nix/compare/v1.8.0...v1.9.0) (2026-11-25)
 
 
