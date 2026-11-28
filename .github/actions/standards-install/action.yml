@@ -122,7 +122,7 @@ runs:
   using: composite
   steps:
     - if: inputs.hardened != 'true'
-      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with:
         # Saving the cache uploads it; from a self-hosted runner that is slow and outlasts
         # the job, so only hosted runners save it.
@@ -152,7 +152,7 @@ runs:
     # cache, so install.sh checks the binary too (UV_SHA256, the `uv` in that asset).
     - if: inputs.hardened == 'true'
       id: uv
-      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with:
         version: "0.13.6"
         checksum: f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
